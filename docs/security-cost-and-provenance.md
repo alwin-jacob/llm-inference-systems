@@ -29,3 +29,21 @@ Final artifact files are written through destination-directory temporary files, 
 and atomically replaced. This prevents a reader from observing a half-written final file, but does
 not guarantee that in-memory evidence survives a process crash. The bundle is not a database, WAL,
 distributed transaction, or crash-resume design.
+
+Stage 2A adds only another project-authored CPU fixture server fixed to IPv4 `127.0.0.1` and port
+`0`. Future endpoint contracts accept only that literal host. No runtime launcher or downloader is
+implemented. The separate execution-lock JSON is inert metadata and is neither resolved nor
+installed by ordinary verification.
+
+Stage 2A repetition bundles reject path traversal, symlinks, non-UTF-8 evidence, unapproved binary
+suffixes, replacement of retained files, incomplete or duplicate inventory, altered hashes, and
+derived data that cannot be reconstructed exactly from raw evidence. Staging starts as
+`INCOMPLETE`; terminal failures retain raw evidence and become `INVALID`; only reconstruction- and
+inventory-validated evidence receives a manifest written last and an atomic directory rename to
+`COMMITTED`. A commit state is an integrity/lifecycle fact, not publication or claim approval.
+
+The public-safety scanner rejects credential-shaped values, authorization and cookie headers,
+proxy credentials, private home and cache paths, host/notebook/account identifiers, GPU UUIDs,
+sensitive private-file patterns, arbitrary remote URLs in executable example configuration,
+repository symlinks, and unreviewed binary/profiler artifacts. Runtime-token environment variables
+are modeled as unset without reading; tests do not access their values.

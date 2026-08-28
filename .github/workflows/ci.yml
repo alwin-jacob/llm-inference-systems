@@ -27,7 +27,7 @@ jobs:
         run: uv --version
       - name: Synchronize locked environment
         run: uv sync --frozen --group dev
-      - name: Verify Stage 0 and Stage 1
+      - name: Verify Stage 0, Stage 1, and Stage 2A
         run: |
           uv lock --check
           uv run ruff check .
@@ -38,11 +38,15 @@ jobs:
           uv run python scripts/check_public_safety.py
           uv run python scripts/verify_stage0.py
           uv run python scripts/verify_stage1.py
+          uv run python scripts/verify_stage2a.py
           uv run llm-inference version
           uv run llm-inference validate-workload examples/workloads/deterministic-smoke-v1.json
           uv run llm-inference validate-config examples/configs/stage0-contract-v1.json
           uv run llm-inference validate-workload examples/workloads/streaming-fixture-v1.json
           uv run llm-inference validate-config examples/configs/stage1-streaming-v1.json
+          uv run llm-inference validate-config examples/configs/stage2a-protocol-fixture-v1.json
+          uv run llm-inference validate-stage2-request examples/fixtures/stage2a-completion-request-v1.json
+          uv run llm-inference validate-stage2-execution-lock execution-lock/stage2-execution-lock.json
           uv run llm-inference schema-check
 
   checked-stage1-evidence:
