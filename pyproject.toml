@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llm-inference-systems"
-version = "0.2.0"
-description = "Evidence-first benchmark harness validated against a deterministic local HTTP/SSE fixture"
+version = "0.3.0"
+description = "CPU-fixture-tested protocol for future local LLM runtime evidence"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 license = "MIT"

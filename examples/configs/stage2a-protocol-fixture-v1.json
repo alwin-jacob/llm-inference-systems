@@ -1,0 +1,36 @@
+{
+  "endpoint": {
+    "completions_path": "/v1/completions",
+    "host": "127.0.0.1",
+    "metrics_path": "/metrics",
+    "port": 8000
+  },
+  "evidence_scope": "TEST_FIXTURE_ONLY",
+  "launch_arguments": [
+    "--host=127.0.0.1",
+    "--tensor-parallel-size=1",
+    "--enforce-eager",
+    "--optimization-level=0",
+    "--jit-monitor-mode=error",
+    "--no-enable-prefix-caching",
+    "--stream-interval=1",
+    "--enable-request-id-headers",
+    "--enable-log-requests",
+    "--enable-per-request-metrics"
+  ],
+  "measured_request_count": 16,
+  "measurement_protocol_version": "0.3.0",
+  "model": "qwen2.5-0.5b-instruct-stage2",
+  "output_token_count": 32,
+  "reporting_policy": {
+    "exact_sample_counts_required": true,
+    "goodput_or_capacity_advancement_prohibited": true,
+    "p50_descriptive": true,
+    "p95_descriptive": true,
+    "p99_prohibited": true,
+    "restart_grouping_required": true
+  },
+  "required_restart_count": 3,
+  "schema_version": "0.3.0",
+  "sent_prompt_token_count": 64
+}

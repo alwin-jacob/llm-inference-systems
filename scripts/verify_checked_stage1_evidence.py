@@ -10,7 +10,6 @@ from datetime import date
 from pathlib import Path, PurePosixPath
 from typing import Literal, cast
 
-from llm_inference_systems import __version__
 from llm_inference_systems.artifact_io import (
     ValidatedBundle,
     reconstruct_summary,
@@ -32,6 +31,7 @@ from llm_inference_systems.stage1_metrics import derive_stage1_request_metrics
 EXPECTED_STAGE0_COMMIT = "77d0ac61b685b3f65edcf43f61899e900eebf5e8"
 EXPECTED_STREAMING_COMMIT = "927a0a1c57e7c90aef87f5282093a3076e786b73"
 EXPECTED_SOURCE_COMMIT = "66c7f8c6d1c254c89e10c59747d7f957449ba758"
+HISTORICAL_STAGE1_PACKAGE_VERSION = "0.2.0"
 
 
 class CheckedEvidenceFile(StrictModel):
@@ -319,7 +319,10 @@ def _verify(evidence_directory: Path) -> dict[str, object]:
     _require(manifest.execution_source_commit == EXPECTED_SOURCE_COMMIT, "source commit differs")
     _require(manifest.failure_rate == 0.25, "manifest failure rate differs")
     _require(manifest.timeout_rate == 0.125, "manifest timeout rate differs")
-    _require(manifest.package_version == __version__, "installed package version differs")
+    _require(
+        manifest.package_version == HISTORICAL_STAGE1_PACKAGE_VERSION,
+        "historical Stage 1 package version differs",
+    )
     _require(manifest.python_version == platform.python_version(), "running Python differs")
     _require(
         manifest.httpx_version == importlib.metadata.version("httpx"),

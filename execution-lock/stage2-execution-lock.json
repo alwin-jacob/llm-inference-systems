@@ -1,0 +1,55 @@
+{
+  "artifacts": [
+    {
+      "filename": "vllm-0.28.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl",
+      "hash_source": "CONTROLLER_AUTHORIZED_SPEC",
+      "package": "vllm",
+      "sha256": "8ec943b66a0c6b4351d0778e99d7bacfca5788dd8eedd49425092bacb61c4397",
+      "source_url": "https://wheels.vllm.ai/2cf0a6915ce544dc493a0990f2ea38d81601128a/vllm-0.28.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl",
+      "version": "0.28.0"
+    },
+    {
+      "filename": "torch-2.13.0+cu129-cp313-cp313-manylinux_2_28_x86_64.whl",
+      "hash_source": "OFFICIAL_INDEX_METADATA",
+      "package": "torch",
+      "sha256": "6e3bcf183e3096db45bf539dc21f820963074986ece7a56550714f12863c76af",
+      "source_url": "https://download-r2.pytorch.org/whl/cu129/torch-2.13.0%2Bcu129-cp313-cp313-manylinux_2_28_x86_64.whl",
+      "version": "2.13.0+cu129"
+    },
+    {
+      "filename": "torchaudio-2.11.0+cu129-cp313-cp313-manylinux_2_28_x86_64.whl",
+      "hash_source": "OFFICIAL_INDEX_METADATA",
+      "package": "torchaudio",
+      "sha256": "45103fac849ffee337976ff19eac81725b3396e2c18e3f48ed92ba7669cb32d7",
+      "source_url": "https://download-r2.pytorch.org/whl/cu129/torchaudio-2.11.0%2Bcu129-cp313-cp313-manylinux_2_28_x86_64.whl",
+      "version": "2.11.0+cu129"
+    },
+    {
+      "filename": "torchvision-0.28.0+cu129-cp313-cp313-manylinux_2_28_x86_64.whl",
+      "hash_source": "UNAVAILABLE",
+      "package": "torchvision",
+      "sha256": null,
+      "source_url": "https://download-r2.pytorch.org/whl/cu129/torchvision-0.28.0%2Bcu129-cp313-cp313-manylinux_2_28_x86_64.whl",
+      "version": "0.28.0+cu129"
+    }
+  ],
+  "executed": false,
+  "flashinfer_index": "https://flashinfer.ai/whl/cu129",
+  "installed": false,
+  "preimport_distribution_version_command": [
+    "python",
+    "-c",
+    "import importlib.metadata; print(importlib.metadata.version('vllm'))"
+  ],
+  "python_version": "3.13.15",
+  "pytorch_index": "https://download.pytorch.org/whl/cu129",
+  "qwen_snapshot_revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+  "schema_version": "0.3.0",
+  "status": "BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED",
+  "unresolved": [
+    "The selected torchvision wheel SHA-256 is not exposed by official index metadata; computing it would require downloading the 9,290,444-byte binary."
+  ],
+  "uv_version": "0.12.5",
+  "vllm_git_revision": "2cf0a6915ce544dc493a0990f2ea38d81601128a",
+  "vllm_version": "0.28.0"
+}

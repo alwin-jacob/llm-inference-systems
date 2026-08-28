@@ -1,0 +1,167 @@
+{
+  "$defs": {
+    "ExecutionLockArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "filename": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Filename",
+          "type": "string"
+        },
+        "hash_source": {
+          "enum": [
+            "OFFICIAL_INDEX_METADATA",
+            "CONTROLLER_AUTHORIZED_SPEC",
+            "UNAVAILABLE"
+          ],
+          "title": "Hash Source",
+          "type": "string"
+        },
+        "package": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Package",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Sha256"
+        },
+        "source_url": {
+          "title": "Source Url",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "package",
+        "version",
+        "filename",
+        "source_url",
+        "sha256",
+        "hash_source"
+      ],
+      "title": "ExecutionLockArtifact",
+      "type": "object"
+    },
+    "ExecutionLockStatus": {
+      "enum": [
+        "COMPLETE",
+        "INCOMPLETE",
+        "BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED"
+      ],
+      "title": "ExecutionLockStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifacts": {
+      "items": {
+        "$ref": "#/$defs/ExecutionLockArtifact"
+      },
+      "minItems": 4,
+      "title": "Artifacts",
+      "type": "array"
+    },
+    "executed": {
+      "const": false,
+      "title": "Executed",
+      "type": "boolean"
+    },
+    "flashinfer_index": {
+      "const": "https://flashinfer.ai/whl/cu129",
+      "title": "Flashinfer Index",
+      "type": "string"
+    },
+    "installed": {
+      "const": false,
+      "title": "Installed",
+      "type": "boolean"
+    },
+    "preimport_distribution_version_command": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Preimport Distribution Version Command",
+      "type": "array"
+    },
+    "python_version": {
+      "const": "3.13.15",
+      "title": "Python Version",
+      "type": "string"
+    },
+    "pytorch_index": {
+      "const": "https://download.pytorch.org/whl/cu129",
+      "title": "Pytorch Index",
+      "type": "string"
+    },
+    "qwen_snapshot_revision": {
+      "const": "7ae557604adf67be50417f59c2c2f167def9a775",
+      "title": "Qwen Snapshot Revision",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.3.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/ExecutionLockStatus"
+    },
+    "unresolved": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unresolved",
+      "type": "array"
+    },
+    "uv_version": {
+      "const": "0.12.5",
+      "title": "Uv Version",
+      "type": "string"
+    },
+    "vllm_git_revision": {
+      "const": "2cf0a6915ce544dc493a0990f2ea38d81601128a",
+      "title": "Vllm Git Revision",
+      "type": "string"
+    },
+    "vllm_version": {
+      "const": "0.28.0",
+      "title": "Vllm Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "status",
+    "python_version",
+    "uv_version",
+    "vllm_version",
+    "vllm_git_revision",
+    "pytorch_index",
+    "flashinfer_index",
+    "qwen_snapshot_revision",
+    "artifacts",
+    "preimport_distribution_version_command",
+    "installed",
+    "executed",
+    "unresolved"
+  ],
+  "title": "Stage2ExecutionLock",
+  "type": "object"
+}

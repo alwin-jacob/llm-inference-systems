@@ -1,0 +1,152 @@
+{
+  "$defs": {
+    "LoopbackEndpoint": {
+      "additionalProperties": false,
+      "properties": {
+        "completions_path": {
+          "const": "/v1/completions",
+          "default": "/v1/completions",
+          "title": "Completions Path",
+          "type": "string"
+        },
+        "host": {
+          "const": "127.0.0.1",
+          "title": "Host",
+          "type": "string"
+        },
+        "metrics_path": {
+          "const": "/metrics",
+          "default": "/metrics",
+          "title": "Metrics Path",
+          "type": "string"
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Port",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "host",
+        "port"
+      ],
+      "title": "LoopbackEndpoint",
+      "type": "object"
+    },
+    "Stage2ReportingPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "exact_sample_counts_required": {
+          "const": true,
+          "default": true,
+          "title": "Exact Sample Counts Required",
+          "type": "boolean"
+        },
+        "goodput_or_capacity_advancement_prohibited": {
+          "const": true,
+          "default": true,
+          "title": "Goodput Or Capacity Advancement Prohibited",
+          "type": "boolean"
+        },
+        "p50_descriptive": {
+          "const": true,
+          "default": true,
+          "title": "P50 Descriptive",
+          "type": "boolean"
+        },
+        "p95_descriptive": {
+          "const": true,
+          "default": true,
+          "title": "P95 Descriptive",
+          "type": "boolean"
+        },
+        "p99_prohibited": {
+          "const": true,
+          "default": true,
+          "title": "P99 Prohibited",
+          "type": "boolean"
+        },
+        "restart_grouping_required": {
+          "const": true,
+          "default": true,
+          "title": "Restart Grouping Required",
+          "type": "boolean"
+        }
+      },
+      "title": "Stage2ReportingPolicy",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "endpoint": {
+      "$ref": "#/$defs/LoopbackEndpoint"
+    },
+    "evidence_scope": {
+      "const": "TEST_FIXTURE_ONLY",
+      "title": "Evidence Scope",
+      "type": "string"
+    },
+    "launch_arguments": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Launch Arguments",
+      "type": "array"
+    },
+    "measured_request_count": {
+      "const": 16,
+      "title": "Measured Request Count",
+      "type": "integer"
+    },
+    "measurement_protocol_version": {
+      "const": "0.3.0",
+      "title": "Measurement Protocol Version",
+      "type": "string"
+    },
+    "model": {
+      "const": "qwen2.5-0.5b-instruct-stage2",
+      "title": "Model",
+      "type": "string"
+    },
+    "output_token_count": {
+      "const": 32,
+      "title": "Output Token Count",
+      "type": "integer"
+    },
+    "reporting_policy": {
+      "$ref": "#/$defs/Stage2ReportingPolicy"
+    },
+    "required_restart_count": {
+      "const": 3,
+      "title": "Required Restart Count",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "0.3.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sent_prompt_token_count": {
+      "const": 64,
+      "title": "Sent Prompt Token Count",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "measurement_protocol_version",
+    "evidence_scope",
+    "endpoint",
+    "model",
+    "sent_prompt_token_count",
+    "output_token_count",
+    "measured_request_count",
+    "required_restart_count",
+    "launch_arguments",
+    "reporting_policy"
+  ],
+  "title": "Stage2RunConfiguration",
+  "type": "object"
+}

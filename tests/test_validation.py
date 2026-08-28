@@ -28,9 +28,9 @@ def test_all_generated_schemas_are_byte_synchronized() -> None:
 
 
 def test_schema_filenames_contain_contract_version() -> None:
-    assert len(SCHEMA_MODELS) == 11
+    assert len(SCHEMA_MODELS) == 15
     assert all(
-        "v0.1.0.schema.json" in filename or "v0.2.0.schema.json" in filename
+        any(f"v{version}.schema.json" in filename for version in ("0.1.0", "0.2.0", "0.3.0"))
         for filename in SCHEMA_MODELS
     )
 
@@ -53,6 +53,7 @@ def test_cli_version_is_deterministic(capsys: pytest.CaptureFixture[str]) -> Non
         "stage0_artifact_schema_version": "0.1.0",
         "stage0_measurement_contract_version": "0.1.0",
         "stage1_measurement_contract_version": "0.2.0",
+        "stage2_measurement_protocol_version": "0.3.0",
     }
 
 
@@ -112,7 +113,7 @@ def test_cli_schema_check_uses_committed_generated_files(
 ) -> None:
     assert cli_main(["schema-check"]) == 0
     assert json.loads(capsys.readouterr().out) == {
-        "schema_count": 11,
+        "schema_count": 15,
         "status": "synchronized",
     }
 
