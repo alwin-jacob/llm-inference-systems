@@ -66,6 +66,7 @@ uv run python scripts/check_schema_sync.py
 uv run python scripts/check_public_safety.py
 uv run python scripts/verify_stage0.py
 uv run python scripts/verify_stage1.py
+uv run python scripts/verify_checked_stage1_evidence.py artifacts/stage1-fixture/2026-08-27
 uv run llm-inference version
 uv run llm-inference validate-workload examples/workloads/deterministic-smoke-v1.json
 uv run llm-inference validate-config examples/configs/stage0-contract-v1.json
@@ -79,10 +80,19 @@ uv run llm-inference summarize-run /tmp/lis-stage1-run-a
 uv run llm-inference fixture-run --workload examples/workloads/streaming-fixture-v1.json --config examples/configs/stage1-streaming-v1.json --fixture examples/fixtures/streaming-fixture-v1.json --output-dir /tmp/lis-stage1-run-b
 uv run llm-inference validate-run-dir /tmp/lis-stage1-run-b
 uv run llm-inference compare-runs --baseline /tmp/lis-stage1-run-a --candidate /tmp/lis-stage1-run-b --policy examples/configs/stage1-regression-policy-v1.json --output /tmp/lis-stage1-comparison.json
+uv run llm-inference validate-run-dir artifacts/stage1-fixture/2026-08-27/run-a
+uv run llm-inference validate-run-dir artifacts/stage1-fixture/2026-08-27/run-b
 git diff --check
 git remote -v
+git tag --list
 git status --short
+uv run python scripts/verify_git_archive.py
 ```
+
+The final command creates a Git archive from `HEAD`, extracts it without `.git` or `.venv`,
+performs a fresh frozen installation under exact Python `3.13.15`, repeats the complete source and
+checked-evidence gate, proves `uv.lock` and the checked artifacts remain byte-identical, and removes
+the temporary directory.
 
 Schema files are generated only after the package builds:
 

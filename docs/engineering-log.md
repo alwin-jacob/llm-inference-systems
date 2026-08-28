@@ -82,3 +82,20 @@ LLM-serving runtime, GPU, CUDA, profiler, container, paid resource, remote CI, o
 This local checked evidence executes no model, tokenizer, serving runtime, GPU, CUDA, profiler,
 container, VM, paid resource, cloud CLI, or credential. It uses no Git remote or remote CI and is
 not deployed, published, historically authenticated, or accepted into the canonical claim ledger.
+
+## 2026-08-28 — Independent source-review correction
+
+- Retained the immutable four-commit Stage 0/Stage 1 lineage and all checked fixture evidence after
+  an independent GitHub and public-engineering source review required a narrow release-preparation
+  correction.
+- Replaced unrestricted local-username matching in the public-safety scan with structured checks
+  for exact absolute home values, user-qualified Unix and Windows home paths, and bounded specific
+  hostnames while retaining the existing private-material and credential patterns.
+- Added regression coverage for ordinary occurrences of the simulated identities `root`, `runner`,
+  `ubuntu`, and `alwinjacob`, plus private paths, hostnames, and secret-like material.
+- Retained the Python 3.12/3.13 source matrix and added exact-Python-3.13.15 checked-evidence and
+  metadata-free Git-archive jobs. The archive gate performs a frozen installation, repeats the
+  complete source and evidence verification, checks immutable bytes, and removes its temporary
+  directory.
+- Preserved `uv.lock` and every checked artifact byte-for-byte. No external operation, remote, tag,
+  publication, deployment, or private staging occurred.

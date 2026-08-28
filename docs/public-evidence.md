@@ -5,11 +5,11 @@ Stage 0 contracts and Stage 1 deterministic loopback fixture. `TEST_FIXTURE_ONLY
 demonstrate code paths, actual local fixture HTTP traffic, and reconstruction invariants; they are
 not LLM measurements.
 
-| Evidence category | Current local state after checked-evidence generation |
+| Evidence category | Current local reviewed state |
 | --- | --- |
 | Implemented source | Present locally |
-| Local unit/adversarial tests | Present locally; 182 passed before evidence generation |
-| Fresh-archive verification | Stage 1 implementation/archive-safety source gate passed; the evidence commit also requires the separate post-commit archive gate |
+| Local unit/adversarial tests | Present locally and included in the complete verification gate |
+| Metadata-free Git-archive verification | Present as a repeatable exact-Python-3.13.15 local and CI gate |
 | Checked loopback `TEST_FIXTURE_ONLY` execution | Present locally as two independent runs dated `2026-08-27` |
 | Checked raw artifacts | Present locally with request, client-stream, and server records |
 | Checked derived summaries | Present and exactly reconstruct from retained raw evidence |

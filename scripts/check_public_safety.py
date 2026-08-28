@@ -6,7 +6,7 @@ conservative filesystem walk that never follows symlinks and excludes only known
 
 from __future__ import annotations
 
-import getpass
+import ntpath
 import os
 import re
 import socket
@@ -32,6 +32,9 @@ _ARCHIVE_EXCLUDED_DIRECTORIES = frozenset(
 _ARCHIVE_EXCLUDED_FILES = frozenset({".coverage", ".DS_Store"})
 _ARCHIVE_EXCLUDED_SUFFIXES = frozenset({".pyc", ".pyd", ".pyo"})
 _SYMLINK_RULE = "repository-symlink"
+_HOSTNAME_BOUNDARY_CHARACTERS = r"A-Za-z0-9._-"
+_HOSTNAME_SEGMENT_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,252}"
+_HOME_USERNAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
 
 
 def _sort_key(path: Path) -> bytes:
@@ -120,11 +123,88 @@ def discover_candidate_files(root: Path) -> tuple[Path, ...]:
     return _archive_candidate_files(resolved_root)
 
 
+def _bounded_literal(value: str) -> re.Pattern[str]:
+    trailing = rf"(?![{_HOSTNAME_BOUNDARY_CHARACTERS}])"
+    leading = rf"(?<![{_HOSTNAME_BOUNDARY_CHARACTERS}])"
+    return re.compile(leading + re.escape(value) + trailing, re.IGNORECASE)
+
+
+def _absolute_home_directories() -> tuple[str, ...]:
+    candidates = {str(Path.home())}
+    for name in ("HOME", "USERPROFILE"):
+        if value := os.environ.get(name):
+            candidates.add(value)
+    if (drive := os.environ.get("HOMEDRIVE")) and (path := os.environ.get("HOMEPATH")):
+        candidates.add(drive + path)
+
+    absolute = {
+        value.rstrip("\\/")
+        for value in candidates
+        if value and (Path(value).is_absolute() or ntpath.isabs(value))
+    }
+    return tuple(sorted(absolute, key=lambda value: (value.casefold(), value)))
+
+
+def _private_environment_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
+    patterns: list[tuple[str, re.Pattern[str]]] = [
+        ("absolute-home-directory", _bounded_literal(home)) for home in _absolute_home_directories()
+    ]
+    patterns.extend(
+        (
+            (
+                "apple-user-home-path",
+                re.compile(
+                    rf"(?<![A-Za-z0-9._:/\\-])/Users/{_HOME_USERNAME_PATTERN}"
+                    rf"(?![A-Za-z0-9._-])",
+                    re.IGNORECASE,
+                ),
+            ),
+            (
+                "linux-user-home-path",
+                re.compile(
+                    rf"(?<![A-Za-z0-9._-])/home/{_HOME_USERNAME_PATTERN}"
+                    rf"(?![A-Za-z0-9._-])",
+                    re.IGNORECASE,
+                ),
+            ),
+            (
+                "windows-user-home-path",
+                re.compile(
+                    rf"(?<![A-Za-z0-9._-])[A-Za-z]:[\\/]"
+                    rf"(?:Users|Documents and Settings)[\\/]{_HOME_USERNAME_PATTERN}"
+                    rf"(?![A-Za-z0-9._-])",
+                    re.IGNORECASE,
+                ),
+            ),
+            (
+                "windows-unc-user-home-path",
+                re.compile(
+                    rf"(?<![\\])\\\\{_HOSTNAME_SEGMENT_PATTERN}[\\/]"
+                    rf"(?:Users[\\/])?{_HOME_USERNAME_PATTERN}(?![A-Za-z0-9._-])",
+                    re.IGNORECASE,
+                ),
+            ),
+        )
+    )
+
+    hostname = socket.gethostname().strip().rstrip(".")
+    normalized_hostname = hostname.casefold()
+    hostname_is_specific = (
+        len(hostname) >= 8
+        and normalized_hostname not in {"localhost", "localhost.localdomain"}
+        and (
+            any(character in hostname for character in ".-_")
+            or any(character.isdigit() for character in hostname)
+        )
+    )
+    if hostname_is_specific:
+        patterns.append(("local-hostname", _bounded_literal(hostname)))
+
+    return tuple(patterns)
+
+
 def _patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
-    username = getpass.getuser()
-    hostname = socket.gethostname()
     fragments = {
-        "absolute-apple-home": "/" + "Users" + "/",
         "private-key-header": "-----BEGIN " + "PRIVATE KEY-----",
         "submitted-project-file": "Resume" + "Projects_Submitted.md",
         "internal-ledger-file": "claim" + "-ledger",
@@ -135,11 +215,6 @@ def _patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
     literal_patterns = tuple(
         (name, re.compile(re.escape(value), re.IGNORECASE)) for name, value in fragments.items()
     )
-    environment_patterns = tuple(
-        (name, re.compile(re.escape(value), re.IGNORECASE))
-        for name, value in (("local-username", username), ("local-hostname", hostname))
-        if len(value) >= 3
-    )
     token_patterns = (
         ("aws-access-key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
         ("github-token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}\b")),
@@ -149,7 +224,7 @@ def _patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
             re.compile(r"(?im)^\s*(?:aws_secret_access_key|api_key|client_secret)\s*="),
         ),
     )
-    return (*literal_patterns, *environment_patterns, *token_patterns)
+    return (*literal_patterns, *_private_environment_patterns(), *token_patterns)
 
 
 def scan_repository(root: Path) -> tuple[tuple[str, str], ...]:

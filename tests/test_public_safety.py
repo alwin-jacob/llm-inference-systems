@@ -145,6 +145,119 @@ def test_git_scan_detects_forbidden_synthetic_pattern(tmp_path: Path) -> None:
     assert scan_repository(root) == (("unsafe.txt", "private-key-header"),)
 
 
+@pytest.mark.parametrize("username", ["root", "runner", "ubuntu", "alwinjacob"])
+def test_common_identity_words_are_not_findings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    username: str,
+) -> None:
+    root = tmp_path / "archive"
+    root.mkdir()
+    (root / "source.txt").write_text(
+        "The root runner uses ubuntu while alwinjacob reviews the source.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("USER", username)
+    monkeypatch.setenv("LOGNAME", username)
+
+    assert scan_repository(root) == ()
+
+
+@pytest.mark.parametrize(
+    ("username", "home_parts", "expected_rule"),
+    [
+        ("alwinjacob", ("", "Users", "alwinjacob", "private", "notes.txt"), "apple-user-home-path"),
+        ("runner", ("", "home", "runner", "private", "notes.txt"), "linux-user-home-path"),
+    ],
+)
+def test_structured_unix_user_home_paths_are_detected(
+    tmp_path: Path,
+    username: str,
+    home_parts: tuple[str, ...],
+    expected_rule: str,
+) -> None:
+    root = tmp_path / "archive"
+    root.mkdir()
+    private_path = "/".join(home_parts)
+    (root / "unsafe.txt").write_text(f"private source: {private_path}\n", encoding="utf-8")
+
+    assert ("unsafe.txt", expected_rule) in scan_repository(root)
+
+
+@pytest.mark.parametrize(
+    ("private_path", "expected_rule"),
+    [
+        (
+            "C:" + "\\" + "Users" + "\\" + "runner" + "\\" + "private.txt",
+            "windows-user-home-path",
+        ),
+        ("C:/" + "Users" + "/" + "runner" + "/private.txt", "windows-user-home-path"),
+        (
+            "\\\\build-share" + "\\" + "Users" + "\\" + "runner" + "\\" + "private.txt",
+            "windows-unc-user-home-path",
+        ),
+    ],
+)
+def test_structured_windows_user_home_paths_are_detected(
+    tmp_path: Path,
+    private_path: str,
+    expected_rule: str,
+) -> None:
+    root = tmp_path / "archive"
+    root.mkdir()
+    (root / "unsafe.txt").write_text(f"private source: {private_path}\n", encoding="utf-8")
+
+    assert scan_repository(root) == (("unsafe.txt", expected_rule),)
+
+
+def test_exact_absolute_home_directory_is_detected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "archive"
+    root.mkdir()
+    home = "/" + "opt" + "/private-home/casey"
+    (root / "unsafe.txt").write_text(f"home={home}\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", home)
+
+    assert scan_repository(root) == (("unsafe.txt", "absolute-home-directory"),)
+
+
+def test_sufficiently_specific_private_hostname_is_detected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "archive"
+    root.mkdir()
+    hostname = "workstation-47.internal"
+    (root / "unsafe.txt").write_text(f"built-by={hostname}\n", encoding="utf-8")
+    monkeypatch.setattr("scripts.check_public_safety.socket.gethostname", lambda: hostname)
+
+    assert scan_repository(root) == (("unsafe.txt", "local-hostname"),)
+
+
+@pytest.mark.parametrize(
+    ("secret", "expected_rule"),
+    [
+        ("-----BEGIN " + "PRIVATE KEY-----", "private-key-header"),
+        ("AKIA" + "0123456789ABCDEF", "aws-access-key"),
+        ("ghp_" + "A" * 30, "github-token"),
+        ("sk-" + "synthetic_fixture_token_12345", "generic-api-token"),
+        ("client_" + "secret=fixture-only", "credential-file-content"),
+    ],
+)
+def test_existing_secret_like_patterns_remain_detected(
+    tmp_path: Path,
+    secret: str,
+    expected_rule: str,
+) -> None:
+    root = tmp_path / "archive"
+    root.mkdir()
+    (root / "unsafe.txt").write_text(secret + "\n", encoding="utf-8")
+
+    assert scan_repository(root) == (("unsafe.txt", expected_rule),)
+
+
 def test_archive_symlink_is_reported_without_reading_external_content(tmp_path: Path) -> None:
     root = tmp_path / "archive"
     root.mkdir()

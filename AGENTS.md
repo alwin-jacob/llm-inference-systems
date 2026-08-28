@@ -6,7 +6,8 @@
 - Permit networking only through the Stage 1 fixture runner, which must create its own server on
   IPv4 loopback `127.0.0.1` with an OS-assigned port and expose no arbitrary destination option.
 - Never add a real-runtime, model, tokenizer, serve, benchmark, profile, deploy, model-download,
-  GPU, CUDA, container, cloud, paid-service, or remote Git path.
+  GPU, CUDA, container, cloud, or paid-service path.
+- Do not add or use a Git remote unless the exact external Git operation is explicitly authorized.
 - Preserve strict schema versions, deterministic canonicalization, raw failure evidence, atomic
   final-file writes, and exact raw-to-summary reconstruction.
 - Generate schemas from Pydantic models; never hand-edit committed schema files.
