@@ -20,8 +20,11 @@ jobs:
       - name: Install uv and Python
         uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4cf5cd0fca # v6.0.1
         with:
+          version: "0.12.5"
           python-version: ${{ matrix.python-version }}
           enable-cache: true
+      - name: Record uv version
+        run: uv --version
       - name: Synchronize locked environment
         run: uv sync --frozen --group dev
       - name: Verify Stage 0 and Stage 1
@@ -50,8 +53,11 @@ jobs:
       - name: Install uv and exact Python
         uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4cf5cd0fca # v6.0.1
         with:
+          version: "0.12.5"
           python-version: "3.13.15"
           enable-cache: true
+      - name: Record uv version
+        run: uv --version
       - name: Synchronize locked environment
         run: uv sync --python 3.13.15 --frozen --group dev
       - name: Select locked environment
@@ -69,8 +75,11 @@ jobs:
       - name: Install uv and exact Python
         uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4cf5cd0fca # v6.0.1
         with:
+          version: "0.12.5"
           python-version: "3.13.15"
           enable-cache: true
+      - name: Record uv version
+        run: uv --version
       - name: Synchronize controller environment
         run: uv sync --python 3.13.15 --frozen --group dev
       - name: Verify metadata-free Git archive
