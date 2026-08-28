@@ -1,0 +1,64 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "allow_failure_count_increase": {
+      "const": false,
+      "title": "Allow Failure Count Increase",
+      "type": "boolean"
+    },
+    "allow_timeout_count_increase": {
+      "const": false,
+      "title": "Allow Timeout Count Increase",
+      "type": "boolean"
+    },
+    "comparison_contract_version": {
+      "const": "0.2.0",
+      "title": "Comparison Contract Version",
+      "type": "string"
+    },
+    "performance_gating_enabled": {
+      "const": false,
+      "title": "Performance Gating Enabled",
+      "type": "boolean"
+    },
+    "policy_name": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Policy Name",
+      "type": "string"
+    },
+    "require_matching_input_identities": {
+      "const": true,
+      "title": "Require Matching Input Identities",
+      "type": "boolean"
+    },
+    "require_matching_semantic_fingerprint": {
+      "const": true,
+      "title": "Require Matching Semantic Fingerprint",
+      "type": "boolean"
+    },
+    "require_matching_terminal_taxonomy": {
+      "const": true,
+      "title": "Require Matching Terminal Taxonomy",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "0.2.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "comparison_contract_version",
+    "policy_name",
+    "require_matching_semantic_fingerprint",
+    "require_matching_input_identities",
+    "require_matching_terminal_taxonomy",
+    "allow_failure_count_increase",
+    "allow_timeout_count_increase",
+    "performance_gating_enabled"
+  ],
+  "title": "Stage1ComparisonPolicy",
+  "type": "object"
+}

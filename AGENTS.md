@@ -1,8 +1,16 @@
 # Repository agent instructions
 
-- Keep implementation and claims within the Stage 0 synthetic-fixture boundary.
-- Never add a run, serve, benchmark, profile, deploy, model-download, GPU, or network path.
-- Preserve strict schema versions, deterministic canonicalization, and failure records.
+- Keep implementation and claims within the synthetic-fixture-only Stage 0/Stage 1 boundary.
+- Preserve every v0.1.0 contract and schema byte-for-byte; add incompatible semantics under a new
+  version.
+- Permit networking only through the Stage 1 fixture runner, which must create its own server on
+  IPv4 loopback `127.0.0.1` with an OS-assigned port and expose no arbitrary destination option.
+- Never add a real-runtime, model, tokenizer, serve, benchmark, profile, deploy, model-download,
+  GPU, CUDA, container, cloud, paid-service, or remote Git path.
+- Preserve strict schema versions, deterministic canonicalization, raw failure evidence, atomic
+  final-file writes, and exact raw-to-summary reconstruction.
 - Generate schemas from Pydantic models; never hand-edit committed schema files.
-- Keep examples synthetic and put synthetic run artifacts only in tests.
+- Keep every workload, fixture marker, result, and artifact explicitly synthetic and
+  `TEST_FIXTURE_ONLY`.
+- Never call client concurrency server batch size or infer server batching without direct evidence.
 - Run every check documented in `README.md` before a commit.

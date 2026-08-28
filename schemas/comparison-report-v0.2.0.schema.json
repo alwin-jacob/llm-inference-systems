@@ -1,0 +1,194 @@
+{
+  "$defs": {
+    "EvidenceBoundary": {
+      "additionalProperties": false,
+      "properties": {
+        "cuda_execution": {
+          "const": false,
+          "default": false,
+          "title": "Cuda Execution",
+          "type": "boolean"
+        },
+        "evidence_scope": {
+          "const": "TEST_FIXTURE_ONLY",
+          "default": "TEST_FIXTURE_ONLY",
+          "title": "Evidence Scope",
+          "type": "string"
+        },
+        "gpu_execution": {
+          "const": false,
+          "default": false,
+          "title": "Gpu Execution",
+          "type": "boolean"
+        },
+        "historical_authentication_effect": {
+          "const": "NONE",
+          "default": "NONE",
+          "title": "Historical Authentication Effect",
+          "type": "string"
+        },
+        "model_execution": {
+          "const": false,
+          "default": false,
+          "title": "Model Execution",
+          "type": "boolean"
+        },
+        "performance_claim_allowed": {
+          "const": false,
+          "default": false,
+          "title": "Performance Claim Allowed",
+          "type": "boolean"
+        },
+        "real_runtime_execution": {
+          "const": false,
+          "default": false,
+          "title": "Real Runtime Execution",
+          "type": "boolean"
+        },
+        "synthetic_fixture": {
+          "const": true,
+          "default": true,
+          "title": "Synthetic Fixture",
+          "type": "boolean"
+        },
+        "tokenizer_execution": {
+          "const": false,
+          "default": false,
+          "title": "Tokenizer Execution",
+          "type": "boolean"
+        }
+      },
+      "title": "EvidenceBoundary",
+      "type": "object"
+    },
+    "SemanticCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "check": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Check",
+          "type": "string"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "check",
+        "passed"
+      ],
+      "title": "SemanticCheck",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "baseline_content_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Baseline Content Sha256",
+      "type": "string"
+    },
+    "baseline_semantic_fingerprint": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Baseline Semantic Fingerprint",
+      "type": "string"
+    },
+    "boundary": {
+      "$ref": "#/$defs/EvidenceBoundary"
+    },
+    "candidate_content_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Candidate Content Sha256",
+      "type": "string"
+    },
+    "candidate_semantic_fingerprint": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Candidate Semantic Fingerprint",
+      "type": "string"
+    },
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/SemanticCheck"
+      },
+      "minItems": 1,
+      "title": "Checks",
+      "type": "array"
+    },
+    "comparison_contract_version": {
+      "const": "0.2.0",
+      "title": "Comparison Contract Version",
+      "type": "string"
+    },
+    "compatible": {
+      "title": "Compatible",
+      "type": "boolean"
+    },
+    "content_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Content Sha256"
+    },
+    "created_at_utc": {
+      "format": "date-time",
+      "title": "Created At Utc",
+      "type": "string"
+    },
+    "performance_interpretation_allowed": {
+      "const": false,
+      "title": "Performance Interpretation Allowed",
+      "type": "boolean"
+    },
+    "policy_passed": {
+      "title": "Policy Passed",
+      "type": "boolean"
+    },
+    "policy_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Policy Sha256",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "semantic_fingerprints_match": {
+      "title": "Semantic Fingerprints Match",
+      "type": "boolean"
+    },
+    "timing_disclaimer": {
+      "const": "These measurements are loopback fixture measurements used to verify the benchmark harness and measurement semantics. They are not LLM-serving, model, runtime, GPU, or production-performance measurements.",
+      "title": "Timing Disclaimer",
+      "type": "string"
+    }
+  },
+  "required": [
+    "boundary",
+    "schema_version",
+    "comparison_contract_version",
+    "timing_disclaimer",
+    "created_at_utc",
+    "policy_sha256",
+    "baseline_content_sha256",
+    "candidate_content_sha256",
+    "baseline_semantic_fingerprint",
+    "candidate_semantic_fingerprint",
+    "semantic_fingerprints_match",
+    "compatible",
+    "policy_passed",
+    "performance_interpretation_allowed",
+    "checks"
+  ],
+  "title": "Stage1ComparisonReport",
+  "type": "object"
+}

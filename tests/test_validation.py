@@ -17,6 +17,7 @@ from llm_inference_systems.schema_io import (
 )
 from scripts.check_public_safety import _patterns, scan_repository
 from scripts.verify_stage0 import main as verify_main
+from scripts.verify_stage1 import main as verify_stage1_main
 from tests.factories import ROOT, artifact
 
 
@@ -27,8 +28,11 @@ def test_all_generated_schemas_are_byte_synchronized() -> None:
 
 
 def test_schema_filenames_contain_contract_version() -> None:
-    assert len(SCHEMA_MODELS) == 5
-    assert all("v0.1.0.schema.json" in filename for filename in SCHEMA_MODELS)
+    assert len(SCHEMA_MODELS) == 11
+    assert all(
+        "v0.1.0.schema.json" in filename or "v0.2.0.schema.json" in filename
+        for filename in SCHEMA_MODELS
+    )
 
 
 def test_each_generated_schema_is_valid_json_schema() -> None:
@@ -45,9 +49,10 @@ def test_cli_version_is_deterministic(capsys: pytest.CaptureFixture[str]) -> Non
     second = capsys.readouterr().out
     assert first == second
     assert json.loads(first) == {
-        "artifact_schema_version": "0.1.0",
-        "measurement_contract_version": "0.1.0",
-        "version": __version__,
+        "package_version": __version__,
+        "stage0_artifact_schema_version": "0.1.0",
+        "stage0_measurement_contract_version": "0.1.0",
+        "stage1_measurement_contract_version": "0.2.0",
     }
 
 
@@ -107,7 +112,7 @@ def test_cli_schema_check_uses_committed_generated_files(
 ) -> None:
     assert cli_main(["schema-check"]) == 0
     assert json.loads(capsys.readouterr().out) == {
-        "schema_count": 5,
+        "schema_count": 11,
         "status": "synchronized",
     }
 
@@ -132,3 +137,33 @@ def test_stage0_verifier_exercises_real_contract_logic(
     assert result["gpu_execution"] is False
     assert result["performance_claim_allowed"] is False
     assert all(result["verified"].values())
+
+
+def test_cli_validates_checked_in_stage1_inputs(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert (
+        cli_main(["validate-workload", str(ROOT / "examples/workloads/streaming-fixture-v1.json")])
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["model"] == "Stage1WorkloadDefinition"
+    assert (
+        cli_main(["validate-config", str(ROOT / "examples/configs/stage1-streaming-v1.json")]) == 0
+    )
+    assert json.loads(capsys.readouterr().out)["model"] == "Stage1RunConfiguration"
+    assert (
+        cli_main(["validate-fixture", str(ROOT / "examples/fixtures/streaming-fixture-v1.json")])
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["model"] == "FixtureDefinition"
+
+
+def test_stage1_verifier_executes_real_loopback_fixture(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert verify_stage1_main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["loopback_http_execution"] is True
+    assert result["measured_request_count"] == 8
+    assert result["failed_non_timeout_count"] == 2
+    assert result["timeout_count"] == 1

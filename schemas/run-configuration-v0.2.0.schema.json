@@ -1,0 +1,188 @@
+{
+  "$defs": {
+    "Stage1LoadShape": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "CLOSED_LOOP",
+          "title": "Kind",
+          "type": "string"
+        },
+        "requested_client_concurrency": {
+          "const": 2,
+          "title": "Requested Client Concurrency",
+          "type": "integer"
+        },
+        "scheduling_policy": {
+          "const": "DECLARED_ORDER_NEXT_AVAILABLE_CLIENT",
+          "title": "Scheduling Policy",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "requested_client_concurrency",
+        "scheduling_policy"
+      ],
+      "title": "Stage1LoadShape",
+      "type": "object"
+    },
+    "Stage1SLODefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "policy_name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Policy Name",
+          "type": "string"
+        },
+        "successful_end_to_end_threshold_ns": {
+          "exclusiveMinimum": 0,
+          "title": "Successful End To End Threshold Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "policy_name",
+        "successful_end_to_end_threshold_ns"
+      ],
+      "title": "Stage1SLODefinition",
+      "type": "object"
+    },
+    "Stage1TimeoutPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "connect_timeout_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Connect Timeout Seconds",
+          "type": "number"
+        },
+        "pool_timeout_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Pool Timeout Seconds",
+          "type": "number"
+        },
+        "read_timeout_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Read Timeout Seconds",
+          "type": "number"
+        },
+        "write_timeout_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Write Timeout Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "connect_timeout_seconds",
+        "write_timeout_seconds",
+        "pool_timeout_seconds",
+        "read_timeout_seconds"
+      ],
+      "title": "Stage1TimeoutPolicy",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "configured_server_batch_source": {
+      "default": null,
+      "title": "Configured Server Batch Source",
+      "type": "null"
+    },
+    "configured_server_maximum_batch_size": {
+      "default": null,
+      "title": "Configured Server Maximum Batch Size",
+      "type": "null"
+    },
+    "fixture_path": {
+      "const": "examples/fixtures/streaming-fixture-v1.json",
+      "title": "Fixture Path",
+      "type": "string"
+    },
+    "fixture_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Fixture Sha256",
+      "type": "string"
+    },
+    "load_shape": {
+      "$ref": "#/$defs/Stage1LoadShape"
+    },
+    "measured_request_count": {
+      "const": 8,
+      "title": "Measured Request Count",
+      "type": "integer"
+    },
+    "measurement_contract_version": {
+      "const": "0.2.0",
+      "title": "Measurement Contract Version",
+      "type": "string"
+    },
+    "model": {
+      "const": "fixture-no-model",
+      "title": "Model",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "slo": {
+      "$ref": "#/$defs/Stage1SLODefinition"
+    },
+    "stream": {
+      "const": true,
+      "title": "Stream",
+      "type": "boolean"
+    },
+    "temperature": {
+      "maximum": 0,
+      "minimum": 0,
+      "title": "Temperature",
+      "type": "number"
+    },
+    "timeout_policy": {
+      "$ref": "#/$defs/Stage1TimeoutPolicy"
+    },
+    "token_count_source": {
+      "const": "FIXTURE_EXACT",
+      "title": "Token Count Source",
+      "type": "string"
+    },
+    "warmup_request_count": {
+      "const": 1,
+      "title": "Warmup Request Count",
+      "type": "integer"
+    },
+    "workload_path": {
+      "const": "examples/workloads/streaming-fixture-v1.json",
+      "title": "Workload Path",
+      "type": "string"
+    },
+    "workload_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Workload Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "measurement_contract_version",
+    "workload_path",
+    "workload_sha256",
+    "fixture_path",
+    "fixture_sha256",
+    "load_shape",
+    "timeout_policy",
+    "slo",
+    "warmup_request_count",
+    "measured_request_count",
+    "model",
+    "temperature",
+    "stream",
+    "token_count_source"
+  ],
+  "title": "Stage1RunConfiguration",
+  "type": "object"
+}

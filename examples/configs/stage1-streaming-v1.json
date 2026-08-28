@@ -1,0 +1,31 @@
+{
+  "configured_server_batch_source": null,
+  "configured_server_maximum_batch_size": null,
+  "fixture_path": "examples/fixtures/streaming-fixture-v1.json",
+  "fixture_sha256": "adba849b10c04b9fd86f3934dac66e32b8ca9812a17f119ff920e9a912b820ea",
+  "load_shape": {
+    "kind": "CLOSED_LOOP",
+    "requested_client_concurrency": 2,
+    "scheduling_policy": "DECLARED_ORDER_NEXT_AVAILABLE_CLIENT"
+  },
+  "measured_request_count": 8,
+  "measurement_contract_version": "0.2.0",
+  "model": "fixture-no-model",
+  "schema_version": "0.2.0",
+  "slo": {
+    "policy_name": "stage1-fixture-e2e-v1",
+    "successful_end_to_end_threshold_ns": 5000000000
+  },
+  "stream": true,
+  "temperature": 0.0,
+  "timeout_policy": {
+    "connect_timeout_seconds": 2.0,
+    "pool_timeout_seconds": 2.0,
+    "read_timeout_seconds": 0.5,
+    "write_timeout_seconds": 2.0
+  },
+  "token_count_source": "FIXTURE_EXACT",
+  "warmup_request_count": 1,
+  "workload_path": "examples/workloads/streaming-fixture-v1.json",
+  "workload_sha256": "7515b8dee292044cddcd376815119fc51e664d70938394a181c17016e10bb887"
+}

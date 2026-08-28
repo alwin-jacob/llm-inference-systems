@@ -16,6 +16,14 @@ from llm_inference_systems.contracts import (
     RunConfiguration,
     WorkloadDefinition,
 )
+from llm_inference_systems.stage1_contracts import (
+    FixtureDefinition,
+    Stage1ComparisonPolicy,
+    Stage1ComparisonReport,
+    Stage1ExecutionManifest,
+    Stage1RunConfiguration,
+    Stage1WorkloadDefinition,
+)
 
 SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "comparison-policy-v0.1.0.schema.json": ComparisonPolicy,
@@ -23,6 +31,12 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "run-artifact-v0.1.0.schema.json": RunArtifact,
     "run-configuration-v0.1.0.schema.json": RunConfiguration,
     "workload-definition-v0.1.0.schema.json": WorkloadDefinition,
+    "comparison-policy-v0.2.0.schema.json": Stage1ComparisonPolicy,
+    "comparison-report-v0.2.0.schema.json": Stage1ComparisonReport,
+    "execution-manifest-v0.2.0.schema.json": Stage1ExecutionManifest,
+    "fixture-definition-v0.2.0.schema.json": FixtureDefinition,
+    "run-configuration-v0.2.0.schema.json": Stage1RunConfiguration,
+    "workload-definition-v0.2.0.schema.json": Stage1WorkloadDefinition,
 }
 
 

@@ -1,0 +1,726 @@
+{
+  "$defs": {
+    "EvidenceBoundary": {
+      "additionalProperties": false,
+      "properties": {
+        "cuda_execution": {
+          "const": false,
+          "default": false,
+          "title": "Cuda Execution",
+          "type": "boolean"
+        },
+        "evidence_scope": {
+          "const": "TEST_FIXTURE_ONLY",
+          "default": "TEST_FIXTURE_ONLY",
+          "title": "Evidence Scope",
+          "type": "string"
+        },
+        "gpu_execution": {
+          "const": false,
+          "default": false,
+          "title": "Gpu Execution",
+          "type": "boolean"
+        },
+        "historical_authentication_effect": {
+          "const": "NONE",
+          "default": "NONE",
+          "title": "Historical Authentication Effect",
+          "type": "string"
+        },
+        "model_execution": {
+          "const": false,
+          "default": false,
+          "title": "Model Execution",
+          "type": "boolean"
+        },
+        "performance_claim_allowed": {
+          "const": false,
+          "default": false,
+          "title": "Performance Claim Allowed",
+          "type": "boolean"
+        },
+        "real_runtime_execution": {
+          "const": false,
+          "default": false,
+          "title": "Real Runtime Execution",
+          "type": "boolean"
+        },
+        "synthetic_fixture": {
+          "const": true,
+          "default": true,
+          "title": "Synthetic Fixture",
+          "type": "boolean"
+        },
+        "tokenizer_execution": {
+          "const": false,
+          "default": false,
+          "title": "Tokenizer Execution",
+          "type": "boolean"
+        }
+      },
+      "title": "EvidenceBoundary",
+      "type": "object"
+    },
+    "FixtureAction": {
+      "additionalProperties": false,
+      "properties": {
+        "delay_ms_before": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Delay Ms Before",
+          "type": "integer"
+        },
+        "http_status": {
+          "anyOf": [
+            {
+              "maximum": 599,
+              "minimum": 400,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Http Status"
+        },
+        "kind": {
+          "$ref": "#/$defs/FixtureActionKind"
+        },
+        "stall_seconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stall Seconds"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "FixtureAction",
+      "type": "object"
+    },
+    "FixtureActionKind": {
+      "enum": [
+        "SSE_COMMENT",
+        "SSE_TOKEN_EVENT",
+        "SSE_MALFORMED_DATA",
+        "SSE_DONE",
+        "HTTP_ERROR",
+        "STALL"
+      ],
+      "title": "FixtureActionKind",
+      "type": "string"
+    },
+    "FixtureCaseDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/FixtureAction"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Actions",
+          "type": "array"
+        },
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "expected_output_token_count": {
+          "minimum": 0,
+          "title": "Expected Output Token Count",
+          "type": "integer"
+        },
+        "expected_terminal_class": {
+          "$ref": "#/$defs/Stage1TerminalClass"
+        },
+        "input_text": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Input Text",
+          "type": "string"
+        },
+        "maximum_output_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Maximum Output Tokens",
+          "type": "integer"
+        },
+        "scenario": {
+          "$ref": "#/$defs/FixtureScenario"
+        }
+      },
+      "required": [
+        "case_id",
+        "scenario",
+        "input_text",
+        "maximum_output_tokens",
+        "expected_terminal_class",
+        "expected_output_token_count",
+        "actions"
+      ],
+      "title": "FixtureCaseDefinition",
+      "type": "object"
+    },
+    "FixtureDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/FixtureCaseDefinition"
+          },
+          "maxItems": 9,
+          "minItems": 9,
+          "title": "Cases",
+          "type": "array"
+        },
+        "fixture_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Fixture Id",
+          "type": "string"
+        },
+        "model_sentinel": {
+          "const": "fixture-no-model",
+          "title": "Model Sentinel",
+          "type": "string"
+        },
+        "protocol": {
+          "const": "OPENAI_COMPLETIONS_SSE_FIXTURE_SUBSET",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.2.0",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "fixture_id",
+        "protocol",
+        "protocol_version",
+        "model_sentinel",
+        "cases"
+      ],
+      "title": "FixtureDefinition",
+      "type": "object"
+    },
+    "FixtureScenario": {
+      "enum": [
+        "SUCCESS_THREE_SINGLE_TOKEN_CHUNKS_A",
+        "SUCCESS_THREE_SINGLE_TOKEN_CHUNKS_B",
+        "SUCCESS_MULTI_TOKEN_EVENT",
+        "SUCCESS_FIRST_BODY_BEFORE_FIRST_TOKEN",
+        "SUCCESS_SINGLE_OUTPUT_TOKEN",
+        "MALFORMED_AFTER_PARTIAL_OUTPUT",
+        "HTTP_ERROR",
+        "TIMEOUT_AFTER_PARTIAL_BODY",
+        "WARMUP_SUCCESS"
+      ],
+      "title": "FixtureScenario",
+      "type": "string"
+    },
+    "Stage1LoadShape": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "CLOSED_LOOP",
+          "title": "Kind",
+          "type": "string"
+        },
+        "requested_client_concurrency": {
+          "const": 2,
+          "title": "Requested Client Concurrency",
+          "type": "integer"
+        },
+        "scheduling_policy": {
+          "const": "DECLARED_ORDER_NEXT_AVAILABLE_CLIENT",
+          "title": "Scheduling Policy",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "requested_client_concurrency",
+        "scheduling_policy"
+      ],
+      "title": "Stage1LoadShape",
+      "type": "object"
+    },
+    "Stage1RunConfiguration": {
+      "additionalProperties": false,
+      "properties": {
+        "configured_server_batch_source": {
+          "default": null,
+          "title": "Configured Server Batch Source",
+          "type": "null"
+        },
+        "configured_server_maximum_batch_size": {
+          "default": null,
+          "title": "Configured Server Maximum Batch Size",
+          "type": "null"
+        },
+        "fixture_path": {
+          "const": "examples/fixtures/streaming-fixture-v1.json",
+          "title": "Fixture Path",
+          "type": "string"
+        },
+        "fixture_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Fixture Sha256",
+          "type": "string"
+        },
+        "load_shape": {
+          "$ref": "#/$defs/Stage1LoadShape"
+        },
+        "measured_request_count": {
+          "const": 8,
+          "title": "Measured Request Count",
+          "type": "integer"
+        },
+        "measurement_contract_version": {
+          "const": "0.2.0",
+          "title": "Measurement Contract Version",
+          "type": "string"
+        },
+        "model": {
+          "const": "fixture-no-model",
+          "title": "Model",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.2.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "slo": {
+          "$ref": "#/$defs/Stage1SLODefinition"
+        },
+        "stream": {
+          "const": true,
+          "title": "Stream",
+          "type": "boolean"
+        },
+        "temperature": {
+          "maximum": 0,
+          "minimum": 0,
+          "title": "Temperature",
+          "type": "number"
+        },
+        "timeout_policy": {
+          "$ref": "#/$defs/Stage1TimeoutPolicy"
+        },
+        "token_count_source": {
+          "const": "FIXTURE_EXACT",
+          "title": "Token Count Source",
+          "type": "string"
+        },
+        "warmup_request_count": {
+          "const": 1,
+          "title": "Warmup Request Count",
+          "type": "integer"
+        },
+        "workload_path": {
+          "const": "examples/workloads/streaming-fixture-v1.json",
+          "title": "Workload Path",
+          "type": "string"
+        },
+        "workload_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Workload Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "measurement_contract_version",
+        "workload_path",
+        "workload_sha256",
+        "fixture_path",
+        "fixture_sha256",
+        "load_shape",
+        "timeout_policy",
+        "slo",
+        "warmup_request_count",
+        "measured_request_count",
+        "model",
+        "temperature",
+        "stream",
+        "token_count_source"
+      ],
+      "title": "Stage1RunConfiguration",
+      "type": "object"
+    },
+    "Stage1SLODefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "policy_name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Policy Name",
+          "type": "string"
+        },
+        "successful_end_to_end_threshold_ns": {
+          "exclusiveMinimum": 0,
+          "title": "Successful End To End Threshold Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "policy_name",
+        "successful_end_to_end_threshold_ns"
+      ],
+      "title": "Stage1SLODefinition",
+      "type": "object"
+    },
+    "Stage1TerminalClass": {
+      "enum": [
+        "SUCCESS",
+        "FAILED",
+        "TIMEOUT",
+        "CANCELLED"
+      ],
+      "title": "Stage1TerminalClass",
+      "type": "string"
+    },
+    "Stage1TimeoutPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "connect_timeout_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Connect Timeout Seconds",
+          "type": "number"
+        },
+        "pool_timeout_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Pool Timeout Seconds",
+          "type": "number"
+        },
+        "read_timeout_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Read Timeout Seconds",
+          "type": "number"
+        },
+        "write_timeout_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Write Timeout Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "connect_timeout_seconds",
+        "write_timeout_seconds",
+        "pool_timeout_seconds",
+        "read_timeout_seconds"
+      ],
+      "title": "Stage1TimeoutPolicy",
+      "type": "object"
+    },
+    "Stage1WorkloadCase": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "expected_output_token_count": {
+          "minimum": 0,
+          "title": "Expected Output Token Count",
+          "type": "integer"
+        },
+        "expected_terminal_class": {
+          "$ref": "#/$defs/Stage1TerminalClass"
+        },
+        "prompt": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Prompt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "case_id",
+        "prompt",
+        "expected_terminal_class",
+        "expected_output_token_count"
+      ],
+      "title": "Stage1WorkloadCase",
+      "type": "object"
+    },
+    "Stage1WorkloadDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "measured_cases": {
+          "items": {
+            "$ref": "#/$defs/Stage1WorkloadCase"
+          },
+          "maxItems": 8,
+          "minItems": 8,
+          "title": "Measured Cases",
+          "type": "array"
+        },
+        "name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "ordering_policy": {
+          "const": "DECLARED",
+          "title": "Ordering Policy",
+          "type": "string"
+        },
+        "prompt_transformation": {
+          "const": "fixture-token-markers-v1",
+          "title": "Prompt Transformation",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.2.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "warmup_case": {
+          "$ref": "#/$defs/Stage1WorkloadCase"
+        }
+      },
+      "required": [
+        "schema_version",
+        "name",
+        "description",
+        "ordering_policy",
+        "prompt_transformation",
+        "warmup_case",
+        "measured_cases"
+      ],
+      "title": "Stage1WorkloadDefinition",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "boundary": {
+      "$ref": "#/$defs/EvidenceBoundary"
+    },
+    "configuration": {
+      "$ref": "#/$defs/Stage1RunConfiguration"
+    },
+    "configuration_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Configuration Sha256",
+      "type": "string"
+    },
+    "content_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Content Sha256"
+    },
+    "ended_at_utc": {
+      "format": "date-time",
+      "title": "Ended At Utc",
+      "type": "string"
+    },
+    "environment_identity": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Environment Identity",
+      "type": "string"
+    },
+    "fixture": {
+      "$ref": "#/$defs/FixtureDefinition"
+    },
+    "fixture_protocol": {
+      "const": "OPENAI_COMPLETIONS_SSE_FIXTURE_SUBSET",
+      "title": "Fixture Protocol",
+      "type": "string"
+    },
+    "fixture_protocol_version": {
+      "const": "1.0.0",
+      "title": "Fixture Protocol Version",
+      "type": "string"
+    },
+    "fixture_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Fixture Sha256",
+      "type": "string"
+    },
+    "loopback_host": {
+      "const": "127.0.0.1",
+      "title": "Loopback Host",
+      "type": "string"
+    },
+    "loopback_port": {
+      "maximum": 65535,
+      "minimum": 1,
+      "title": "Loopback Port",
+      "type": "integer"
+    },
+    "measurement_contract_version": {
+      "const": "0.2.0",
+      "title": "Measurement Contract Version",
+      "type": "string"
+    },
+    "model_identity": {
+      "const": "fixture-no-model",
+      "title": "Model Identity",
+      "type": "string"
+    },
+    "package_lock_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Package Lock Sha256",
+      "type": "string"
+    },
+    "package_version": {
+      "const": "0.2.0",
+      "title": "Package Version",
+      "type": "string"
+    },
+    "python_version": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Python Version",
+      "type": "string"
+    },
+    "raw_file_sha256": {
+      "additionalProperties": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Raw File Sha256",
+      "type": "object"
+    },
+    "run_duration_ns": {
+      "exclusiveMinimum": 0,
+      "title": "Run Duration Ns",
+      "type": "integer"
+    },
+    "run_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "runtime_identity": {
+      "const": "deterministic-loopback-http-fixture",
+      "title": "Runtime Identity",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "semantic_fingerprint": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Semantic Fingerprint",
+      "type": "string"
+    },
+    "source_commit": {
+      "pattern": "^(?:[0-9a-f]{40}|ARCHIVE_NO_GIT|WORKTREE_DIRTY)$",
+      "title": "Source Commit",
+      "type": "string"
+    },
+    "started_at_utc": {
+      "format": "date-time",
+      "title": "Started At Utc",
+      "type": "string"
+    },
+    "summary_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Summary Sha256",
+      "type": "string"
+    },
+    "tokenizer_identity": {
+      "const": "not-executed-fixture-exact-markers",
+      "title": "Tokenizer Identity",
+      "type": "string"
+    },
+    "workload": {
+      "$ref": "#/$defs/Stage1WorkloadDefinition"
+    },
+    "workload_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Workload Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "boundary",
+    "schema_version",
+    "measurement_contract_version",
+    "fixture_protocol",
+    "fixture_protocol_version",
+    "run_id",
+    "source_commit",
+    "package_version",
+    "python_version",
+    "package_lock_sha256",
+    "environment_identity",
+    "runtime_identity",
+    "model_identity",
+    "tokenizer_identity",
+    "started_at_utc",
+    "ended_at_utc",
+    "run_duration_ns",
+    "loopback_host",
+    "loopback_port",
+    "workload",
+    "configuration",
+    "fixture",
+    "workload_sha256",
+    "configuration_sha256",
+    "fixture_sha256",
+    "raw_file_sha256",
+    "summary_sha256",
+    "semantic_fingerprint"
+  ],
+  "title": "Stage1ExecutionManifest",
+  "type": "object"
+}

@@ -1,0 +1,129 @@
+{
+  "cases": [
+    {
+      "actions": [
+        {"delay_ms_before": 10, "kind": "SSE_TOKEN_EVENT", "text": "<t900>"},
+        {"delay_ms_before": 10, "kind": "SSE_TOKEN_EVENT", "text": "<t901>"},
+        {"delay_ms_before": 20, "kind": "SSE_DONE"}
+      ],
+      "case_id": "warmup-success",
+      "expected_output_token_count": 2,
+      "expected_terminal_class": "SUCCESS",
+      "input_text": "<p900><p901>",
+      "maximum_output_tokens": 2,
+      "scenario": "WARMUP_SUCCESS"
+    },
+    {
+      "actions": [
+        {"delay_ms_before": 30, "kind": "SSE_TOKEN_EVENT", "text": "<t000>"},
+        {"delay_ms_before": 20, "kind": "SSE_TOKEN_EVENT", "text": "<t001>"},
+        {"delay_ms_before": 20, "kind": "SSE_TOKEN_EVENT", "text": "<t002>"},
+        {"delay_ms_before": 30, "kind": "SSE_DONE"}
+      ],
+      "case_id": "success-three-a",
+      "expected_output_token_count": 3,
+      "expected_terminal_class": "SUCCESS",
+      "input_text": "<p000><p001>",
+      "maximum_output_tokens": 3,
+      "scenario": "SUCCESS_THREE_SINGLE_TOKEN_CHUNKS_A"
+    },
+    {
+      "actions": [
+        {"delay_ms_before": 25, "kind": "SSE_TOKEN_EVENT", "text": "<t003>"},
+        {"delay_ms_before": 20, "kind": "SSE_TOKEN_EVENT", "text": "<t004>"},
+        {"delay_ms_before": 20, "kind": "SSE_TOKEN_EVENT", "text": "<t005>"},
+        {"delay_ms_before": 30, "kind": "SSE_DONE"}
+      ],
+      "case_id": "success-three-b",
+      "expected_output_token_count": 3,
+      "expected_terminal_class": "SUCCESS",
+      "input_text": "<p002><p003>",
+      "maximum_output_tokens": 3,
+      "scenario": "SUCCESS_THREE_SINGLE_TOKEN_CHUNKS_B"
+    },
+    {
+      "actions": [
+        {"delay_ms_before": 20, "kind": "SSE_TOKEN_EVENT", "text": "<t006>"},
+        {"delay_ms_before": 20, "kind": "SSE_TOKEN_EVENT", "text": "<t007><t008>"},
+        {"delay_ms_before": 25, "kind": "SSE_DONE"}
+      ],
+      "case_id": "success-multi-token-event",
+      "expected_output_token_count": 3,
+      "expected_terminal_class": "SUCCESS",
+      "input_text": "<p004><p005>",
+      "maximum_output_tokens": 3,
+      "scenario": "SUCCESS_MULTI_TOKEN_EVENT"
+    },
+    {
+      "actions": [
+        {"delay_ms_before": 0, "kind": "SSE_COMMENT", "text": "fixture-keepalive"},
+        {"delay_ms_before": 50, "kind": "SSE_TOKEN_EVENT", "text": "<t009>"},
+        {"delay_ms_before": 20, "kind": "SSE_TOKEN_EVENT", "text": "<t010>"},
+        {"delay_ms_before": 25, "kind": "SSE_DONE"}
+      ],
+      "case_id": "success-first-body-before-token",
+      "expected_output_token_count": 2,
+      "expected_terminal_class": "SUCCESS",
+      "input_text": "<p006><p007>",
+      "maximum_output_tokens": 2,
+      "scenario": "SUCCESS_FIRST_BODY_BEFORE_FIRST_TOKEN"
+    },
+    {
+      "actions": [
+        {"delay_ms_before": 20, "kind": "SSE_TOKEN_EVENT", "text": "<t011>"},
+        {"delay_ms_before": 25, "kind": "SSE_DONE"}
+      ],
+      "case_id": "success-single-output-token",
+      "expected_output_token_count": 1,
+      "expected_terminal_class": "SUCCESS",
+      "input_text": "<p008>",
+      "maximum_output_tokens": 1,
+      "scenario": "SUCCESS_SINGLE_OUTPUT_TOKEN"
+    },
+    {
+      "actions": [
+        {"delay_ms_before": 20, "kind": "SSE_TOKEN_EVENT", "text": "<t012>"},
+        {"delay_ms_before": 20, "kind": "SSE_MALFORMED_DATA", "text": "{malformed-json"}
+      ],
+      "case_id": "malformed-after-partial-output",
+      "expected_output_token_count": 1,
+      "expected_terminal_class": "FAILED",
+      "input_text": "<p009><p010>",
+      "maximum_output_tokens": 2,
+      "scenario": "MALFORMED_AFTER_PARTIAL_OUTPUT"
+    },
+    {
+      "actions": [
+        {
+          "delay_ms_before": 0,
+          "http_status": 503,
+          "kind": "HTTP_ERROR",
+          "text": "synthetic fixture unavailable"
+        }
+      ],
+      "case_id": "http-error",
+      "expected_output_token_count": 0,
+      "expected_terminal_class": "FAILED",
+      "input_text": "<p011>",
+      "maximum_output_tokens": 1,
+      "scenario": "HTTP_ERROR"
+    },
+    {
+      "actions": [
+        {"delay_ms_before": 0, "kind": "SSE_COMMENT", "text": "fixture-before-timeout"},
+        {"delay_ms_before": 0, "kind": "STALL", "stall_seconds": 2.0}
+      ],
+      "case_id": "timeout-after-partial-body",
+      "expected_output_token_count": 0,
+      "expected_terminal_class": "TIMEOUT",
+      "input_text": "<p012><p013>",
+      "maximum_output_tokens": 1,
+      "scenario": "TIMEOUT_AFTER_PARTIAL_BODY"
+    }
+  ],
+  "fixture_id": "streaming-fixture-v1",
+  "model_sentinel": "fixture-no-model",
+  "protocol": "OPENAI_COMPLETIONS_SSE_FIXTURE_SUBSET",
+  "protocol_version": "1.0.0",
+  "schema_version": "0.2.0"
+}

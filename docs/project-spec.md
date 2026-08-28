@@ -1,9 +1,10 @@
-# Stage 0 project specification
+# Stage 0 and Stage 1 project specification
 
 ## Objective
 
-Establish a deterministic, testable measurement-contract foundation without executing an LLM
-runtime or making performance claims.
+Preserve the deterministic Stage 0 measurement-contract foundation and add one bounded,
+reconstructable Stage 1 loopback streaming fixture without executing an LLM runtime or making
+performance claims.
 
 ## Required outputs
 
@@ -13,8 +14,15 @@ runtime or making performance claims.
 - compatibility checks performed before delta calculation;
 - generated versioned JSON Schemas and byte-for-byte synchronization checks;
 - validation-only CLI, adversarial tests, public-safety scan, and deterministic fixture verifier.
+- fixed-destination HTTPX client and standard-library loopback HTTP/1.1 SSE fixture;
+- one warmup and eight measured cases covering success, multi-token events, body/token boundary
+  separation, malformed partial output, HTTP error, and partial-body timeout;
+- exact fixture-marker accounting, canonical Stage 1 TPOT, conditional ITL, failure/timeout rates,
+  lifecycle-derived concurrency, raw JSONL retention, atomic writes, exact reconstruction, and
+  semantic-only repeat comparison.
 
 ## Non-goals
 
-Runtime integration, networking, model or tokenizer acquisition, GPU work, profiling, deployment,
-and real benchmarking are outside Stage 0.
+Real runtime integration, arbitrary or external networking, model or tokenizer acquisition, GPU
+work, profiling, containers, deployment, publication, and real benchmarking remain non-goals. The
+only networking is the Stage 1 runner's actual TCP traffic to its own `127.0.0.1` ephemeral fixture.

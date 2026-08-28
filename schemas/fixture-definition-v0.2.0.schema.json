@@ -1,0 +1,202 @@
+{
+  "$defs": {
+    "FixtureAction": {
+      "additionalProperties": false,
+      "properties": {
+        "delay_ms_before": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Delay Ms Before",
+          "type": "integer"
+        },
+        "http_status": {
+          "anyOf": [
+            {
+              "maximum": 599,
+              "minimum": 400,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Http Status"
+        },
+        "kind": {
+          "$ref": "#/$defs/FixtureActionKind"
+        },
+        "stall_seconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stall Seconds"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "FixtureAction",
+      "type": "object"
+    },
+    "FixtureActionKind": {
+      "enum": [
+        "SSE_COMMENT",
+        "SSE_TOKEN_EVENT",
+        "SSE_MALFORMED_DATA",
+        "SSE_DONE",
+        "HTTP_ERROR",
+        "STALL"
+      ],
+      "title": "FixtureActionKind",
+      "type": "string"
+    },
+    "FixtureCaseDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/FixtureAction"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Actions",
+          "type": "array"
+        },
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "expected_output_token_count": {
+          "minimum": 0,
+          "title": "Expected Output Token Count",
+          "type": "integer"
+        },
+        "expected_terminal_class": {
+          "$ref": "#/$defs/Stage1TerminalClass"
+        },
+        "input_text": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Input Text",
+          "type": "string"
+        },
+        "maximum_output_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Maximum Output Tokens",
+          "type": "integer"
+        },
+        "scenario": {
+          "$ref": "#/$defs/FixtureScenario"
+        }
+      },
+      "required": [
+        "case_id",
+        "scenario",
+        "input_text",
+        "maximum_output_tokens",
+        "expected_terminal_class",
+        "expected_output_token_count",
+        "actions"
+      ],
+      "title": "FixtureCaseDefinition",
+      "type": "object"
+    },
+    "FixtureScenario": {
+      "enum": [
+        "SUCCESS_THREE_SINGLE_TOKEN_CHUNKS_A",
+        "SUCCESS_THREE_SINGLE_TOKEN_CHUNKS_B",
+        "SUCCESS_MULTI_TOKEN_EVENT",
+        "SUCCESS_FIRST_BODY_BEFORE_FIRST_TOKEN",
+        "SUCCESS_SINGLE_OUTPUT_TOKEN",
+        "MALFORMED_AFTER_PARTIAL_OUTPUT",
+        "HTTP_ERROR",
+        "TIMEOUT_AFTER_PARTIAL_BODY",
+        "WARMUP_SUCCESS"
+      ],
+      "title": "FixtureScenario",
+      "type": "string"
+    },
+    "Stage1TerminalClass": {
+      "enum": [
+        "SUCCESS",
+        "FAILED",
+        "TIMEOUT",
+        "CANCELLED"
+      ],
+      "title": "Stage1TerminalClass",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/FixtureCaseDefinition"
+      },
+      "maxItems": 9,
+      "minItems": 9,
+      "title": "Cases",
+      "type": "array"
+    },
+    "fixture_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Fixture Id",
+      "type": "string"
+    },
+    "model_sentinel": {
+      "const": "fixture-no-model",
+      "title": "Model Sentinel",
+      "type": "string"
+    },
+    "protocol": {
+      "const": "OPENAI_COMPLETIONS_SSE_FIXTURE_SUBSET",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "protocol_version": {
+      "const": "1.0.0",
+      "title": "Protocol Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.2.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "fixture_id",
+    "protocol",
+    "protocol_version",
+    "model_sentinel",
+    "cases"
+  ],
+  "title": "FixtureDefinition",
+  "type": "object"
+}
