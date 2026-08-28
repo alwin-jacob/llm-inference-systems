@@ -1,10 +1,11 @@
-# Stage 0 and Stage 1 project specification
+# Stage 0, Stage 1, and Stage 2A project specification
 
 ## Objective
 
 Preserve the deterministic Stage 0 measurement-contract foundation and add one bounded,
 reconstructable Stage 1 loopback streaming fixture without executing an LLM runtime or making
-performance claims.
+performance claims. Add a Stage 2A CPU-fixture-tested protocol for validating a separately
+authorized future real-runtime evidence run, while executing none of that runtime stack.
 
 ## Required outputs
 
@@ -20,13 +21,19 @@ performance claims.
 - exact fixture-marker accounting, canonical Stage 1 TPOT, conditional ITL, failure/timeout rates,
   lifecycle-derived concurrency, raw JSONL retention, atomic writes, exact reconstruction, and
   semantic-only repeat comparison.
+- strict Stage 2A request/identity/SSE/usage, exact Prometheus-series, cancellation/drain,
+  experiment-phase, offline-process, dynamic-resource, manifest-last bundle, three-restart, and
+  tiny-sample reporting contracts;
+- CPU-only Stage 2A response/log/metric fixtures, separate uninstalled execution-lock metadata,
+  historical Stage 0/1 byte-preservation verification, and generated `0.3.0` schemas.
 
 ## Non-goals
 
-Real runtime integration, arbitrary or external benchmark networking, model or tokenizer
-acquisition, GPU work, profiling, containers, deployment, package publication, and real
-benchmarking remain Stage 1 non-goals. The only benchmark networking is the Stage 1 runner's actual
-TCP traffic to its own `127.0.0.1` ephemeral fixture.
+Real runtime execution, arbitrary or external benchmark networking, model or tokenizer acquisition,
+GPU work, profiling, containers, deployment, package publication, and real benchmarking remain
+non-goals. The only fixture networking is actual TCP traffic to project-owned `127.0.0.1`
+ephemeral servers. Stage 2A future-runtime contracts and execution-lock metadata are not executable
+runtime paths.
 
 Public source release is a separate governance action. It does not expand the
 `TEST_FIXTURE_ONLY` evidence scope or authorize any model, tokenizer, serving-runtime, GPU, CUDA,

@@ -15,6 +15,11 @@ from pathlib import Path
 
 EXPECTED_PYTHON_VERSION = "3.13.15"
 EVIDENCE_DIRECTORY = Path("artifacts/stage1-fixture/2026-08-27")
+IMMUTABLE_DIRECTORIES = (
+    EVIDENCE_DIRECTORY,
+    Path("examples"),
+    Path("schemas"),
+)
 
 
 def _require(condition: bool, message: str) -> None:
@@ -37,7 +42,10 @@ def _sha256(path: Path) -> str:
 
 
 def _immutable_snapshot(root: Path) -> dict[str, str]:
-    paths = [root / "uv.lock", *(root / EVIDENCE_DIRECTORY).rglob("*")]
+    paths = [
+        root / "uv.lock",
+        *(path for directory in IMMUTABLE_DIRECTORIES for path in (root / directory).rglob("*")),
+    ]
     snapshot: dict[str, str] = {}
     for path in sorted(paths):
         if path.is_symlink():
@@ -103,6 +111,7 @@ def _verify_export(export_root: Path, expected_snapshot: dict[str, str]) -> None
         ["uv", "run", "--no-sync", "python", "scripts/check_public_safety.py"],
         ["uv", "run", "--no-sync", "python", "scripts/verify_stage0.py"],
         ["uv", "run", "--no-sync", "python", "scripts/verify_stage1.py"],
+        ["uv", "run", "--no-sync", "python", "scripts/verify_stage2a.py"],
         [
             "uv",
             "run",
@@ -111,6 +120,31 @@ def _verify_export(export_root: Path, expected_snapshot: dict[str, str]) -> None
             "scripts/verify_checked_stage1_evidence.py",
             EVIDENCE_DIRECTORY.as_posix(),
         ],
+        [
+            "uv",
+            "run",
+            "--no-sync",
+            "llm-inference",
+            "validate-config",
+            "examples/configs/stage2a-protocol-fixture-v1.json",
+        ],
+        [
+            "uv",
+            "run",
+            "--no-sync",
+            "llm-inference",
+            "validate-stage2-request",
+            "examples/fixtures/stage2a-completion-request-v1.json",
+        ],
+        [
+            "uv",
+            "run",
+            "--no-sync",
+            "llm-inference",
+            "validate-stage2-execution-lock",
+            "execution-lock/stage2-execution-lock.json",
+        ],
+        ["uv", "run", "--no-sync", "llm-inference", "schema-check"],
     ]
     for command in commands:
         _run(command, cwd=export_root, env=environment)
@@ -157,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         json.dumps(
             {
-                "checked_artifacts_byte_identical": True,
+                "immutable_inputs_byte_identical": True,
                 "python_version": EXPECTED_PYTHON_VERSION,
                 "status": "verified",
                 "temporary_directory_removed": True,

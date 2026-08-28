@@ -138,3 +138,38 @@ not deployed, published, historically authenticated, or accepted into the canoni
   performance, historical-authentication, or interview-defense claim. No tag, GitHub Release,
   package publication, deployment, profile or pin change, outreach, Stage 2, runtime/model/GPU
   execution, or paid-resource action is part of this documentation commit.
+
+## 2026-08-28 — Controller-authorized local Stage 2A protocol implementation
+
+- Verified a clean public `main` and unchanged `origin/main` at
+  `40d1ecdc26d1b70f20df42de3e1156e13891cc4d`, confirmed the required local and remote Stage 2A
+  branch was absent, recorded the frozen schema/artifact/example/lock hashes, passed the complete
+  198-test public-release gate, and created local branch `stage2a-runtime-protocol` with no upstream.
+- Raised only the current package/protocol to `0.3.0`. The Stage 1 checked-evidence verifier now
+  compares its manifest with an explicit historical package version `0.2.0`; all historical
+  Stage 0/1 schemas, examples, and checked artifacts remain byte-preserved. The public-release
+  `uv.lock` is retained as historical evidence under SHA-256
+  `748fd114d05ea6e96c058f41b8a1ee0736d30339f100179e3ee7c47c7e6c59e6`, rather than relabeled as
+  the Stage 2A lock.
+- Added strict future completion-request, request-chain, four-terminal SSE, exact token/usage,
+  grouped-token, Prometheus, cancellation/drain, runtime-phase, offline-process, resource-budget,
+  bundle lifecycle/reconstruction, three-restart, aggregate, and tiny-sample reporting contracts.
+- Added a CPU-only scripted fixture server fixed to IPv4 loopback and an OS-assigned port. Tests
+  cover compatible streams, logs, metrics, failure paths, durability simulation, tamper rejection,
+  and public-safety boundaries without importing or executing a serving runtime.
+- Reviewed official vLLM source text at pinned revision
+  `2cf0a6915ce544dc493a0990f2ea38d81601128a` and official package-index metadata read-only. No
+  runtime or model package was installed, imported, or executed.
+- Created a separate uninstalled Linux/CUDA execution-lock specification. Official metadata did not
+  expose the selected torchvision artifact SHA-256; deriving it would require a binary download,
+  so its status remains `BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED`. No resolver lock is
+  represented as complete.
+- Extended public-safety scanning for credentials, cookies, authorization material, proxy
+  credentials, GPU UUIDs, model-cache paths, notebook/account identifiers, employer control-plane
+  names, sensitive personal-file names, arbitrary executable remote URLs, symlinks, and unreviewed
+  generated binaries.
+
+This Stage 2A work is local source and `TEST_FIXTURE_ONLY` evidence only. It does not execute vLLM,
+a model, tokenizer, GPU, CUDA, Kaggle, remote compute, or a paid resource; it does not alter public
+claims, résumé wording, historical authentication, interview-defense status, remotes, tags, or
+published history. Stage 2B remains separately unauthorized.

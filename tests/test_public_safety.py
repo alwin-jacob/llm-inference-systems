@@ -258,6 +258,72 @@ def test_existing_secret_like_patterns_remain_detected(
     assert scan_repository(root) == (("unsafe.txt", expected_rule),)
 
 
+@pytest.mark.parametrize(
+    ("private_value", "expected_rule"),
+    [
+        ("Author" + "ization: Bearer fixture-secret-value", "authorization-header"),
+        ("Cook" + "ie: session=fixture-secret", "cookie-header"),
+        ("https://fixture-user:" + "fixture-pass@proxy.invalid", "proxy-credential-url"),
+        (
+            "GPU-" + "01234567-89ab-cdef-0123-456789abcdef",
+            "gpu-uuid",
+        ),
+        ("cache=/" + "private/.cache/huggingface/hub", "model-cache-path"),
+        (
+            "https://kaggle.com/" + "code/private-user/private-notebook",
+            "notebook-account-identifier",
+        ),
+        (("sam" + "sung") + "-internal-control-plane.json", "employer-control-plane-file"),
+        ("medical" + "-record.pdf", "sensitive-health-file"),
+        ("loan" + "-application.json", "sensitive-credit-file"),
+    ],
+)
+def test_stage2_private_runtime_and_personal_patterns_are_detected(
+    tmp_path: Path,
+    private_value: str,
+    expected_rule: str,
+) -> None:
+    root = tmp_path / "archive"
+    root.mkdir()
+    (root / "unsafe.txt").write_text(private_value + "\n", encoding="utf-8")
+
+    assert scan_repository(root) == (("unsafe.txt", expected_rule),)
+
+
+def test_executable_runtime_config_rejects_arbitrary_remote_url(tmp_path: Path) -> None:
+    root = tmp_path / "archive"
+    configuration = root / "examples" / "configs" / "unsafe.json"
+    configuration.parent.mkdir(parents=True)
+    configuration.write_text(
+        '{"endpoint":"https://' + 'runtime.invalid/v1/completions"}\n',
+        encoding="utf-8",
+    )
+
+    assert scan_repository(root) == (
+        ("examples/configs/unsafe.json", "arbitrary-executable-runtime-url"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "expected_rule"),
+    [
+        ("profile.nsys-rep", b"fixture profile", "generated-binary-or-profiler-artifact"),
+        ("opaque.dat", b"\xff\xfe", "unreviewed-binary-content"),
+    ],
+)
+def test_unreviewed_generated_or_binary_artifacts_are_rejected(
+    tmp_path: Path,
+    filename: str,
+    content: bytes,
+    expected_rule: str,
+) -> None:
+    root = tmp_path / "archive"
+    root.mkdir()
+    (root / filename).write_bytes(content)
+
+    assert scan_repository(root) == ((filename, expected_rule),)
+
+
 def test_archive_symlink_is_reported_without_reading_external_content(tmp_path: Path) -> None:
     root = tmp_path / "archive"
     root.mkdir()

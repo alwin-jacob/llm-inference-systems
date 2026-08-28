@@ -32,6 +32,10 @@ _ARCHIVE_EXCLUDED_DIRECTORIES = frozenset(
 _ARCHIVE_EXCLUDED_FILES = frozenset({".coverage", ".DS_Store"})
 _ARCHIVE_EXCLUDED_SUFFIXES = frozenset({".pyc", ".pyd", ".pyo"})
 _SYMLINK_RULE = "repository-symlink"
+_PROHIBITED_GENERATED_SUFFIXES = frozenset(
+    {".bin", ".ckpt", ".npy", ".npz", ".nsys-rep", ".onnx", ".pt", ".qdrep", ".safetensors"}
+)
+_EXECUTABLE_URL_PATTERN = re.compile(r"https?://[^\s\"']+", re.IGNORECASE)
 _HOSTNAME_BOUNDARY_CHARACTERS = r"A-Za-z0-9._-"
 _HOSTNAME_SEGMENT_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,252}"
 _HOME_USERNAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
@@ -211,6 +215,11 @@ def _patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
         "private-credit-plan": "Cre" + "dila",
         "private-migration-source": "immig" + "ration",
         "canonical-private-project": "canonical " + "Project",
+        "sensitive-health-file": "medical" + "-record",
+        "sensitive-relative-file": "family" + "-record",
+        "sensitive-monetary-file": "finance" + "-record",
+        "sensitive-credit-file": "loan" + "-application",
+        "sensitive-cv-file": "resume" + "_private",
     }
     literal_patterns = tuple(
         (name, re.compile(re.escape(value), re.IGNORECASE)) for name, value in fragments.items()
@@ -221,7 +230,43 @@ def _patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
         ("generic-api-token", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
         (
             "credential-file-content",
-            re.compile(r"(?im)^\s*(?:aws_secret_access_key|api_key|client_secret)\s*="),
+            re.compile(
+                r"(?im)^\s*(?:aws_secret_access_key|api_key|client_secret|"
+                r"proxy_password|access_token|refresh_token)\s*="
+            ),
+        ),
+        (
+            "authorization-header",
+            re.compile(r"(?im)^\s*authorization\s*:\s*(?:basic|bearer)\s+\S+"),
+        ),
+        ("cookie-header", re.compile(r"(?im)^\s*(?:cookie|set-cookie)\s*:\s*\S+")),
+        (
+            "proxy-credential-url",
+            re.compile(r"(?i)\bhttps?://[^\s/:@]+:[^\s/@]+@[^\s/]+"),
+        ),
+        (
+            "gpu-uuid",
+            re.compile(r"(?i)\bGPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"),
+        ),
+        (
+            "model-cache-path",
+            re.compile(
+                r"(?i)(?:^|[\s=:\"'])(?:~|/[^\s\"']+)?/\.cache/"
+                r"(?:huggingface|torch|vllm)(?:/|\b)"
+            ),
+        ),
+        (
+            "notebook-account-identifier",
+            re.compile(
+                r"(?i)\b(?:kaggle\.com/code|colab\.research\.google\.com/drive)/[^\s/]+/[^\s]+"
+            ),
+        ),
+        (
+            "employer-control-plane-file",
+            re.compile(
+                ("sam" + "sung") + r"[^\n]{0,80}(?:claim|ledger|control[-_ ]?plane)",
+                re.IGNORECASE,
+            ),
         ),
     )
     return (*literal_patterns, *_private_environment_patterns(), *token_patterns)
@@ -236,10 +281,19 @@ def scan_repository(root: Path) -> tuple[tuple[str, str], ...]:
         if _path_has_symlink_component(resolved_root, relative_path):
             findings.append((relative, _SYMLINK_RULE))
             continue
+        if path.suffix.casefold() in _PROHIBITED_GENERATED_SUFFIXES:
+            findings.append((relative, "generated-binary-or-profiler-artifact"))
+            continue
         try:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
+            findings.append((relative, "unreviewed-binary-content"))
             continue
+        if relative.startswith("examples/configs/"):
+            for match in _EXECUTABLE_URL_PATTERN.finditer(text):
+                if not match.group(0).startswith("http://127.0.0.1"):
+                    findings.append((relative, "arbitrary-executable-runtime-url"))
+                    break
         for rule, pattern in _patterns():
             if pattern.search(text):
                 findings.append((relative, rule))

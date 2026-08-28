@@ -26,3 +26,20 @@ For measured requests, `failure_rate` counts only final `FAILED` terminals and e
 timeouts and cancellations; `timeout_rate` counts only final `TIMEOUT` terminals. Both use all
 started non-warmup attempts as their denominator and retain numerator and denominator. A zero
 denominator produces null/unavailable, never division by zero.
+
+Stage 2A adds protocol-lifecycle failures without changing either historical taxonomy. A future
+successful response requires one generation, usage, protocol, and transport terminal in strict
+order. Malformed, missing, duplicated, reordered, or post-terminal data; token/usage disagreement;
+or ambiguous identity correlation invalidates the repetition while raw evidence remains retained.
+
+The cancellation evaluator reports one of
+`SERVER_ABORT_ACKNOWLEDGED_AND_DRAINED`, `UNKNOWN_ACKNOWLEDGEMENT`, `LATER_COMPLETION`,
+`RESIDUAL_WORK_TIMEOUT`, `TERMINAL_UNKNOWN`, or `ID_CORRELATION_FAILURE`. Acceptance requires the
+correlated abort chain, exact drain cadence, stable generation counter, cooldown, deadline, allowed
+abort counter, and no residual state. A terminal or counter from a non-abort reason is not accepted
+as cancellation success.
+
+Stage 2A bundles expose `INCOMPLETE`, `INVALID`, and `COMMITTED`. A crash before the final manifest
+remains inspectably incomplete. Durability-operation failure becomes invalid when the staging tree
+can still be recorded. Summaries refuse non-committed bundles, and aggregate commit requires all
+three repetition bundles plus passing semantic comparison.

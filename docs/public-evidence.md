@@ -1,9 +1,9 @@
 # Public evidence boundary
 
 The repository provides source, test, generated-schema, and verification evidence for its Stage 0
-contracts and Stage 1 deterministic loopback fixture. `TEST_FIXTURE_ONLY` values demonstrate code
-paths, actual local fixture HTTP traffic, and reconstruction invariants; they are not LLM
-measurements.
+contracts, Stage 1 deterministic loopback fixture, and Stage 2A CPU-tested future-runtime protocol.
+`TEST_FIXTURE_ONLY` values demonstrate code paths, local fixture HTTP traffic, and reconstruction
+invariants; they are not LLM measurements.
 
 | Evidence category | Current reviewed state |
 | --- | --- |
@@ -14,6 +14,9 @@ measurements.
 | Checked raw artifacts | Request, client-stream, and server records retained |
 | Checked derived summaries | Exactly reconstruct from retained raw evidence |
 | Checked semantic comparison | Compatible and passing with performance gating disabled |
+| Stage 2A protocol source and CPU fixtures | Present at package/protocol `0.3.0` |
+| Stage 2A real-runtime execution | Not performed; protocol requirements only |
+| Separate Linux/CUDA execution lock | Uninstalled, unexecuted, and blocked on one metadata-unavailable artifact hash |
 | CI configuration | Present and executed for repository verification |
 | Release-preparation remote CI | Passed at `68e64bc` through run `33164155869` |
 | Current release-head CI | External GitHub state; publication requires the same four jobs to pass before visibility changes |
@@ -23,7 +26,7 @@ measurements.
 | Profiler evidence | Not established |
 | Repository visibility | External GitHub setting; source content alone does not establish visibility |
 
-Stage 0 and Stage 1 do not establish any of the following:
+Stage 0, Stage 1, and Stage 2A do not establish any of the following:
 
 - vLLM;
 - SGLang;
@@ -62,3 +65,10 @@ show deterministic content identity and modification detection, not signature, a
 provenance authenticity, historical authentication, or real-runtime execution. This fixture
 evidence does not promote any unsupported runtime, model, hardware, performance, historical, or
 interview-defense claim.
+
+Stage 2A's request, SSE, Prometheus, cancellation, phase, resource, and bundle validators establish
+only that scripted CPU fixtures exercise those contracts. Future launch arguments and the
+Linux/CUDA lock are specifications, not evidence that packages were installed or that a provider
+shape, model, tokenizer, GPU, CUDA state, request result, or serving metric was observed. Stage 2B
+remains a separately authorized action. No claim status, historical-authentication status,
+interview-defense status, or public résumé wording changes.

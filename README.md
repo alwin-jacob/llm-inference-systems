@@ -1,33 +1,33 @@
 # LLM Inference Systems
 
-This repository preserves its Stage 0 measurement-contract foundation and adds a Stage 1
-deterministic loopback streaming vertical slice. Stage 1 executes actual asynchronous TCP/HTTP
-traffic between a bounded HTTPX client and a standard-library fixture server bound only to
-`127.0.0.1` on an OS-assigned port.
+This repository preserves its Stage 0 measurement-contract foundation and Stage 1 deterministic
+loopback streaming vertical slice, and adds the Stage 2A protocol layer at package/protocol version
+`0.3.0`. Stage 2A uses CPU-only scripted fixtures to test the evidence protocol required by a
+future real-runtime execution.
 
-The fixture executes no model and no LLM-serving runtime. Its timings are local
-harness-verification measurements and are not model, runtime, GPU, or production-performance
-evidence.
+The fixtures execute no model, tokenizer, or LLM-serving runtime. No vLLM, GPU, or CUDA execution
+has occurred. Fixture timings are local harness-verification measurements and are not model,
+runtime, GPU, capacity, or production-performance evidence.
 
 ## Evidence boundary
 
-Every Stage 0 and Stage 1 artifact and comparison is limited to `TEST_FIXTURE_ONLY`. Stage 1 uses
+Every executed Stage 0, Stage 1, and Stage 2A fixture is limited to `TEST_FIXTURE_ONLY`. Stage 1 uses
 exact project-authored `<pNNN>` and `<tNNN>` markers rather than a tokenizer. Its retained timing
 values verify client-observed boundaries, derivation semantics, and reconstruction; they are not
 LLM-serving results.
 
-Stage 0 and Stage 1 do not establish vLLM, SGLang, TensorRT-LLM, LLaMA or Mistral
+Stage 0, Stage 1, and Stage 2A do not establish vLLM, SGLang, TensorRT-LLM, LLaMA or Mistral
 serving, CUDA, NVIDIA GPU execution, H200/H100/A100 use, paged attention, continuous or
 in-flight batching, KV-cache behavior, FP8/INT8, speculative decoding, Nsight,
 Prometheus/Grafana, throughput or latency benchmark results, any approximately 30% result, or
-historical résumé authentication. Remote repository verification of this fixture-only source
-state is recorded below. Repository visibility is an external GitHub setting; neither remote
-verification nor public source availability expands this evidence boundary.
+historical résumé authentication. The separate Linux/CUDA execution lock is metadata only,
+uninstalled, and unexecuted. Stage 2B requires separate controller authorization. No current claim
+status or public résumé wording advances.
 
 ## Implemented foundation
 
 - Byte-preserved Stage 0 `0.1.0` contracts plus isolated Stage 1 `0.2.0` contracts and generated
-  schemas.
+  schemas, with Stage 2A additions under `0.3.0`.
 - Canonical JSON and unkeyed SHA-256 content identities, including self-hash omission.
 - A loopback-only `asyncio.start_server` HTTP/1.1 chunked SSE fixture and one shared scoped HTTPX
   `AsyncClient` with environment trust, redirects, and HTTP/2 disabled.
@@ -48,6 +48,13 @@ verification nor public source availability expands this evidence boundary.
 - Canonical JSON Schemas generated from Pydantic models and checked byte-for-byte.
 - CLI commands for local fixture execution, run-directory validation, raw summary reconstruction,
   and semantic comparison. The fixture command accepts no host, endpoint, URL, or base URL.
+- Strict Stage 2A request, four-terminal SSE, token/usage, request-ID, Prometheus, cancellation,
+  runtime-phase, offline-process, dynamic-resource, and tiny-sample reporting contracts.
+- Manifest-last `INCOMPLETE`/`INVALID`/`COMMITTED` repetition bundles, exact raw reconstruction,
+  three-restart semantic comparison, and aggregate-commit gating.
+- A CPU-only Stage 2A fixture server fixed to `127.0.0.1:0`, plus generated `0.3.0` schemas and a
+  verifier that proves historical Stage 0/1 bytes and ordinary dependency boundaries remain
+  unchanged.
 
 Client concurrency is a load-generator property. A configured or observed server batch size is
 a separate field and is never inferred from client concurrency.
@@ -72,6 +79,8 @@ or serving-performance evidence.
 Use the locked development environment and run the complete gate in this order:
 
 ```console
+git diff --check
+uv --version
 uv lock --check
 uv sync --python 3.13.15 --frozen --group dev
 uv run python --version
@@ -84,11 +93,15 @@ uv run python scripts/check_public_safety.py
 uv run python scripts/verify_stage0.py
 uv run python scripts/verify_stage1.py
 uv run python scripts/verify_checked_stage1_evidence.py artifacts/stage1-fixture/2026-08-27
+uv run python scripts/verify_stage2a.py
 uv run llm-inference version
 uv run llm-inference validate-workload examples/workloads/deterministic-smoke-v1.json
 uv run llm-inference validate-config examples/configs/stage0-contract-v1.json
 uv run llm-inference validate-workload examples/workloads/streaming-fixture-v1.json
 uv run llm-inference validate-config examples/configs/stage1-streaming-v1.json
+uv run llm-inference validate-config examples/configs/stage2a-protocol-fixture-v1.json
+uv run llm-inference validate-stage2-request examples/fixtures/stage2a-completion-request-v1.json
+uv run llm-inference validate-stage2-execution-lock execution-lock/stage2-execution-lock.json
 uv run llm-inference schema-check
 rm -rf /tmp/lis-stage1-run-a /tmp/lis-stage1-run-b /tmp/lis-stage1-comparison.json
 uv run llm-inference fixture-run --workload examples/workloads/streaming-fixture-v1.json --config examples/configs/stage1-streaming-v1.json --fixture examples/fixtures/streaming-fixture-v1.json --output-dir /tmp/lis-stage1-run-a
@@ -108,8 +121,8 @@ uv run python scripts/verify_git_archive.py
 
 The final command creates a Git archive from `HEAD`, extracts it without `.git` or `.venv`,
 performs a fresh frozen installation under exact Python `3.13.15`, repeats the complete source and
-checked-evidence gate, proves `uv.lock` and the checked artifacts remain byte-identical, and removes
-the temporary directory.
+checked-evidence gate including Stage 2A verification, proves historical Stage 0/1 inputs and the
+checked artifacts remain byte-identical, and removes the temporary directory.
 
 Schema files are generated only after the package builds:
 

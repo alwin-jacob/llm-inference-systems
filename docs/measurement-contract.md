@@ -99,3 +99,56 @@ places and per-second rates rounded to nine decimal places.
 These measurements are loopback fixture measurements used to verify the benchmark harness and
 measurement semantics. They are not LLM-serving, model, runtime, GPU, or production-performance
 measurements.
+
+# Measurement protocol 0.3.0
+
+Stage 2A preserves every `0.1.0` and `0.2.0` contract and schema byte. It adds a CPU-tested protocol
+for future real-runtime evidence without executing a runtime, model, tokenizer, GPU, or CUDA.
+
+## Identity and streaming terminals
+
+For external base ID `E`, the header and JSON request ID are `E`, the response header is `E`, every
+response body ID is `cmpl-E`, the serving item is `cmpl-E-0`, and the internal engine ID is
+`cmpl-E-0-` followed by exactly eight lowercase hexadecimal characters. Request-add and, for
+cancellation, external and internal abort logs must correlate to this single chain.
+
+A successful stream retains client dispatch, response headers, first nonempty body bytes, first
+output-token event, generation terminal, usage terminal, protocol terminal, and transport terminal.
+The final four occur exactly once in strict order. Generation terminal may carry output IDs or be a
+finish-only event, but exactly 32 output IDs must already be accumulated, with `finish_reason` equal
+to `length`, before the later usage, `[DONE]`, and clean transport close.
+
+Each request reconciles the exact 64 sent and returned prompt IDs, exact 32 accumulated output IDs,
+and server usage `64 + 32 = 96`. Sent IDs, returned IDs, event IDs, final IDs, text and text hash,
+server usage, optional future local counts, server per-request metrics, and disagreements remain
+separate evidence sources.
+
+Client-generation TPOT is:
+
+```text
+(generation_terminal_offset_ns - first_output_token_offset_ns)
+/ (output_token_count - 1)
+```
+
+If any content event groups multiple output IDs, client-generation TPOT and token-observation ITL
+are unavailable with reason `GROUPED_TOKEN_EVENT`; stream-output gaps and all non-token-timestamp
+evidence remain eligible. No per-token timestamps are synthesized.
+
+## Metrics, cancellation, and repetitions
+
+Prometheus evidence retains raw exposition, parsed samples, full label inventory, wall-clock scrape
+provenance, and monotonic scrape offset. Exact `model_name` and `engine` series are selected once;
+counters are subtracted only within one process, cannot decrease or reset, and are gated by
+quiescent pre/post scrapes. KV-cache percentage is descriptive and is not memory utilization.
+
+The cancellation model closes one 64-to-512 request after its first generated token, requires the
+external/internal abort chain, ten consecutive zero running/waiting samples at 100-ms cadence, one
+continuous second of stable generation count, two seconds of cooldown, and a ten-second hard drain
+deadline. An observed abort success-counter delta of zero or one is retained; every non-abort delta
+must be zero.
+
+Exactly three fresh, non-replaceable repetition bundles are compared by prompt IDs, output IDs,
+finish reason, usage, and output-text hash. Any mismatch makes semantic reproduction invalid and
+prohibits pooled performance interpretation. Stage 2A never calculates or displays p99. P50 and p95
+are named descriptive values with exact sample counts and restart grouping; goodput and capacity
+advancement remain prohibited.
