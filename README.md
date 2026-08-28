@@ -16,11 +16,12 @@ exact project-authored `<pNNN>` and `<tNNN>` markers rather than a tokenizer. It
 values verify client-observed boundaries, derivation semantics, and reconstruction; they are not
 LLM-serving results.
 
-Stage 0 does not establish vLLM, SGLang, TensorRT-LLM, LLaMA or Mistral serving, CUDA,
-NVIDIA GPU execution, H200/H100/A100 use, paged attention, continuous or in-flight batching,
-KV-cache behavior, FP8/INT8, speculative decoding, Nsight, Prometheus/Grafana, throughput or
-latency benchmark results, any approximately 30% result, historical résumé authentication, or
-remote CI execution. The workflow file is configuration evidence only.
+Stage 0 and Stage 1 do not establish vLLM, SGLang, TensorRT-LLM, LLaMA or Mistral
+serving, CUDA, NVIDIA GPU execution, H200/H100/A100 use, paged attention, continuous or
+in-flight batching, KV-cache behavior, FP8/INT8, speculative decoding, Nsight,
+Prometheus/Grafana, throughput or latency benchmark results, any approximately 30% result, or
+historical résumé authentication. Private remote verification of this fixture-only source state is
+recorded below; no public-release or serving-performance evidence exists.
 
 ## Implemented foundation
 
@@ -49,6 +50,19 @@ remote CI execution. The workflow file is configuration evidence only.
 
 Client concurrency is a load-generator property. A configured or observed server batch size is
 a separate field and is never inferred from client concurrency.
+
+## Remote verification
+
+The source-reviewed Stage 1 candidate at
+`56a06e75256fe4b2ed8acc783f5d8e92eb49a9a7` was privately staged and verified by
+GitHub Actions run `33161428242`. Four jobs passed: source verification on Python 3.12 and
+3.13, checked Stage 1 evidence on exact Python 3.13.15, and metadata-free Git-archive
+verification on exact Python 3.13.15. This is remote repository-verification evidence only; it is
+not model, tokenizer, serving-runtime, GPU, CUDA, production, capacity, historical, or
+public-release evidence.
+
+The release-preparation descendant pins `uv==0.12.5` and requires a new four-job private CI
+run before any separate publication decision.
 
 ## Local verification
 

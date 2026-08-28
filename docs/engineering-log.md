@@ -99,3 +99,22 @@ not deployed, published, historically authenticated, or accepted into the canoni
   directory.
 - Preserved `uv.lock` and every checked artifact byte-for-byte. No external operation, remote, tag,
   publication, deployment, or private staging occurred.
+
+## 2026-08-28 — Authorized private staging and release preparation
+
+- Created `alwin-jacob/llm-inference-systems` as a private GitHub repository and pushed the exact
+  five-commit source-reviewed history through
+  `56a06e75256fe4b2ed8acc783f5d8e92eb49a9a7`.
+- Private GitHub Actions run `33161428242` completed successfully with exactly four jobs:
+  `local-style-gate (3.12)`, `local-style-gate (3.13)`, `checked-stage1-evidence`, and
+  `metadata-free-git-archive`.
+- The source jobs passed Ruff, formatting, strict mypy, all 198 tests, 11 synchronized schemas,
+  public-safety verification, Stage 0 verification, and Stage 1 verification. The exact-evidence
+  and archive jobs passed on CPython `3.13.15`, including byte-identical checked-artifact
+  verification and temporary-directory cleanup.
+- The repository remained private. No public release, tag, GitHub Release, package publication,
+  issue, pull request, deployment, profile or pin change, outreach, Stage 2, runtime/model/GPU
+  execution, or paid-resource action occurred.
+- The source-review environment used `uv 0.12.5`, but the first private run resolved unpinned
+  `uv 0.12.7`. The release-preparation descendant now pins and requires exact `uv 0.12.5`; a new
+  four-job private CI run is required before any publication decision.
