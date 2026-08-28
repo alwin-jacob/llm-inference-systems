@@ -1,0 +1,381 @@
+{
+  "$defs": {
+    "IdentitySource": {
+      "enum": [
+        "SYNTHETIC_FIXTURE",
+        "CONFIGURED",
+        "RUNTIME_REPORTED",
+        "DIRECTLY_OBSERVED"
+      ],
+      "title": "IdentitySource",
+      "type": "string"
+    },
+    "LoadShape": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "CLOSED_LOOP",
+          "title": "Kind",
+          "type": "string"
+        },
+        "requested_client_concurrency": {
+          "exclusiveMinimum": 0,
+          "title": "Requested Client Concurrency",
+          "type": "integer"
+        },
+        "scheduling_policy": {
+          "const": "NEXT_AVAILABLE_CLIENT",
+          "title": "Scheduling Policy",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "requested_client_concurrency",
+        "scheduling_policy"
+      ],
+      "title": "LoadShape",
+      "type": "object"
+    },
+    "ModelIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "exact_revision": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Exact Revision",
+          "type": "string"
+        },
+        "identity_source": {
+          "$ref": "#/$defs/IdentitySource"
+        },
+        "model_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Model Id",
+          "type": "string"
+        },
+        "prompt_template_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Prompt Template Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model_id",
+        "exact_revision",
+        "prompt_template_sha256",
+        "identity_source"
+      ],
+      "title": "ModelIdentity",
+      "type": "object"
+    },
+    "SLODefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "end_to_end_threshold_ns": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End To End Threshold Ns"
+        },
+        "itl_threshold_ns": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Itl Threshold Ns"
+        },
+        "policy_name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Policy Name",
+          "type": "string"
+        },
+        "tpot_threshold_ns": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tpot Threshold Ns"
+        },
+        "ttft_threshold_ns": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ttft Threshold Ns"
+        }
+      },
+      "required": [
+        "policy_name"
+      ],
+      "title": "SLODefinition",
+      "type": "object"
+    },
+    "SamplingConfiguration": {
+      "additionalProperties": false,
+      "properties": {
+        "maximum_output_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Maximum Output Tokens",
+          "type": "integer"
+        },
+        "seed": {
+          "minimum": 0,
+          "title": "Seed",
+          "type": "integer"
+        },
+        "stop_sequences": {
+          "default": [],
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Stop Sequences",
+          "type": "array"
+        },
+        "temperature": {
+          "minimum": 0,
+          "title": "Temperature",
+          "type": "number"
+        },
+        "top_p": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Top P",
+          "type": "number"
+        }
+      },
+      "required": [
+        "seed",
+        "temperature",
+        "top_p",
+        "maximum_output_tokens"
+      ],
+      "title": "SamplingConfiguration",
+      "type": "object"
+    },
+    "TimeoutPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "connect_timeout_ns": {
+          "exclusiveMinimum": 0,
+          "title": "Connect Timeout Ns",
+          "type": "integer"
+        },
+        "first_output_token_timeout_ns": {
+          "exclusiveMinimum": 0,
+          "title": "First Output Token Timeout Ns",
+          "type": "integer"
+        },
+        "request_timeout_ns": {
+          "exclusiveMinimum": 0,
+          "title": "Request Timeout Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "connect_timeout_ns",
+        "first_output_token_timeout_ns",
+        "request_timeout_ns"
+      ],
+      "title": "TimeoutPolicy",
+      "type": "object"
+    },
+    "TokenizerIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "exact_revision": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Exact Revision",
+          "type": "string"
+        },
+        "identity_source": {
+          "$ref": "#/$defs/IdentitySource"
+        },
+        "tokenizer_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Tokenizer Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tokenizer_id",
+        "exact_revision",
+        "identity_source"
+      ],
+      "title": "TokenizerIdentity",
+      "type": "object"
+    },
+    "WorkloadIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "case_ids": {
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Case Ids",
+          "type": "array"
+        },
+        "content_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "ordering_policy": {
+          "$ref": "#/$defs/WorkloadOrdering"
+        }
+      },
+      "required": [
+        "content_sha256",
+        "case_ids",
+        "ordering_policy"
+      ],
+      "title": "WorkloadIdentity",
+      "type": "object"
+    },
+    "WorkloadOrdering": {
+      "enum": [
+        "DECLARED",
+        "SORTED_CASE_ID"
+      ],
+      "title": "WorkloadOrdering",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "configured_server_batch_source": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IdentitySource"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "configured_server_maximum_batch_size": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Configured Server Maximum Batch Size"
+    },
+    "load_shape": {
+      "$ref": "#/$defs/LoadShape"
+    },
+    "measured_request_count": {
+      "exclusiveMinimum": 0,
+      "title": "Measured Request Count",
+      "type": "integer"
+    },
+    "measurement_contract_version": {
+      "const": "0.1.0",
+      "title": "Measurement Contract Version",
+      "type": "string"
+    },
+    "model_identity": {
+      "$ref": "#/$defs/ModelIdentity"
+    },
+    "prompt_transformation": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Prompt Transformation",
+      "type": "string"
+    },
+    "sampling": {
+      "$ref": "#/$defs/SamplingConfiguration"
+    },
+    "schema_version": {
+      "const": "0.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "slo": {
+      "$ref": "#/$defs/SLODefinition"
+    },
+    "timeout_policy": {
+      "$ref": "#/$defs/TimeoutPolicy"
+    },
+    "tokenizer_identity": {
+      "$ref": "#/$defs/TokenizerIdentity"
+    },
+    "warmup_policy": {
+      "const": "FIXED_COUNT",
+      "title": "Warmup Policy",
+      "type": "string"
+    },
+    "warmup_request_count": {
+      "minimum": 0,
+      "title": "Warmup Request Count",
+      "type": "integer"
+    },
+    "workload_identity": {
+      "$ref": "#/$defs/WorkloadIdentity"
+    },
+    "workload_path": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Workload Path",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "measurement_contract_version",
+    "workload_path",
+    "workload_identity",
+    "model_identity",
+    "tokenizer_identity",
+    "prompt_transformation",
+    "load_shape",
+    "timeout_policy",
+    "sampling",
+    "slo",
+    "warmup_policy",
+    "warmup_request_count",
+    "measured_request_count"
+  ],
+  "title": "RunConfiguration",
+  "type": "object"
+}

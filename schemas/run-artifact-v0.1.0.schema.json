@@ -1,0 +1,1253 @@
+{
+  "$defs": {
+    "ConfigurationIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "content_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content_sha256"
+      ],
+      "title": "ConfigurationIdentity",
+      "type": "object"
+    },
+    "EnvironmentIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "architecture": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Architecture",
+          "type": "string"
+        },
+        "identity_source": {
+          "$ref": "#/$defs/IdentitySource"
+        },
+        "os_name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Os Name",
+          "type": "string"
+        },
+        "package_lock_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Package Lock Sha256",
+          "type": "string"
+        },
+        "python_version": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Python Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "os_name",
+        "architecture",
+        "python_version",
+        "package_lock_sha256",
+        "identity_source"
+      ],
+      "title": "EnvironmentIdentity",
+      "type": "object"
+    },
+    "FailureRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "error_code": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Error Code",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/RequestOutcome"
+        },
+        "occurred_offset_ns": {
+          "minimum": 0,
+          "title": "Occurred Offset Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "occurred_offset_ns",
+        "error_code"
+      ],
+      "title": "FailureRecord",
+      "type": "object"
+    },
+    "HardwareIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "architecture": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Architecture",
+          "type": "string"
+        },
+        "gpu_model": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gpu Model"
+        },
+        "identity_source": {
+          "$ref": "#/$defs/IdentitySource"
+        },
+        "memory_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Memory Bytes",
+          "type": "integer"
+        },
+        "platform": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Platform",
+          "type": "string"
+        },
+        "processor": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Processor",
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform",
+        "architecture",
+        "processor",
+        "memory_bytes",
+        "identity_source"
+      ],
+      "title": "HardwareIdentity",
+      "type": "object"
+    },
+    "IdentitySource": {
+      "enum": [
+        "SYNTHETIC_FIXTURE",
+        "CONFIGURED",
+        "RUNTIME_REPORTED",
+        "DIRECTLY_OBSERVED"
+      ],
+      "title": "IdentitySource",
+      "type": "string"
+    },
+    "LoadShape": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "CLOSED_LOOP",
+          "title": "Kind",
+          "type": "string"
+        },
+        "requested_client_concurrency": {
+          "exclusiveMinimum": 0,
+          "title": "Requested Client Concurrency",
+          "type": "integer"
+        },
+        "scheduling_policy": {
+          "const": "NEXT_AVAILABLE_CLIENT",
+          "title": "Scheduling Policy",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "requested_client_concurrency",
+        "scheduling_policy"
+      ],
+      "title": "LoadShape",
+      "type": "object"
+    },
+    "MetricDistribution": {
+      "additionalProperties": false,
+      "properties": {
+        "denominator": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Denominator",
+          "type": "string"
+        },
+        "metric": {
+          "$ref": "#/$defs/MetricName"
+        },
+        "p50": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "P50"
+        },
+        "p95": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "P95"
+        },
+        "p99": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "P99"
+        },
+        "percentile_algorithm": {
+          "const": "HYNDMAN_FAN_TYPE_7",
+          "title": "Percentile Algorithm",
+          "type": "string"
+        },
+        "sample_count": {
+          "minimum": 0,
+          "title": "Sample Count",
+          "type": "integer"
+        },
+        "source": {
+          "$ref": "#/$defs/MetricSource"
+        },
+        "unavailable_reason": {
+          "anyOf": [
+            {
+              "const": "NO_SAMPLES",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unavailable Reason"
+        },
+        "unit": {
+          "const": "nanoseconds",
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "metric",
+        "source",
+        "denominator",
+        "unit",
+        "percentile_algorithm",
+        "sample_count",
+        "p50",
+        "p95",
+        "p99"
+      ],
+      "title": "MetricDistribution",
+      "type": "object"
+    },
+    "MetricName": {
+      "enum": [
+        "TTFT_NS",
+        "END_TO_END_SUCCESS_NS",
+        "TPOT_NS",
+        "ITL_NS"
+      ],
+      "title": "MetricName",
+      "type": "string"
+    },
+    "MetricSource": {
+      "enum": [
+        "HARNESS_DERIVED",
+        "RUNTIME_REPORTED"
+      ],
+      "title": "MetricSource",
+      "type": "string"
+    },
+    "ModelIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "exact_revision": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Exact Revision",
+          "type": "string"
+        },
+        "identity_source": {
+          "$ref": "#/$defs/IdentitySource"
+        },
+        "model_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Model Id",
+          "type": "string"
+        },
+        "prompt_template_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Prompt Template Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model_id",
+        "exact_revision",
+        "prompt_template_sha256",
+        "identity_source"
+      ],
+      "title": "ModelIdentity",
+      "type": "object"
+    },
+    "RequestOutcome": {
+      "enum": [
+        "SUCCESS",
+        "TIMEOUT",
+        "TRANSPORT_ERROR",
+        "HTTP_ERROR",
+        "PROTOCOL_ERROR",
+        "MALFORMED_STREAM",
+        "TOKEN_ACCOUNTING_ERROR",
+        "CANCELLED",
+        "UNEXPECTED_ERROR"
+      ],
+      "title": "RequestOutcome",
+      "type": "string"
+    },
+    "RequestPhase": {
+      "enum": [
+        "WARMUP",
+        "MEASURED"
+      ],
+      "title": "RequestPhase",
+      "type": "string"
+    },
+    "RequestRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FailureRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input_tokens": {
+          "$ref": "#/$defs/TokenCount"
+        },
+        "outcome": {
+          "$ref": "#/$defs/RequestOutcome"
+        },
+        "output_tokens": {
+          "$ref": "#/$defs/TokenCount"
+        },
+        "phase": {
+          "$ref": "#/$defs/RequestPhase"
+        },
+        "request_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "stream_events": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/StreamEventRecord"
+          },
+          "title": "Stream Events",
+          "type": "array"
+        },
+        "timing": {
+          "$ref": "#/$defs/TimingRecord"
+        }
+      },
+      "required": [
+        "request_id",
+        "case_id",
+        "phase",
+        "outcome",
+        "timing",
+        "input_tokens",
+        "output_tokens"
+      ],
+      "title": "RequestRecord",
+      "type": "object"
+    },
+    "RunConfiguration": {
+      "additionalProperties": false,
+      "properties": {
+        "configured_server_batch_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentitySource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "configured_server_maximum_batch_size": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Configured Server Maximum Batch Size"
+        },
+        "load_shape": {
+          "$ref": "#/$defs/LoadShape"
+        },
+        "measured_request_count": {
+          "exclusiveMinimum": 0,
+          "title": "Measured Request Count",
+          "type": "integer"
+        },
+        "measurement_contract_version": {
+          "const": "0.1.0",
+          "title": "Measurement Contract Version",
+          "type": "string"
+        },
+        "model_identity": {
+          "$ref": "#/$defs/ModelIdentity"
+        },
+        "prompt_transformation": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Prompt Transformation",
+          "type": "string"
+        },
+        "sampling": {
+          "$ref": "#/$defs/SamplingConfiguration"
+        },
+        "schema_version": {
+          "const": "0.1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "slo": {
+          "$ref": "#/$defs/SLODefinition"
+        },
+        "timeout_policy": {
+          "$ref": "#/$defs/TimeoutPolicy"
+        },
+        "tokenizer_identity": {
+          "$ref": "#/$defs/TokenizerIdentity"
+        },
+        "warmup_policy": {
+          "const": "FIXED_COUNT",
+          "title": "Warmup Policy",
+          "type": "string"
+        },
+        "warmup_request_count": {
+          "minimum": 0,
+          "title": "Warmup Request Count",
+          "type": "integer"
+        },
+        "workload_identity": {
+          "$ref": "#/$defs/WorkloadIdentity"
+        },
+        "workload_path": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Workload Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "measurement_contract_version",
+        "workload_path",
+        "workload_identity",
+        "model_identity",
+        "tokenizer_identity",
+        "prompt_transformation",
+        "load_shape",
+        "timeout_policy",
+        "sampling",
+        "slo",
+        "warmup_policy",
+        "warmup_request_count",
+        "measured_request_count"
+      ],
+      "title": "RunConfiguration",
+      "type": "object"
+    },
+    "RunSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "attempted_count": {
+          "minimum": 0,
+          "title": "Attempted Count",
+          "type": "integer"
+        },
+        "cancelled_count": {
+          "minimum": 0,
+          "title": "Cancelled Count",
+          "type": "integer"
+        },
+        "configured_server_batch_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentitySource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "configured_server_maximum_batch_size": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Configured Server Maximum Batch Size"
+        },
+        "end_to_end_success": {
+          "$ref": "#/$defs/MetricDistribution"
+        },
+        "failed_count": {
+          "minimum": 0,
+          "title": "Failed Count",
+          "type": "integer"
+        },
+        "failure_rate": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Failure Rate",
+          "type": "number"
+        },
+        "goodput": {
+          "minimum": 0,
+          "title": "Goodput",
+          "type": "number"
+        },
+        "goodput_slo_policy_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Goodput Slo Policy Sha256",
+          "type": "string"
+        },
+        "itl": {
+          "$ref": "#/$defs/MetricDistribution"
+        },
+        "measurement_window_ns": {
+          "exclusiveMinimum": 0,
+          "title": "Measurement Window Ns",
+          "type": "integer"
+        },
+        "observed_maximum_active_client_requests": {
+          "minimum": 0,
+          "title": "Observed Maximum Active Client Requests",
+          "type": "integer"
+        },
+        "observed_server_batch_size": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Observed Server Batch Size"
+        },
+        "observed_server_batch_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentitySource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offered_request_rate": {
+          "minimum": 0,
+          "title": "Offered Request Rate",
+          "type": "number"
+        },
+        "output_token_throughput": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output Token Throughput"
+        },
+        "protocol_error_count": {
+          "minimum": 0,
+          "title": "Protocol Error Count",
+          "type": "integer"
+        },
+        "requested_client_concurrency": {
+          "exclusiveMinimum": 0,
+          "title": "Requested Client Concurrency",
+          "type": "integer"
+        },
+        "successful_count": {
+          "minimum": 0,
+          "title": "Successful Count",
+          "type": "integer"
+        },
+        "successful_request_throughput": {
+          "minimum": 0,
+          "title": "Successful Request Throughput",
+          "type": "number"
+        },
+        "terminal_count": {
+          "minimum": 0,
+          "title": "Terminal Count",
+          "type": "integer"
+        },
+        "terminal_request_rate": {
+          "minimum": 0,
+          "title": "Terminal Request Rate",
+          "type": "number"
+        },
+        "timeout_count": {
+          "minimum": 0,
+          "title": "Timeout Count",
+          "type": "integer"
+        },
+        "timeout_rate": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Timeout Rate",
+          "type": "number"
+        },
+        "total_token_throughput": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Total Token Throughput"
+        },
+        "tpot": {
+          "$ref": "#/$defs/MetricDistribution"
+        },
+        "ttft": {
+          "$ref": "#/$defs/MetricDistribution"
+        },
+        "warmup_excluded_count": {
+          "minimum": 0,
+          "title": "Warmup Excluded Count",
+          "type": "integer"
+        },
+        "warmup_record_count": {
+          "minimum": 0,
+          "title": "Warmup Record Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "measurement_window_ns",
+        "attempted_count",
+        "terminal_count",
+        "successful_count",
+        "failed_count",
+        "timeout_count",
+        "cancelled_count",
+        "protocol_error_count",
+        "warmup_record_count",
+        "warmup_excluded_count",
+        "requested_client_concurrency",
+        "observed_maximum_active_client_requests",
+        "configured_server_maximum_batch_size",
+        "configured_server_batch_source",
+        "observed_server_batch_size",
+        "observed_server_batch_source",
+        "offered_request_rate",
+        "terminal_request_rate",
+        "successful_request_throughput",
+        "output_token_throughput",
+        "total_token_throughput",
+        "goodput",
+        "failure_rate",
+        "timeout_rate",
+        "goodput_slo_policy_sha256",
+        "ttft",
+        "end_to_end_success",
+        "tpot",
+        "itl"
+      ],
+      "title": "RunSummary",
+      "type": "object"
+    },
+    "RuntimeIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "effective_configuration_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Effective Configuration Sha256",
+          "type": "string"
+        },
+        "exact_version": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Exact Version",
+          "type": "string"
+        },
+        "identity_source": {
+          "$ref": "#/$defs/IdentitySource"
+        },
+        "runtime_name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Runtime Name",
+          "type": "string"
+        },
+        "source_revision": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Source Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "runtime_name",
+        "exact_version",
+        "source_revision",
+        "effective_configuration_sha256",
+        "identity_source"
+      ],
+      "title": "RuntimeIdentity",
+      "type": "object"
+    },
+    "SLODefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "end_to_end_threshold_ns": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End To End Threshold Ns"
+        },
+        "itl_threshold_ns": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Itl Threshold Ns"
+        },
+        "policy_name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Policy Name",
+          "type": "string"
+        },
+        "tpot_threshold_ns": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tpot Threshold Ns"
+        },
+        "ttft_threshold_ns": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ttft Threshold Ns"
+        }
+      },
+      "required": [
+        "policy_name"
+      ],
+      "title": "SLODefinition",
+      "type": "object"
+    },
+    "SamplingConfiguration": {
+      "additionalProperties": false,
+      "properties": {
+        "maximum_output_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Maximum Output Tokens",
+          "type": "integer"
+        },
+        "seed": {
+          "minimum": 0,
+          "title": "Seed",
+          "type": "integer"
+        },
+        "stop_sequences": {
+          "default": [],
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Stop Sequences",
+          "type": "array"
+        },
+        "temperature": {
+          "minimum": 0,
+          "title": "Temperature",
+          "type": "number"
+        },
+        "top_p": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Top P",
+          "type": "number"
+        }
+      },
+      "required": [
+        "seed",
+        "temperature",
+        "top_p",
+        "maximum_output_tokens"
+      ],
+      "title": "SamplingConfiguration",
+      "type": "object"
+    },
+    "StreamEventRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "chunk_index": {
+          "minimum": 0,
+          "title": "Chunk Index",
+          "type": "integer"
+        },
+        "event_offset_ns": {
+          "minimum": 0,
+          "title": "Event Offset Ns",
+          "type": "integer"
+        },
+        "output_tokens_in_chunk": {
+          "exclusiveMinimum": 0,
+          "title": "Output Tokens In Chunk",
+          "type": "integer"
+        },
+        "per_token_observation_offsets_ns": {
+          "anyOf": [
+            {
+              "items": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Per Token Observation Offsets Ns"
+        }
+      },
+      "required": [
+        "chunk_index",
+        "event_offset_ns",
+        "output_tokens_in_chunk"
+      ],
+      "title": "StreamEventRecord",
+      "type": "object"
+    },
+    "TimeoutPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "connect_timeout_ns": {
+          "exclusiveMinimum": 0,
+          "title": "Connect Timeout Ns",
+          "type": "integer"
+        },
+        "first_output_token_timeout_ns": {
+          "exclusiveMinimum": 0,
+          "title": "First Output Token Timeout Ns",
+          "type": "integer"
+        },
+        "request_timeout_ns": {
+          "exclusiveMinimum": 0,
+          "title": "Request Timeout Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "connect_timeout_ns",
+        "first_output_token_timeout_ns",
+        "request_timeout_ns"
+      ],
+      "title": "TimeoutPolicy",
+      "type": "object"
+    },
+    "TimingRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "dispatch_offset_ns": {
+          "minimum": 0,
+          "title": "Dispatch Offset Ns",
+          "type": "integer"
+        },
+        "first_output_token_offset_ns": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "First Output Token Offset Ns"
+        },
+        "first_response_byte_offset_ns": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "First Response Byte Offset Ns"
+        },
+        "last_output_token_offset_ns": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Output Token Offset Ns"
+        },
+        "terminal_offset_ns": {
+          "minimum": 0,
+          "title": "Terminal Offset Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dispatch_offset_ns",
+        "terminal_offset_ns"
+      ],
+      "title": "TimingRecord",
+      "type": "object"
+    },
+    "TokenCount": {
+      "additionalProperties": false,
+      "properties": {
+        "provider_field_name": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Field Name"
+        },
+        "quality": {
+          "$ref": "#/$defs/TokenCountQuality"
+        },
+        "source": {
+          "$ref": "#/$defs/TokenCountSource"
+        },
+        "tokenizer_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokenizer Id"
+        },
+        "tokenizer_revision": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokenizer Revision"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "value",
+        "source",
+        "quality"
+      ],
+      "title": "TokenCount",
+      "type": "object"
+    },
+    "TokenCountQuality": {
+      "enum": [
+        "EXACT",
+        "DERIVED",
+        "UNAVAILABLE"
+      ],
+      "title": "TokenCountQuality",
+      "type": "string"
+    },
+    "TokenCountSource": {
+      "enum": [
+        "FIXTURE_EXACT",
+        "TOKENIZER_DERIVED",
+        "SERVER_REPORTED",
+        "UNKNOWN"
+      ],
+      "title": "TokenCountSource",
+      "type": "string"
+    },
+    "TokenizerIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "exact_revision": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Exact Revision",
+          "type": "string"
+        },
+        "identity_source": {
+          "$ref": "#/$defs/IdentitySource"
+        },
+        "tokenizer_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Tokenizer Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tokenizer_id",
+        "exact_revision",
+        "identity_source"
+      ],
+      "title": "TokenizerIdentity",
+      "type": "object"
+    },
+    "WorkloadIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "case_ids": {
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Case Ids",
+          "type": "array"
+        },
+        "content_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "ordering_policy": {
+          "$ref": "#/$defs/WorkloadOrdering"
+        }
+      },
+      "required": [
+        "content_sha256",
+        "case_ids",
+        "ordering_policy"
+      ],
+      "title": "WorkloadIdentity",
+      "type": "object"
+    },
+    "WorkloadOrdering": {
+      "enum": [
+        "DECLARED",
+        "SORTED_CASE_ID"
+      ],
+      "title": "WorkloadOrdering",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_content_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Artifact Content Sha256"
+    },
+    "configuration": {
+      "$ref": "#/$defs/RunConfiguration"
+    },
+    "configuration_identity": {
+      "$ref": "#/$defs/ConfigurationIdentity"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "environment_identity": {
+      "$ref": "#/$defs/EnvironmentIdentity"
+    },
+    "evidence_scope": {
+      "const": "TEST_FIXTURE_ONLY",
+      "title": "Evidence Scope",
+      "type": "string"
+    },
+    "hardware_identity": {
+      "$ref": "#/$defs/HardwareIdentity"
+    },
+    "measurement_contract_version": {
+      "const": "0.1.0",
+      "title": "Measurement Contract Version",
+      "type": "string"
+    },
+    "model_identity": {
+      "$ref": "#/$defs/ModelIdentity"
+    },
+    "requests": {
+      "items": {
+        "$ref": "#/$defs/RequestRecord"
+      },
+      "minItems": 1,
+      "title": "Requests",
+      "type": "array"
+    },
+    "runtime_identity": {
+      "$ref": "#/$defs/RuntimeIdentity"
+    },
+    "schema_version": {
+      "const": "0.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "summary": {
+      "$ref": "#/$defs/RunSummary"
+    },
+    "tokenizer_identity": {
+      "$ref": "#/$defs/TokenizerIdentity"
+    },
+    "workload_identity": {
+      "$ref": "#/$defs/WorkloadIdentity"
+    }
+  },
+  "required": [
+    "schema_version",
+    "measurement_contract_version",
+    "evidence_scope",
+    "created_at",
+    "workload_identity",
+    "configuration_identity",
+    "configuration",
+    "runtime_identity",
+    "model_identity",
+    "tokenizer_identity",
+    "hardware_identity",
+    "environment_identity",
+    "requests",
+    "summary"
+  ],
+  "title": "RunArtifact",
+  "type": "object"
+}
