@@ -49,3 +49,36 @@ LLM-serving runtime, GPU, CUDA, profiler, container, paid resource, remote CI, o
   archive-safe file discovery without weakening any content checks.
 - No Stage 1 evidence was accepted or published after the failed gate, and no canonical
   claim ledger status changed.
+
+## 2026-08-27 — Stage 1 checked fixture evidence generation
+
+- Passed the checked-evidence precondition at archive-safety commit
+  `66c7f8c6d1c254c89e10c59747d7f957449ba758` on clean `main`, with three commits, no
+  remotes, no tags, and unchanged `uv.lock` SHA-256
+  `748fd114d05ea6e96c058f41b8a1ee0736d30339f100179e3ee7c47c7e6c59e6`.
+- Retained lineage to Stage 0 foundation commit
+  `77d0ac61b685b3f65edcf43f61899e900eebf5e8`, streaming implementation commit
+  `927a0a1c57e7c90aef87f5282093a3076e786b73`, and archive-safety/execution-source commit
+  `66c7f8c6d1c254c89e10c59747d7f957449ba758`.
+- Executed two independent fixture runs from that exact source commit. Both run directories
+  validated and their stored summaries reconstructed exactly from retained raw evidence.
+- Run A (`run-49c34aa1e3758b98fcb05afe`) has content identity
+  `e7fc8030d8fc9c9a9821eea271e495980278e521c8131b5645549ebecec638c6`; Run B
+  (`run-2fc08a7b3fcc0571cad209cc`) has distinct content identity
+  `5506283a01ee5f00af95ca177fc537e01f29463773589d6cec05fc221a642898`.
+- Both runs reproduce semantic fingerprint
+  `ac33b44eaa11e320bb12ffaac13fbaf381856b132f311ec408e8828064784719`. Their checked
+  semantic comparison is compatible and passes with timing performance gates disabled.
+- Each run retains one excluded warmup plus eight measured requests: five successes, two
+  non-timeout failures, and one timeout. Failure rate is exactly `2 / 8 = 0.25`; timeout rate is
+  exactly `1 / 8 = 0.125`.
+- Requested client concurrency is `2`, observed maximum client concurrency is `2`, and server
+  batching remains unobserved. Client concurrency is not described as server batch size, and this
+  single controlled point is not a `1–64` sweep.
+- Added the checked `TEST_FIXTURE_ONLY` raw bundles, reconstructed summaries, comparison,
+  deterministic evidence manifest, boundary README, and a metadata-independent checked-evidence
+  verifier under the authorized evidence scope.
+
+This local checked evidence executes no model, tokenizer, serving runtime, GPU, CUDA, profiler,
+container, VM, paid resource, cloud CLI, or credential. It uses no Git remote or remote CI and is
+not deployed, published, historically authenticated, or accepted into the canonical claim ledger.
