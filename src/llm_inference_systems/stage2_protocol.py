@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import pairwise
 
@@ -189,11 +190,13 @@ class Stage2StreamValidator:
         external_base_id: str,
         sent_prompt_token_ids: tuple[int, ...],
         dispatch_offset_ns: int,
+        frame_clock: Callable[[], int] | None = None,
     ) -> None:
         request = build_completion_request(external_base_id, sent_prompt_token_ids)
         self._external_base_id = external_base_id
         self._sent_prompt_token_ids = request.body.prompt
         self._dispatch_offset_ns = dispatch_offset_ns
+        self._frame_clock = frame_clock
         self._parser = IncrementalSSEParser()
         self._response_headers_offset_ns: int | None = None
         self._first_body_offset_ns: int | None = None
@@ -248,7 +251,11 @@ class Stage2StreamValidator:
             frames = self._parser.feed(chunk)
         except SSEProtocolError as error:
             raise Stage2ProtocolError(str(error)) from error
-        for frame in frames:
+        frame_offset_ns = observation_offset_ns
+        for index, frame in enumerate(frames):
+            if index and self._frame_clock is not None:
+                frame_offset_ns = self._frame_clock()
+                self._advance(frame_offset_ns)
             if self._protocol_terminal_offset_ns is not None:
                 raise Stage2ProtocolError("post-protocol-terminal SSE data observed")
             if frame.kind == "comment":
@@ -256,9 +263,9 @@ class Stage2StreamValidator:
             if frame.kind == "done":
                 if self._usage_terminal_offset_ns is None:
                     raise Stage2ProtocolError("[DONE] observed before usage terminal")
-                if observation_offset_ns <= self._usage_terminal_offset_ns:
+                if frame_offset_ns <= self._usage_terminal_offset_ns:
                     raise Stage2ProtocolError("protocol terminal must follow usage terminal")
-                self._protocol_terminal_offset_ns = observation_offset_ns
+                self._protocol_terminal_offset_ns = frame_offset_ns
                 continue
             if frame.data is None:
                 raise Stage2ProtocolError("SSE data frame is empty")
@@ -266,9 +273,7 @@ class Stage2StreamValidator:
                 decoded = json.loads(frame.data)
             except json.JSONDecodeError as error:
                 raise Stage2ProtocolError("malformed SSE JSON") from error
-            self._accept_response(
-                _object(decoded, field="completion response"), observation_offset_ns
-            )
+            self._accept_response(_object(decoded, field="completion response"), frame_offset_ns)
 
     def _accept_response(self, value: dict[str, object], observation_offset_ns: int) -> None:
         if value.get("id") != f"cmpl-{self._external_base_id}":
@@ -344,7 +349,7 @@ class Stage2StreamValidator:
         self,
         observation_offset_ns: int,
         *,
-        internal_engine_request_id: str,
+        identity_chain: RequestIdentityChain,
     ) -> Stage2RequestEvidence:
         if self._transport_terminal_offset_ns is not None:
             raise Stage2ProtocolError("duplicate transport terminal")
@@ -358,9 +363,19 @@ class Stage2StreamValidator:
         if observation_offset_ns <= self._protocol_terminal_offset_ns:
             raise Stage2ProtocolError("transport terminal must follow protocol terminal")
         self._transport_terminal_offset_ns = observation_offset_ns
-        return self._evidence(internal_engine_request_id)
+        expected_response_id = f"cmpl-{self._external_base_id}"
+        expected_serving_item_id = f"{expected_response_id}-0"
+        if (
+            identity_chain.external_base_id != self._external_base_id
+            or identity_chain.response_body_id != expected_response_id
+            or identity_chain.serving_item_id != expected_serving_item_id
+            or identity_chain.external_abort_observed
+            or identity_chain.internal_abort_observed
+        ):
+            raise Stage2ProtocolError("validated request-log identity chain differs")
+        return self._evidence(identity_chain)
 
-    def _evidence(self, internal_engine_request_id: str) -> Stage2RequestEvidence:
+    def _evidence(self, identity_chain: RequestIdentityChain) -> Stage2RequestEvidence:
         required = (
             self._response_headers_offset_ns,
             self._first_body_offset_ns,
@@ -422,7 +437,7 @@ class Stage2StreamValidator:
             external_request_id=self._external_base_id,
             response_request_id=response_id,
             serving_item_request_id=serving_item_id,
-            internal_engine_request_id=internal_engine_request_id,
+            internal_engine_request_id=identity_chain.internal_engine_id,
             sent_prompt_token_ids=self._sent_prompt_token_ids,
             returned_prompt_token_ids=self._returned_prompt_ids,
             token_events=tuple(self._token_events),

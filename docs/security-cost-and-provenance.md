@@ -35,12 +35,14 @@ Stage 2A adds only another project-authored CPU fixture server fixed to IPv4 `12
 implemented. The separate execution-lock JSON is inert metadata and is neither resolved nor
 installed by ordinary verification.
 
-Stage 2A repetition bundles reject path traversal, symlinks, non-UTF-8 evidence, unapproved binary
-suffixes, replacement of retained files, incomplete or duplicate inventory, altered hashes, and
-derived data that cannot be reconstructed exactly from raw evidence. Staging starts as
-`INCOMPLETE`; terminal failures retain raw evidence and become `INVALID`; only reconstruction- and
-inventory-validated evidence receives a manifest written last and an atomic directory rename to
-`COMMITTED`. A commit state is an integrity/lifecycle fact, not publication or claim approval.
+Stage 2A repetition bundles reject path traversal, symlinked parent or evidence paths, non-UTF-8
+evidence, sensitive private material, unapproved binary suffixes, replacement of retained files,
+incomplete or duplicate inventory, altered hashes, and derived data that cannot be reconstructed
+exactly from raw evidence. Staging starts as `INCOMPLETE`; terminal failures retain public-safe raw
+evidence and become `INVALID`; only reconstruction- and inventory-validated evidence receives a
+manifest written last after durable directory placement. A failed post-rename durability operation
+leaves the visible bundle non-committed. A commit state is an integrity/lifecycle fact, not
+publication or claim approval.
 
 The public-safety scanner rejects credential-shaped values, authorization and cookie headers,
 proxy credentials, private home and cache paths, host/notebook/account identifiers, GPU UUIDs,

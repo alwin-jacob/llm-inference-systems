@@ -40,6 +40,8 @@ abort counter, and no residual state. A terminal or counter from a non-abort rea
 as cancellation success.
 
 Stage 2A bundles expose `INCOMPLETE`, `INVALID`, and `COMMITTED`. A crash before the final manifest
-remains inspectably incomplete. Durability-operation failure becomes invalid when the staging tree
-can still be recorded. Summaries refuse non-committed bundles, and aggregate commit requires all
-three repetition bundles plus passing semantic comparison.
+remains inspectably incomplete. Durability-operation failure is recorded as invalid at the visible
+staging or final bundle path, including failure after directory rename. Summaries refuse
+non-committed bundles, and aggregate commit requires three validated, distinctly indexed bundle
+manifests plus semantic records bound to those manifest-file content hashes and a passing
+reconstructed comparison.

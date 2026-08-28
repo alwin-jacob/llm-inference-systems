@@ -82,7 +82,7 @@ class PrometheusSnapshot(StrictModel):
     scrape_monotonic_offset_ns: NonNegativeInt
     raw_exposition: str
     samples: tuple[PrometheusSample, ...]
-    label_inventory: dict[str, tuple[tuple[str, ...], ...]]
+    label_inventory: dict[str, tuple[tuple[tuple[str, str], ...], ...]]
 
     @model_validator(mode="after")
     def validate_utc(self) -> Self:
@@ -97,6 +97,12 @@ class CounterDelta(StrictModel):
     before: NonNegativeFloat
     after: NonNegativeFloat
     delta: NonNegativeFloat
+
+    @model_validator(mode="after")
+    def validate_arithmetic(self) -> Self:
+        if self.after < self.before or self.delta != self.after - self.before:
+            raise ValueError("counter delta does not reconstruct from before and after")
+        return self
 
 
 def _parse_labels(raw: str | None) -> tuple[tuple[str, str], ...]:
@@ -161,9 +167,9 @@ def parse_prometheus_snapshot(
         )
     if not samples:
         raise PrometheusProtocolError("Prometheus exposition contains no samples")
-    inventory: dict[str, list[tuple[str, ...]]] = {}
+    inventory: dict[str, list[tuple[tuple[str, str], ...]]] = {}
     for sample in samples:
-        inventory.setdefault(sample.name, []).append(tuple(name for name, _ in sample.labels))
+        inventory.setdefault(sample.name, []).append(sample.labels)
     label_inventory = {
         name: tuple(sorted(label_sets)) for name, label_sets in sorted(inventory.items())
     }
@@ -244,10 +250,13 @@ def validate_measured_window_deltas(deltas: tuple[CounterDelta, ...]) -> None:
     observed: dict[str, float] = {}
     for delta in deltas:
         key = delta.metric
-        labels = dict(delta.labels)
+        expected_labels = dict(MODEL_LABELS)
         if delta.metric == "vllm:request_success_total":
-            reason = labels.get("finished_reason")
+            expected_labels["finished_reason"] = "length"
+            reason = "length"
             key = f'vllm:request_success_total{{finished_reason="{reason}"}}'
+        if delta.labels != tuple(sorted(expected_labels.items())):
+            raise PrometheusProtocolError("measured-window delta labels differ from exact series")
         if key in observed:
             raise PrometheusProtocolError("duplicate measured-window counter delta")
         observed[key] = delta.delta

@@ -11,6 +11,7 @@ from llm_inference_systems.stage2_contracts import (
     Stage2RequestEvidence,
 )
 from llm_inference_systems.stage2_protocol import (
+    RequestIdentityChain,
     Stage2ProtocolError,
     Stage2StreamValidator,
     build_cancellation_request,
@@ -76,10 +77,22 @@ def _validator() -> Stage2StreamValidator:
     return validator
 
 
+def _identity_chain() -> RequestIdentityChain:
+    return correlate_request_logs(
+        EXTERNAL_ID,
+        (
+            f"Received request cmpl-{EXTERNAL_ID}-0: params: TEST_FIXTURE_ONLY.",
+            f"Added request {INTERNAL_ID}.",
+        ),
+        cancellation=False,
+    )
+
+
 def _complete(
     *,
     finish_only: bool = False,
     grouped: bool = False,
+    identity_chain: RequestIdentityChain | None = None,
 ) -> Stage2RequestEvidence:
     validator = _validator()
     width = 2 if grouped else 1
@@ -99,7 +112,10 @@ def _complete(
         validator.feed(_choice((), finish_reason="length"), terminal_offset)
     validator.feed(_usage(), terminal_offset + 10)
     validator.feed(b"data: [DONE]\n\n", terminal_offset + 20)
-    return validator.close_transport(terminal_offset + 30, internal_engine_request_id=INTERNAL_ID)
+    return validator.close_transport(
+        terminal_offset + 30,
+        identity_chain=identity_chain or _identity_chain(),
+    )
 
 
 def test_exact_completion_request_and_cancellation_shape() -> None:
@@ -185,6 +201,11 @@ def test_durable_request_evidence_reconstructs_text_timing_metrics_and_disagreem
         Stage2RequestEvidence.model_validate({**value, "output_text_sha256": "0" * 64})
     with pytest.raises(ValidationError, match="disagreements"):
         Stage2RequestEvidence.model_validate({**value, "local_prompt_token_count": 63})
+    events = tuple(
+        event.model_copy(update={"prompt_token_ids": None}) for event in evidence.token_events
+    )
+    with pytest.raises(ValidationError, match="matching first token event"):
+        Stage2RequestEvidence.model_validate({**value, "token_events": events})
     reconciled = Stage2RequestEvidence.model_validate(
         {
             **value,
@@ -210,9 +231,37 @@ def test_split_and_coalesced_sse_input_are_accepted() -> None:
         )
     validator.feed(_usage(), 80)
     validator.feed(b"data: [DONE]\n\n", 90)
-    evidence = validator.close_transport(100, internal_engine_request_id=INTERNAL_ID)
+    evidence = validator.close_transport(100, identity_chain=_identity_chain())
     assert evidence.final_output_token_ids == tuple(range(32))
     assert b"".join(chunk.data for chunk in validator.retained_raw_body_chunks).startswith(first)
+
+
+def test_coalesced_generation_usage_and_done_capture_distinct_frame_times() -> None:
+    frame_offsets = iter((61, 62))
+    validator = Stage2StreamValidator(
+        external_base_id=EXTERNAL_ID,
+        sent_prompt_token_ids=PROMPT,
+        dispatch_offset_ns=0,
+        frame_clock=frame_offsets.__next__,
+    )
+    validator.accept_response_headers(EXTERNAL_ID, 10)
+    for token in range(31):
+        validator.feed(
+            _choice(
+                (token,),
+                finish_reason=None,
+                prompt=PROMPT if token == 0 else None,
+            ),
+            20 + token,
+        )
+    validator.feed(
+        _choice((31,), finish_reason="length") + _usage() + b"data: [DONE]\n\n",
+        60,
+    )
+    evidence = validator.close_transport(63, identity_chain=_identity_chain())
+    assert evidence.timing.generation_terminal_offset_ns == 60
+    assert evidence.timing.usage_terminal_offset_ns == 61
+    assert evidence.timing.protocol_terminal_offset_ns == 62
 
 
 def test_malformed_stream_retains_exact_raw_failure_bytes() -> None:
@@ -253,7 +302,7 @@ def test_body_id_or_returned_prompt_mismatch_is_rejected(
     validator.feed(_usage(), 60)
     validator.feed(b"data: [DONE]\n\n", 70)
     with pytest.raises(Stage2ProtocolError, match="prompt token IDs"):
-        validator.close_transport(80, internal_engine_request_id=INTERNAL_ID)
+        validator.close_transport(80, identity_chain=_identity_chain())
 
 
 def test_usage_mismatch_is_rejected() -> None:
@@ -311,7 +360,7 @@ def test_duplicate_usage_done_and_post_terminal_data_are_rejected() -> None:
 def test_transport_close_requires_done_and_strictly_later_offset() -> None:
     validator = _validator()
     with pytest.raises(Stage2ProtocolError, match=r"without \[DONE\]"):
-        validator.close_transport(20, internal_engine_request_id=INTERNAL_ID)
+        validator.close_transport(20, identity_chain=_identity_chain())
 
 
 def test_identity_chain_requires_exact_single_log_chain() -> None:
@@ -323,6 +372,20 @@ def test_identity_chain_requires_exact_single_log_chain() -> None:
     assert chain.internal_engine_id == INTERNAL_ID
     with pytest.raises(Stage2ProtocolError, match="ambiguous"):
         correlate_request_logs(EXTERNAL_ID, (*lines, lines[1]), cancellation=False)
+
+
+def test_request_evidence_requires_matching_validated_log_chain() -> None:
+    other = "other-fixture"
+    wrong_chain = correlate_request_logs(
+        other,
+        (
+            f"Received request cmpl-{other}-0: params: TEST_FIXTURE_ONLY.",
+            f"Added request cmpl-{other}-0-cafebabe.",
+        ),
+        cancellation=False,
+    )
+    with pytest.raises(Stage2ProtocolError, match="identity chain differs"):
+        _complete(identity_chain=wrong_chain)
 
 
 def test_cancellation_identity_requires_both_abort_logs() -> None:
