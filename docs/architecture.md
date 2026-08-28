@@ -33,15 +33,16 @@ Stage 2A adds a separate `0.3.0` protocol layer exercised only by CPU fixtures:
 1. `stage2_contracts.py` defines strict future-runtime configuration, evidence, phase, resource,
    bundle, and execution-lock models;
 2. `stage2_protocol.py` constructs the exact completion request and validates request identity,
-   incremental SSE, four ordered terminals, token IDs, usage, and timing without importing a
-   serving runtime;
+   incremental SSE, injected per-frame acceptance time for coalesced transport chunks, four ordered
+   terminals, token IDs, usage, and timing without importing a serving runtime;
 3. `stage2_prometheus.py` retains raw exposition and provenance, parses exact metric/label series,
    and derives same-process nondecreasing counter deltas;
 4. `stage2_control.py` evaluates ordered runtime phases, offline process separation, dynamic
    resources, cancellation/drain samples, three-restart semantics, aggregate eligibility, and
    tiny-sample reporting limits;
 5. `stage2_bundle.py` manages inspectable staging state, durable raw and derived evidence,
-   reconstruction, manifest-last commit, atomic directory replacement, and tamper validation; and
+   public-safety checks, reconstruction, manifest-last commit, directory durability, and tamper
+   validation; and
 6. `stage2_fixture_server.py` scripts compatible response, log, and metric shapes on a server fixed
    to `127.0.0.1:0`.
 

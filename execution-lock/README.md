@@ -11,4 +11,8 @@ is the controller-authorized value. Torch and torchaudio hashes came from offici
 fragments. No resolver lock is represented as frozen while the one unresolved artifact hash
 remains.
 
+The future snapshot identity is the exact repository `Qwen/Qwen2.5-0.5B-Instruct` at revision
+`7ae557604adf67be50417f59c2c2f167def9a775`, with its revision-specific source URL retained in the
+machine-readable lock. Stage 2A did not retrieve the snapshot.
+
 The pre-import version command in the lock uses `importlib.metadata` and does not import vLLM.

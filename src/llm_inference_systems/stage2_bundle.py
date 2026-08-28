@@ -27,6 +27,40 @@ MAX_STAGE2_FILE_BYTES = 16 * 1024 * 1024
 ALLOWED_TEXT_SUFFIXES = frozenset({".json", ".jsonl", ".log", ".prom", ".txt"})
 Reconstructor = Callable[[dict[str, bytes]], dict[str, bytes]]
 
+_SENSITIVE_EVIDENCE_PATTERNS = (
+    re.compile(r"(?im)(?:^|[,{])\s*[\"']?(?:proxy-)?authorization[\"']?\s*:\s*[\"']?\S+"),
+    re.compile(r"(?im)(?:^|[,{])\s*[\"']?(?:cookie|set-cookie)[\"']?\s*:\s*[\"']?\S+"),
+    re.compile(
+        r"(?im)(?:^|[\"'])"
+        r"(?:api_key|client_secret|access_token|refresh_token|proxy_password)"
+        r"[\"']?\s*(?:=|:)\s*[\"']?\S+"
+    ),
+    re.compile(r"(?i)\bhttps?://[^\s/:@]+:[^\s/@]+@[^\s/]+"),
+    re.compile(r"(?i)(?<![A-Za-z0-9._-])/(?:Users|home)/[A-Za-z0-9._-]+"),
+    re.compile(r"(?i)(?:~|/[^\s\"']+)?/\.cache/(?:huggingface|torch|vllm)(?:/|\b)"),
+    re.compile(r"(?i)\bGPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"),
+    re.compile(r"(?i)\b(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63}\b"),
+    re.compile(r"(?i)\b(?:account|notebook)[_-]?id\s*(?:=|:)\s*[\"']?\S+"),
+    re.compile(
+        ("sam" + "sung") + r"[^\n]{0,80}(?:claim|ledger|control[-_ ]?plane)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        "|".join(
+            re.escape(value)
+            for value in (
+                "medical" + "-record",
+                "family" + "-record",
+                "finance" + "-record",
+                "loan" + "-application",
+                "resume" + "_private",
+                "immi" + "gration",
+            )
+        ),
+        re.IGNORECASE,
+    ),
+)
+
 
 class Stage2BundleError(ValueError):
     """Raised when a Stage 2 bundle is incomplete, unsafe, or irreconstructable."""
@@ -61,6 +95,11 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _require_public_safe_evidence(text: str) -> None:
+    if any(pattern.search(text) for pattern in _SENSITIVE_EVIDENCE_PATTERNS):
+        raise Stage2BundleError("durable Stage 2 evidence contains prohibited private material")
+
+
 def _default_sync_path(path: Path) -> None:
     flags = os.O_RDONLY
     descriptor = os.open(path, flags)
@@ -80,6 +119,15 @@ def _check_tree(root: Path) -> tuple[Path, ...]:
     if any(path.is_symlink() for path in paths):
         raise Stage2BundleError("bundle cannot contain symlinks")
     return paths
+
+
+def _require_no_symlink_components(path: Path) -> None:
+    current = Path(path.anchor) if path.is_absolute() else Path()
+    parts = path.parts[1:] if path.is_absolute() else path.parts
+    for part in parts:
+        current /= part
+        if current.is_symlink():
+            raise Stage2BundleError("bundle parent path cannot contain symlinks")
 
 
 class Stage2BundleBuilder:
@@ -107,9 +155,16 @@ class Stage2BundleBuilder:
         self._sync_path = sync_path
         self._replace = replace
         self._sequence = 0
-        if self.final_path.exists() or self.staging_path.exists():
+        _require_no_symlink_components(parent)
+        if (
+            self.final_path.exists()
+            or self.final_path.is_symlink()
+            or self.staging_path.exists()
+            or self.staging_path.is_symlink()
+        ):
             raise Stage2BundleError("bundle target or staging directory already exists")
         parent.mkdir(parents=True, exist_ok=True)
+        _require_no_symlink_components(parent)
         self.staging_path.mkdir()
         self._write_state(BundleState.INCOMPLETE, phase="CREATED", reason=None, last=None)
         self._sync_path(self.staging_path)
@@ -122,7 +177,6 @@ class Stage2BundleBuilder:
     def _durable_write(self, path: Path, data: bytes) -> None:
         if len(data) > MAX_STAGE2_FILE_BYTES:
             raise Stage2BundleError("bundle file exceeds the Stage 2 size limit")
-        path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
         try:
             with temporary.open("xb") as handle:
@@ -135,8 +189,41 @@ class Stage2BundleBuilder:
             if temporary.exists():
                 temporary.unlink()
 
+    def _prepare_evidence_destination(self, path: PurePosixPath) -> Path:
+        current = self.staging_path
+        for part in path.parts[:-1]:
+            current /= part
+            if current.is_symlink():
+                raise Stage2BundleError("bundle evidence path cannot contain symlinks")
+            if current.exists() and not current.is_dir():
+                raise Stage2BundleError("bundle evidence parent is not a directory")
+            if not current.exists():
+                current.mkdir()
+                self._sync_path(current.parent)
+        destination = self.staging_path.joinpath(*path.parts)
+        if destination.is_symlink():
+            raise Stage2BundleError("bundle evidence destination cannot be a symlink")
+        return destination
+
     def _write_state(
         self,
+        state: Literal[BundleState.INCOMPLETE, BundleState.INVALID],
+        *,
+        phase: str,
+        reason: str | None,
+        last: str | None,
+    ) -> None:
+        self._write_state_at(
+            self.staging_path,
+            state,
+            phase=phase,
+            reason=reason,
+            last=last,
+        )
+
+    def _write_state_at(
+        self,
+        directory: Path,
         state: Literal[BundleState.INCOMPLETE, BundleState.INVALID],
         *,
         phase: str,
@@ -151,7 +238,24 @@ class Stage2BundleBuilder:
             last_valid_boundary=last,
             sequence=self._sequence,
         )
-        self._durable_write(self.state_path, canonical_json_bytes(record) + b"\n")
+        self._durable_write(directory / "bundle-state.json", canonical_json_bytes(record) + b"\n")
+
+    def _record_commit_failure(self) -> None:
+        directory = self.final_path if self.final_path.is_dir() else self.staging_path
+        if not directory.is_dir():
+            raise Stage2BundleError("failed commit left no recoverable bundle directory")
+        manifest_path = directory / "evidence-manifest.json"
+        if manifest_path.exists():
+            manifest_path.unlink()
+        self._write_state_at(
+            directory,
+            BundleState.INVALID,
+            phase="COMMIT",
+            reason="DURABILITY_OPERATION_FAILED",
+            last="RECONSTRUCTION_VALIDATED",
+        )
+        if directory == self.final_path:
+            self._sync_path(self.parent)
 
     def _write_evidence(self, relative: str, data: bytes, *, prefix: str) -> None:
         self._require_incomplete()
@@ -161,10 +265,11 @@ class Stage2BundleBuilder:
         if path.suffix not in ALLOWED_TEXT_SUFFIXES:
             raise Stage2BundleError("generated binary evidence is outside the Stage 2A policy")
         try:
-            data.decode("utf-8")
+            text = data.decode("utf-8")
         except UnicodeDecodeError as error:
             raise Stage2BundleError("Stage 2A durable evidence must be UTF-8 text") from error
-        destination = self.staging_path.joinpath(*path.parts)
+        _require_public_safe_evidence(text)
+        destination = self._prepare_evidence_destination(path)
         if destination.exists():
             raise Stage2BundleError("bundle evidence file cannot be replaced")
         self._durable_write(destination, data)
@@ -245,14 +350,22 @@ class Stage2BundleBuilder:
         crash_before_manifest: bool = False,
     ) -> Stage2BundleManifest:
         self._require_incomplete()
-        reconstruction_sha256 = self._validate_reconstruction(reconstruct)
-        inventory = self._inventory()
-        if not inventory or not any(entry.path.startswith("raw/") for entry in inventory):
-            raise Stage2BundleError("committed bundles require retained raw evidence")
-        if not any(entry.path.startswith("derived/") for entry in inventory):
-            raise Stage2BundleError("committed bundles require reconstructed evidence")
-        self.state_path.unlink()
-        self._sync_path(self.staging_path)
+        try:
+            reconstruction_sha256 = self._validate_reconstruction(reconstruct)
+            inventory = self._inventory()
+            if not inventory or not any(entry.path.startswith("raw/") for entry in inventory):
+                raise Stage2BundleError("committed bundles require retained raw evidence")
+            if not any(entry.path.startswith("derived/") for entry in inventory):
+                raise Stage2BundleError("committed bundles require reconstructed evidence")
+        except Exception as error:
+            self.invalidate(
+                phase="COMMIT_VALIDATION",
+                reason="RECONSTRUCTION_OR_INVENTORY_INVALID",
+                last_valid_boundary="RAW_EVIDENCE_RETAINED",
+            )
+            if isinstance(error, Stage2BundleError):
+                raise
+            raise Stage2BundleError("bundle commit validation failed") from error
         if crash_before_manifest:
             raise Stage2BundleError("simulated crash before evidence manifest")
         manifest = Stage2BundleManifest(
@@ -266,22 +379,21 @@ class Stage2BundleBuilder:
             files=inventory,
             reconstruction_sha256=reconstruction_sha256,
         )
-        manifest_path = self.staging_path / "evidence-manifest.json"
+        manifest_bytes = canonical_json_bytes(manifest) + b"\n"
         try:
-            self._durable_write(manifest_path, canonical_json_bytes(manifest) + b"\n")
             self._sync_path(self.staging_path)
             self._replace(self.staging_path, self.final_path)
             self._sync_path(self.parent)
+            (self.final_path / "bundle-state.json").unlink()
+            self._sync_path(self.final_path)
+            self._durable_write(self.final_path / "evidence-manifest.json", manifest_bytes)
         except OSError as error:
-            if self.staging_path.is_dir():
-                if manifest_path.exists():
-                    manifest_path.unlink()
-                self._write_state(
-                    BundleState.INVALID,
-                    phase="COMMIT",
-                    reason="DURABILITY_OPERATION_FAILED",
-                    last="RECONSTRUCTION_VALIDATED",
-                )
+            try:
+                self._record_commit_failure()
+            except (OSError, Stage2BundleError) as recovery_error:
+                raise Stage2BundleError(
+                    "bundle commit failed and invalid-state durability could not be confirmed"
+                ) from recovery_error
             raise Stage2BundleError("bundle fsync or atomic rename failed") from error
         return manifest
 

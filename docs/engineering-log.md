@@ -168,6 +168,17 @@ not deployed, published, historically authenticated, or accepted into the canoni
   credentials, GPU UUIDs, model-cache paths, notebook/account identifiers, employer control-plane
   names, sensitive personal-file names, arbitrary executable remote URLs, symlinks, and unreviewed
   generated binaries.
+- Four independent read-only reviews covered source/test correctness, measurement and pinned vLLM
+  consistency, security/privacy/claim boundaries, and the separate execution lock. High-confidence
+  fixes bind request evidence to its observed log identity chain, validate exact counter arithmetic
+  and labels, capture coalesced terminal-frame times, bind aggregate records to three manifest
+  identities, reject contradictory cancellation evidence, and harden offline-process and resource
+  controls.
+- The same review pass made reconstruction failures and post-rename durability failures visibly
+  invalid, safety-gated durable raw/derived evidence before write, rejected symlinked parent paths,
+  exercised the actual HTTP fixture stream through the protocol validator, and encoded the exact
+  artifact and model-repository allowlist in the generated execution-lock schema. No review finding
+  required or authorized a real runtime, model, tokenizer, GPU, remote, or public-claim action.
 
 This Stage 2A work is local source and `TEST_FIXTURE_ONLY` evidence only. It does not execute vLLM,
 a model, tokenizer, GPU, CUDA, Kaggle, remote compute, or a paid resource; it does not alter public

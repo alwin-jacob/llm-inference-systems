@@ -8,14 +8,19 @@ from pydantic import ValidationError
 from llm_inference_systems.stage2_contracts import (
     REQUIRED_PREIMPORT_ENVIRONMENT,
     RUNTIME_PHASE_ORDER,
+    BundleFileEntry,
     BundleState,
     OfflineProcessRecord,
     ProcessClass,
+    ProcessOperation,
     ProviderShape,
     ResourceBudgetInputs,
     ResourceEstimate,
     RuntimeImplementationRecord,
     RuntimePhaseRecord,
+    Stage2BundleManifest,
+    Stage2EvidenceBoundary,
+    Stage2EvidenceScope,
 )
 from llm_inference_systems.stage2_control import (
     AggregateComparisonState,
@@ -25,6 +30,7 @@ from llm_inference_systems.stage2_control import (
     FinishedReasonDelta,
     RestartSemanticRecord,
     Stage2ControlError,
+    bundle_manifest_sha256,
     calculate_resource_budget,
     compare_three_restarts,
     describe_tiny_n_metric,
@@ -35,6 +41,7 @@ from llm_inference_systems.stage2_control import (
     validate_runtime_phases,
 )
 from llm_inference_systems.stage2_prometheus import (
+    CounterDelta,
     PrometheusProtocolError,
     PrometheusSnapshot,
     derive_counter_delta,
@@ -88,7 +95,12 @@ def test_exact_prometheus_series_and_full_inventory_are_retained() -> None:
     sample = select_exact_series(snapshot, "vllm:prompt_tokens_total")
     assert sample.value == 5
     assert snapshot.raw_exposition == _exposition(prompt=5)
-    assert snapshot.label_inventory["vllm:prompt_tokens_total"] == (("engine", "model_name"),)
+    assert snapshot.label_inventory["vllm:prompt_tokens_total"] == (
+        (
+            ("engine", "0"),
+            ("model_name", "qwen2.5-0.5b-instruct-stage2"),
+        ),
+    )
     require_quiescent(snapshot)
 
 
@@ -171,6 +183,36 @@ def test_expected_16_by_64_to_32_counter_deltas() -> None:
     validate_measured_window_deltas(deltas)
 
 
+def test_measured_window_delta_rejects_false_arithmetic_or_labels() -> None:
+    with pytest.raises(ValidationError, match="does not reconstruct"):
+        CounterDelta(
+            metric="vllm:prompt_tokens_total",
+            labels=(("engine", "0"), ("model_name", "qwen2.5-0.5b-instruct-stage2")),
+            before=100,
+            after=200,
+            delta=1024,
+        )
+    before = _snapshot(_exposition(), 1)
+    after = _snapshot(_exposition(prompt=1024, generation=512, length=16), 2)
+    deltas = (
+        derive_counter_delta(before, after, "vllm:prompt_tokens_total").model_copy(
+            update={"labels": (("engine", "different"),)}
+        ),
+        derive_counter_delta(before, after, "vllm:generation_tokens_total"),
+        derive_counter_delta(
+            before,
+            after,
+            "vllm:request_success_total",
+            finished_reason="length",
+        ),
+        derive_counter_delta(before, after, "vllm:num_preemptions_total"),
+        derive_counter_delta(before, after, "vllm:prefix_cache_queries_total"),
+        derive_counter_delta(before, after, "vllm:prefix_cache_hits_total"),
+    )
+    with pytest.raises(PrometheusProtocolError, match="labels differ"):
+        validate_measured_window_deltas(deltas)
+
+
 def _phases() -> tuple[RuntimePhaseRecord, ...]:
     return tuple(
         RuntimePhaseRecord(
@@ -216,7 +258,16 @@ def _offline_records() -> tuple[OfflineProcessRecord, ...]:
             OfflineProcessRecord(
                 process_class=process_class,
                 process_nonce=f"process-{index}",
-                environment_set_before_import=True,
+                completed_operation=(
+                    ProcessOperation.SNAPSHOT_DOWNLOADED_AND_MANIFESTED
+                    if not offline
+                    else (
+                        ProcessOperation.TOKENIZER_IMPORTED_AND_VERIFIED_OFFLINE
+                        if process_class is ProcessClass.OFFLINE_TOKENIZER_VERIFICATION
+                        else ProcessOperation.RUNTIME_IMPORTED_AND_STARTED_OFFLINE
+                    )
+                ),
+                environment_set_before_import=offline,
                 offline_environment=dict(REQUIRED_PREIMPORT_ENVIRONMENT) if offline else {},
                 token_variables_unset_without_reading=True,
                 verified_local_snapshot_relative_path=(
@@ -239,6 +290,27 @@ def test_offline_processes_are_fresh_and_environment_is_preimport() -> None:
             {
                 **_offline_records()[1].model_dump(mode="python"),
                 "environment_set_before_import": False,
+            }
+        )
+    with pytest.raises(ValidationError, match="verified relative snapshot path"):
+        OfflineProcessRecord.model_validate(
+            {
+                **_offline_records()[1].model_dump(mode="python"),
+                "verified_local_snapshot_relative_path": "",
+            }
+        )
+    with pytest.raises(ValidationError, match="declared import and verification"):
+        OfflineProcessRecord.model_validate(
+            {
+                **_offline_records()[2].model_dump(mode="python"),
+                "imported_runtime_or_tokenizer": False,
+            }
+        )
+    with pytest.raises(ValidationError, match="process operation"):
+        OfflineProcessRecord.model_validate(
+            {
+                **_offline_records()[2].model_dump(mode="python"),
+                "completed_operation": ProcessOperation.TOKENIZER_IMPORTED_AND_VERIFIED_OFFLINE,
             }
         )
 
@@ -267,6 +339,9 @@ def test_dynamic_resource_budget_boundary_rounding_and_fixed_floor() -> None:
         calculate_resource_budget(None)
     with pytest.raises(OverflowError):
         calculate_resource_budget(_budget_inputs(2**63 - 1))
+    margin_overflow = ((2**63 - 1 - 2_000_000_000) * 4) // 5 + 1
+    with pytest.raises(OverflowError, match="margin"):
+        calculate_resource_budget(_budget_inputs(margin_overflow))
 
 
 def test_fixed_and_dynamic_resource_gate() -> None:
@@ -363,11 +438,53 @@ def test_cancellation_rejected_classifications_and_continuous_cadence() -> None:
     assert (
         evaluate_cancellation(late_generation) is CancellationClassification.RESIDUAL_WORK_TIMEOUT
     )
+    samples = list(_cancellation().samples)
+    samples.append(
+        DrainSample(
+            observation_offset_ns=4_000_000_000,
+            running_requests=1,
+            waiting_requests=0,
+            generation_tokens_total=11,
+        )
+    )
+    contradictory_later_sample = _cancellation().model_copy(update={"samples": tuple(samples)})
+    assert (
+        evaluate_cancellation(contradictory_later_sample)
+        is CancellationClassification.RESIDUAL_WORK_TIMEOUT
+    )
 
 
-def _restart(index: int) -> RestartSemanticRecord:
+def _manifest(index: int) -> Stage2BundleManifest:
+    return Stage2BundleManifest(
+        schema_version="0.3.0",
+        measurement_protocol_version="0.3.0",
+        state=BundleState.COMMITTED,
+        boundary=_fixture_boundary(),
+        repetition_index=index,
+        source_commit="a" * 40,
+        created_at_utc=datetime(2026, 8, 28, tzinfo=UTC),
+        files=(BundleFileEntry(path="raw/evidence.json", sha256="b" * 64, size=1),),
+        reconstruction_sha256="c" * 64,
+    )
+
+
+def _fixture_boundary() -> Stage2EvidenceBoundary:
+    return Stage2EvidenceBoundary(
+        evidence_scope=Stage2EvidenceScope.TEST_FIXTURE_ONLY,
+        stage2a_cpu_fixture_tested=True,
+        real_runtime_execution=False,
+        model_execution=False,
+        tokenizer_execution=False,
+        gpu_execution=False,
+        cuda_execution=False,
+    )
+
+
+def _restart(index: int, manifest: Stage2BundleManifest | None = None) -> RestartSemanticRecord:
+    selected_manifest = manifest or _manifest(index)
     return RestartSemanticRecord(
         repetition_index=index,
+        bundle_manifest_sha256=bundle_manifest_sha256(selected_manifest),
         case_id="case-001",
         sent_prompt_token_ids=tuple(range(64)),
         returned_prompt_token_ids=tuple(range(64)),
@@ -410,10 +527,15 @@ def test_three_restart_every_semantic_field_mismatch_invalidates(
 
 
 def test_aggregate_commits_only_three_committed_repetitions_and_passing_cases() -> None:
-    passing = compare_three_restarts((_restart(1), _restart(2), _restart(3)))
+    manifests = tuple(_manifest(index) for index in (1, 2, 3))
+    records = tuple(
+        _restart(index, manifest) for index, manifest in zip((1, 2, 3), manifests, strict=True)
+    )
+    passing = compare_three_restarts(records)
     assert (
         validate_aggregate_commit(
-            (BundleState.COMMITTED,) * 3,
+            manifests,
+            (records,),
             (passing,),
             expected_case_ids=("case-001",),
         )
@@ -421,24 +543,39 @@ def test_aggregate_commits_only_three_committed_repetitions_and_passing_cases() 
     )
     with pytest.raises(Stage2ControlError, match="three committed"):
         validate_aggregate_commit(
-            (BundleState.COMMITTED, BundleState.INVALID, BundleState.COMMITTED),
+            (manifests[0], manifests[0], manifests[2]),
+            (records,),
             (passing,),
             expected_case_ids=("case-001",),
         )
     failing = compare_three_restarts(
-        (_restart(1), _restart(2), _restart(3).model_copy(update={"total_tokens": 95}))
+        (*records[:2], records[2].model_copy(update={"total_tokens": 95}))
     )
     with pytest.raises(Stage2ControlError, match="semantic comparison"):
         validate_aggregate_commit(
-            (BundleState.COMMITTED,) * 3,
+            manifests,
+            (records,),
             (failing,),
             expected_case_ids=("case-001",),
         )
     with pytest.raises(Stage2ControlError, match="every expected case"):
         validate_aggregate_commit(
-            (BundleState.COMMITTED,) * 3,
+            manifests,
+            (records,),
             (passing,),
             expected_case_ids=("case-001", "case-002"),
+        )
+    unbound = (
+        records[0],
+        records[1],
+        records[2].model_copy(update={"bundle_manifest_sha256": "0" * 64}),
+    )
+    with pytest.raises(Stage2ControlError, match="not bound"):
+        validate_aggregate_commit(
+            manifests,
+            (unbound,),
+            (passing,),
+            expected_case_ids=("case-001",),
         )
 
 

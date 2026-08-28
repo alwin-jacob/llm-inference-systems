@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 from enum import StrEnum
 from itertools import pairwise
 from typing import Annotated, Literal
 
 from pydantic import Field
 
+from llm_inference_systems.canonical import canonical_json_bytes
 from llm_inference_systems.contracts import NonNegativeFloat, NonNegativeInt, Sha256, StrictModel
 from llm_inference_systems.metrics import percentile_type7
 from llm_inference_systems.stage2_contracts import (
@@ -15,10 +17,12 @@ from llm_inference_systems.stage2_contracts import (
     BundleState,
     OfflineProcessRecord,
     ProcessClass,
+    ProcessOperation,
     ProviderShape,
     ResourceBudgetInputs,
     ResourceBudgetResult,
     RuntimePhaseRecord,
+    Stage2BundleManifest,
 )
 
 MAX_SIGNED_64 = 2**63 - 1
@@ -48,9 +52,19 @@ def validate_offline_process_separation(records: tuple[OfflineProcessRecord, ...
     if len(nonces) != len(set(nonces)):
         raise Stage2ControlError("online or offline process reuse is prohibited")
     downloader = records[0]
-    if downloader.imported_runtime_or_tokenizer:
+    if (
+        downloader.completed_operation is not ProcessOperation.SNAPSHOT_DOWNLOADED_AND_MANIFESTED
+        or downloader.imported_runtime_or_tokenizer
+    ):
         raise Stage2ControlError("online downloader process cannot become an offline runtime")
-    if not all(record.token_variables_unset_without_reading for record in records[1:]):
+    offline = records[1:]
+    if not all(
+        record.token_variables_unset_without_reading
+        and record.environment_set_before_import
+        and record.imported_runtime_or_tokenizer
+        and bool(record.verified_local_snapshot_relative_path)
+        for record in offline
+    ):
         raise Stage2ControlError("offline processes must unset token variables without reading")
 
 
@@ -67,6 +81,8 @@ def calculate_resource_budget(inputs: ResourceBudgetInputs | None) -> ResourceBu
     if total > MAX_SIGNED_64 or total * 5 > MAX_SIGNED_64 * 4:
         raise OverflowError("resource-budget calculation exceeds signed 64-bit bounds")
     with_margin = (total * 5 + 3) // 4 + 2_000_000_000
+    if with_margin > MAX_SIGNED_64:
+        raise OverflowError("resource-budget margin exceeds signed 64-bit bounds")
     required_free = max(14_000_000_000, with_margin)
     return ResourceBudgetResult(
         required_setup_bytes=total,
@@ -201,6 +217,14 @@ def evaluate_cancellation(probe: CancellationProbe) -> CancellationClassificatio
         for item in cooldown
     ):
         return CancellationClassification.RESIDUAL_WORK_TIMEOUT
+    later_retained = tuple(item for item in samples if item.observation_offset_ns > cooldown_end_ns)
+    if any(
+        item.running_requests != 0
+        or item.waiting_requests != 0
+        or item.generation_tokens_total != quiescent_end.generation_tokens_total
+        for item in later_retained
+    ):
+        return CancellationClassification.RESIDUAL_WORK_TIMEOUT
     if probe.residual_process_or_request_state:
         return CancellationClassification.RESIDUAL_WORK_TIMEOUT
     return CancellationClassification.SERVER_ABORT_ACKNOWLEDGED_AND_DRAINED
@@ -208,6 +232,7 @@ def evaluate_cancellation(probe: CancellationProbe) -> CancellationClassificatio
 
 class RestartSemanticRecord(StrictModel):
     repetition_index: Annotated[int, Field(ge=1, le=3)]
+    bundle_manifest_sha256: Sha256
     case_id: str
     sent_prompt_token_ids: tuple[int, ...] = Field(min_length=64, max_length=64)
     returned_prompt_token_ids: tuple[int, ...] = Field(min_length=64, max_length=64)
@@ -271,21 +296,46 @@ def compare_three_restarts(records: tuple[RestartSemanticRecord, ...]) -> Restar
     )
 
 
+def bundle_manifest_sha256(manifest: Stage2BundleManifest) -> str:
+    """Return the exact identity of the canonical manifest file bytes."""
+
+    return hashlib.sha256(canonical_json_bytes(manifest) + b"\n").hexdigest()
+
+
 def validate_aggregate_commit(
-    repetition_states: tuple[BundleState, ...],
+    repetition_manifests: tuple[Stage2BundleManifest, ...],
+    case_records: tuple[tuple[RestartSemanticRecord, ...], ...],
     case_comparisons: tuple[RestartComparison, ...],
     *,
     expected_case_ids: tuple[str, ...],
 ) -> BundleState:
-    if repetition_states != (BundleState.COMMITTED,) * 3:
+    if tuple(manifest.repetition_index for manifest in repetition_manifests) != (1, 2, 3):
         raise Stage2ControlError("aggregate commit requires exactly three committed repetitions")
+    manifest_identities = {
+        manifest.repetition_index: bundle_manifest_sha256(manifest)
+        for manifest in repetition_manifests
+    }
     comparison_case_ids = tuple(comparison.case_id for comparison in case_comparisons)
+    record_case_ids = tuple(records[0].case_id for records in case_records if records)
     if (
         not expected_case_ids
         or len(expected_case_ids) != len(set(expected_case_ids))
         or comparison_case_ids != expected_case_ids
+        or record_case_ids != expected_case_ids
+        or len(case_records) != len(expected_case_ids)
     ):
         raise Stage2ControlError("aggregate commit requires every expected case comparison")
+    for records in case_records:
+        if tuple(record.repetition_index for record in records) != (1, 2, 3):
+            raise Stage2ControlError("case records require all three repetition identities")
+        if any(
+            record.bundle_manifest_sha256 != manifest_identities[record.repetition_index]
+            for record in records
+        ):
+            raise Stage2ControlError("case record is not bound to its repetition bundle")
+    reconstructed = tuple(compare_three_restarts(records) for records in case_records)
+    if reconstructed != case_comparisons:
+        raise Stage2ControlError("semantic comparison does not reconstruct from bundle records")
     if any(
         comparison.state is not AggregateComparisonState.COMMITTED or comparison.mismatches
         for comparison in case_comparisons

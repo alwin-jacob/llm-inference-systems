@@ -43,7 +43,9 @@
   ],
   "python_version": "3.13.15",
   "pytorch_index": "https://download.pytorch.org/whl/cu129",
+  "qwen_model_repository": "Qwen/Qwen2.5-0.5B-Instruct",
   "qwen_snapshot_revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+  "qwen_snapshot_source_url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct/tree/7ae557604adf67be50417f59c2c2f167def9a775",
   "schema_version": "0.3.0",
   "status": "BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED",
   "unresolved": [

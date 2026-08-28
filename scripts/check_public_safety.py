@@ -231,15 +231,19 @@ def _patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
         (
             "credential-file-content",
             re.compile(
-                r"(?im)^\s*(?:aws_secret_access_key|api_key|client_secret|"
-                r"proxy_password|access_token|refresh_token)\s*="
+                r"(?im)(?:^|[\"'])"
+                r"(?:aws_secret_access_key|api_key|client_secret|proxy_password|"
+                r"access_token|refresh_token)[\"']?\s*(?:=|:)\s*[\"']?\S+"
             ),
         ),
         (
             "authorization-header",
-            re.compile(r"(?im)^\s*authorization\s*:\s*(?:basic|bearer)\s+\S+"),
+            re.compile(r"(?im)(?:^|[,{])\s*[\"']?(?:proxy-)?authorization[\"']?\s*:\s*[\"']?\S+"),
         ),
-        ("cookie-header", re.compile(r"(?im)^\s*(?:cookie|set-cookie)\s*:\s*\S+")),
+        (
+            "cookie-header",
+            re.compile(r"(?im)(?:^|[,{])\s*[\"']?(?:cookie|set-cookie)[\"']?\s*:\s*[\"']?\S+"),
+        ),
         (
             "proxy-credential-url",
             re.compile(r"(?i)\bhttps?://[^\s/:@]+:[^\s/@]+@[^\s/]+"),
@@ -258,8 +262,17 @@ def _patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
         (
             "notebook-account-identifier",
             re.compile(
-                r"(?i)\b(?:kaggle\.com/code|colab\.research\.google\.com/drive)/[^\s/]+/[^\s]+"
+                r"(?i)\b(?:kaggle\.com/code/[^\s/]+/[^\s]+|"
+                r"colab\.research\.google\.com/drive/[^\s/?#]+)"
             ),
+        ),
+        (
+            "private-hostname-suffix",
+            re.compile(r"(?i)\b[A-Za-z0-9][A-Za-z0-9.-]*\.(?:corp|internal|lan|local)\b"),
+        ),
+        (
+            "private-account-identifier",
+            re.compile(r"(?i)\b(?:account|notebook)[_-]?id\s*(?:=|:)\s*[\"']?\S+"),
         ),
         (
             "employer-control-plane-file",

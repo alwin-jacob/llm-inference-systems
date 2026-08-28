@@ -290,6 +290,15 @@ class Stage2RequestEvidence(StrictModel):
             raise ValueError("internal engine ID requires an eight-character lowercase hex suffix")
         if self.sent_prompt_token_ids != self.returned_prompt_token_ids:
             raise ValueError("returned prompt IDs differ from sent prompt IDs")
+        prompt_events = tuple(
+            event for event in self.token_events if event.prompt_token_ids is not None
+        )
+        if (
+            len(prompt_events) != 1
+            or prompt_events[0] is not self.token_events[0]
+            or prompt_events[0].prompt_token_ids != self.returned_prompt_token_ids
+        ):
+            raise ValueError("returned prompt IDs require one matching first token event")
         accumulated = tuple(
             token_id for event in self.token_events for token_id in event.output_token_ids
         )
@@ -407,9 +416,16 @@ class ProcessClass(StrEnum):
     OFFLINE_RUNTIME_RESTART_3 = "PROCESS_C3_OFFLINE_RUNTIME_RESTART"
 
 
+class ProcessOperation(StrEnum):
+    SNAPSHOT_DOWNLOADED_AND_MANIFESTED = "SNAPSHOT_DOWNLOADED_AND_MANIFESTED"
+    TOKENIZER_IMPORTED_AND_VERIFIED_OFFLINE = "TOKENIZER_IMPORTED_AND_VERIFIED_OFFLINE"
+    RUNTIME_IMPORTED_AND_STARTED_OFFLINE = "RUNTIME_IMPORTED_AND_STARTED_OFFLINE"
+
+
 class OfflineProcessRecord(StrictModel):
     process_class: ProcessClass
     process_nonce: Identifier
+    completed_operation: ProcessOperation
     environment_set_before_import: bool
     offline_environment: dict[str, str]
     token_variables_unset_without_reading: bool
@@ -419,16 +435,46 @@ class OfflineProcessRecord(StrictModel):
     @model_validator(mode="after")
     def validate_environment(self) -> Self:
         offline = self.process_class is not ProcessClass.ONLINE_SNAPSHOT_DOWNLOAD
+        expected_operation = {
+            ProcessClass.ONLINE_SNAPSHOT_DOWNLOAD: (
+                ProcessOperation.SNAPSHOT_DOWNLOADED_AND_MANIFESTED
+            ),
+            ProcessClass.OFFLINE_TOKENIZER_VERIFICATION: (
+                ProcessOperation.TOKENIZER_IMPORTED_AND_VERIFIED_OFFLINE
+            ),
+            ProcessClass.OFFLINE_RUNTIME_RESTART_1: (
+                ProcessOperation.RUNTIME_IMPORTED_AND_STARTED_OFFLINE
+            ),
+            ProcessClass.OFFLINE_RUNTIME_RESTART_2: (
+                ProcessOperation.RUNTIME_IMPORTED_AND_STARTED_OFFLINE
+            ),
+            ProcessClass.OFFLINE_RUNTIME_RESTART_3: (
+                ProcessOperation.RUNTIME_IMPORTED_AND_STARTED_OFFLINE
+            ),
+        }[self.process_class]
+        if self.completed_operation is not expected_operation:
+            raise ValueError("completed process operation differs from the process class")
         if offline and self.offline_environment != REQUIRED_PREIMPORT_ENVIRONMENT:
             raise ValueError("offline process environment differs from the frozen contract")
-        if offline and self.verified_local_snapshot_relative_path is None:
+        if offline and not self.verified_local_snapshot_relative_path:
             raise ValueError("offline processes require a verified relative snapshot path")
         if self.verified_local_snapshot_relative_path is not None:
             path = PurePosixPath(self.verified_local_snapshot_relative_path)
-            if path.is_absolute() or ".." in path.parts:
+            if (
+                self.verified_local_snapshot_relative_path != path.as_posix()
+                or path.is_absolute()
+                or not path.parts
+                or any(part in {"", ".", ".."} for part in path.parts)
+            ):
                 raise ValueError("snapshot path must be sanitized and relative")
-        if self.imported_runtime_or_tokenizer and not self.environment_set_before_import:
+        if offline and not self.environment_set_before_import:
             raise ValueError("offline controls must be established before import")
+        if offline and not self.imported_runtime_or_tokenizer:
+            raise ValueError("offline process must complete its declared import and verification")
+        if not offline and (
+            self.environment_set_before_import or self.imported_runtime_or_tokenizer
+        ):
+            raise ValueError("online snapshot process cannot import runtime or tokenizer code")
         return self
 
 
@@ -513,21 +559,52 @@ class ExecutionLockStatus(StrEnum):
     )
 
 
-class ExecutionLockArtifact(StrictModel):
-    package: Identifier
-    version: Identifier
-    filename: Identifier
-    source_url: str
-    sha256: Sha256 | None
-    hash_source: Literal["OFFICIAL_INDEX_METADATA", "CONTROLLER_AUTHORIZED_SPEC", "UNAVAILABLE"]
+class VllmExecutionLockArtifact(StrictModel):
+    package: Literal["vllm"]
+    version: Literal["0.28.0"]
+    filename: Literal["vllm-0.28.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl"]
+    source_url: Literal[
+        "https://wheels.vllm.ai/2cf0a6915ce544dc493a0990f2ea38d81601128a/"
+        "vllm-0.28.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl"
+    ]
+    sha256: Literal["8ec943b66a0c6b4351d0778e99d7bacfca5788dd8eedd49425092bacb61c4397"]
+    hash_source: Literal["CONTROLLER_AUTHORIZED_SPEC"]
 
-    @model_validator(mode="after")
-    def validate_hash_source(self) -> Self:
-        if (self.sha256 is None) != (self.hash_source == "UNAVAILABLE"):
-            raise ValueError("execution artifact hash and provenance differ")
-        if not self.source_url.startswith("https://"):
-            raise ValueError("execution artifact sources must use HTTPS")
-        return self
+
+class TorchExecutionLockArtifact(StrictModel):
+    package: Literal["torch"]
+    version: Literal["2.13.0+cu129"]
+    filename: Literal["torch-2.13.0+cu129-cp313-cp313-manylinux_2_28_x86_64.whl"]
+    source_url: Literal[
+        "https://download-r2.pytorch.org/whl/cu129/"
+        "torch-2.13.0%2Bcu129-cp313-cp313-manylinux_2_28_x86_64.whl"
+    ]
+    sha256: Literal["6e3bcf183e3096db45bf539dc21f820963074986ece7a56550714f12863c76af"]
+    hash_source: Literal["OFFICIAL_INDEX_METADATA"]
+
+
+class TorchaudioExecutionLockArtifact(StrictModel):
+    package: Literal["torchaudio"]
+    version: Literal["2.11.0+cu129"]
+    filename: Literal["torchaudio-2.11.0+cu129-cp313-cp313-manylinux_2_28_x86_64.whl"]
+    source_url: Literal[
+        "https://download-r2.pytorch.org/whl/cu129/"
+        "torchaudio-2.11.0%2Bcu129-cp313-cp313-manylinux_2_28_x86_64.whl"
+    ]
+    sha256: Literal["45103fac849ffee337976ff19eac81725b3396e2c18e3f48ed92ba7669cb32d7"]
+    hash_source: Literal["OFFICIAL_INDEX_METADATA"]
+
+
+class TorchvisionExecutionLockArtifact(StrictModel):
+    package: Literal["torchvision"]
+    version: Literal["0.28.0+cu129"]
+    filename: Literal["torchvision-0.28.0+cu129-cp313-cp313-manylinux_2_28_x86_64.whl"]
+    source_url: Literal[
+        "https://download-r2.pytorch.org/whl/cu129/"
+        "torchvision-0.28.0%2Bcu129-cp313-cp313-manylinux_2_28_x86_64.whl"
+    ]
+    sha256: None
+    hash_source: Literal["UNAVAILABLE"]
 
 
 class Stage2ExecutionLock(StrictModel):
@@ -539,8 +616,18 @@ class Stage2ExecutionLock(StrictModel):
     vllm_git_revision: Literal["2cf0a6915ce544dc493a0990f2ea38d81601128a"]
     pytorch_index: Literal["https://download.pytorch.org/whl/cu129"]
     flashinfer_index: Literal["https://flashinfer.ai/whl/cu129"]
+    qwen_model_repository: Literal["Qwen/Qwen2.5-0.5B-Instruct"]
     qwen_snapshot_revision: Literal["7ae557604adf67be50417f59c2c2f167def9a775"]
-    artifacts: tuple[ExecutionLockArtifact, ...] = Field(min_length=4)
+    qwen_snapshot_source_url: Literal[
+        "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct/tree/"
+        "7ae557604adf67be50417f59c2c2f167def9a775"
+    ]
+    artifacts: tuple[
+        VllmExecutionLockArtifact,
+        TorchExecutionLockArtifact,
+        TorchaudioExecutionLockArtifact,
+        TorchvisionExecutionLockArtifact,
+    ]
     preimport_distribution_version_command: tuple[str, ...]
     installed: Literal[False]
     executed: Literal[False]

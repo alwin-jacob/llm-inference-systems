@@ -139,16 +139,19 @@ evidence remain eligible. No per-token timestamps are synthesized.
 Prometheus evidence retains raw exposition, parsed samples, full label inventory, wall-clock scrape
 provenance, and monotonic scrape offset. Exact `model_name` and `engine` series are selected once;
 counters are subtracted only within one process, cannot decrease or reset, and are gated by
-quiescent pre/post scrapes. KV-cache percentage is descriptive and is not memory utilization.
+quiescent pre/post scrapes. Every retained delta must reconstruct exactly from its before/after
+values and carry only the exact expected labels. KV-cache percentage is descriptive and is not
+memory utilization.
 
 The cancellation model closes one 64-to-512 request after its first generated token, requires the
 external/internal abort chain, ten consecutive zero running/waiting samples at 100-ms cadence, one
 continuous second of stable generation count, two seconds of cooldown, and a ten-second hard drain
-deadline. An observed abort success-counter delta of zero or one is retained; every non-abort delta
-must be zero.
+deadline. Any contradictory later retained sample rejects cancellation success. An observed abort
+success-counter delta of zero or one is retained; every non-abort delta must be zero.
 
-Exactly three fresh, non-replaceable repetition bundles are compared by prompt IDs, output IDs,
-finish reason, usage, and output-text hash. Any mismatch makes semantic reproduction invalid and
-prohibits pooled performance interpretation. Stage 2A never calculates or displays p99. P50 and p95
-are named descriptive values with exact sample counts and restart grouping; goodput and capacity
-advancement remain prohibited.
+Exactly three fresh, non-replaceable repetition bundles are identified by validated manifests with
+indices one through three. Each reconstructed case record is bound to its manifest hash before
+prompt IDs, output IDs, finish reason, usage, and output-text hash are compared. Any mismatch makes
+semantic reproduction invalid and prohibits pooled performance interpretation. Stage 2A never
+calculates or displays p99. P50 and p95 are named descriptive values with exact sample counts and
+restart grouping; goodput and capacity advancement remain prohibited.

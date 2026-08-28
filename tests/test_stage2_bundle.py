@@ -163,12 +163,61 @@ def test_symlink_and_generated_binary_are_rejected(tmp_path: Path) -> None:
         builder.commit(_reconstruct)
 
 
+def test_symlinked_evidence_parent_is_rejected_before_external_write(tmp_path: Path) -> None:
+    builder = _builder(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (builder.staging_path / "raw").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(Stage2BundleError, match="cannot contain symlinks"):
+        builder.write_raw("raw/escaped.json", b"{}\n")
+    assert not (outside / "escaped.json").exists()
+
+
+def test_symlinked_bundle_parent_is_rejected_before_external_write(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked_parent = tmp_path / "linked-parent"
+    linked_parent.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(Stage2BundleError, match="parent path cannot contain symlinks"):
+        _builder(linked_parent)
+    assert tuple(outside.iterdir()) == ()
+
+
+@pytest.mark.parametrize(
+    "private_value",
+    [
+        "Author" + "ization: Bearer fixture-secret",
+        '{"Author' + 'ization":"Bearer fixture-secret"}',
+        "Proxy-Author" + "ization: Basic fixture-secret",
+        '{"Cook' + 'ie":"session=fixture-secret"}',
+        '{"access_' + 'token":"fixture-secret"}',
+        "https://fixture-user:" + "fixture-pass@proxy.invalid",
+        "/" + "Users/private-user/model-cache",
+        "GPU-" + "01234567-89ab-cdef-0123-456789abcdef",
+        "worker-47." + "co" + "rp." + "internal",
+        "account_" + "id=private-account",
+        ("sam" + "sung") + "-internal-control-plane.json",
+        "medical" + "-record.pdf",
+        "immi" + "gration-file.pdf",
+    ],
+)
+def test_private_material_cannot_enter_durable_bundle(
+    tmp_path: Path,
+    private_value: str,
+) -> None:
+    builder = _builder(tmp_path)
+    with pytest.raises(Stage2BundleError, match="prohibited private material"):
+        builder.write_raw("raw/evidence.log", (private_value + "\n").encode())
+    assert not (builder.staging_path / "raw/evidence.log").exists()
+
+
 def test_exact_reconstruction_mismatch_is_rejected(tmp_path: Path) -> None:
     builder = _builder(tmp_path)
     builder.write_raw("raw/requests.json", b"[]\n")
     builder.write_derived("derived/summary.json", b'{"count":999}\n')
     with pytest.raises(Stage2BundleError, match="exact raw reconstruction"):
         builder.commit(_reconstruct)
+    assert inspect_bundle_state(builder.staging_path) is BundleState.INVALID
 
 
 def test_atomic_rename_failure_becomes_invalid(tmp_path: Path) -> None:
@@ -203,7 +252,27 @@ def test_fsync_failure_becomes_invalid(tmp_path: Path) -> None:
     builder._sync_path = fail_second
     with pytest.raises(Stage2BundleError, match="fsync or atomic rename"):
         builder.commit(_reconstruct)
-    assert inspect_bundle_state(builder.staging_path) is BundleState.INVALID
+    assert inspect_bundle_state(builder.final_path) is BundleState.INVALID
+
+
+def test_post_rename_parent_fsync_failure_is_visible_as_invalid(tmp_path: Path) -> None:
+    builder = _builder(tmp_path)
+    _populate(builder)
+    failed = False
+
+    def fail_parent_after_rename(path: Path) -> None:
+        nonlocal failed
+        if path == tmp_path and builder.final_path.exists() and not failed:
+            failed = True
+            raise OSError("simulated post-rename parent fsync failure")
+
+    builder._sync_path = fail_parent_after_rename
+    with pytest.raises(Stage2BundleError, match="fsync or atomic rename"):
+        builder.commit(_reconstruct)
+    assert not builder.staging_path.exists()
+    assert inspect_bundle_state(builder.final_path) is BundleState.INVALID
+    with pytest.raises(Stage2BundleError, match="only committed"):
+        read_committed_summary(builder.final_path, _reconstruct)
 
 
 def test_bundle_paths_cannot_escape_or_replace_evidence(tmp_path: Path) -> None:

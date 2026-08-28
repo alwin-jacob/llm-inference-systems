@@ -1,48 +1,44 @@
 {
   "$defs": {
-    "ExecutionLockArtifact": {
+    "ExecutionLockStatus": {
+      "enum": [
+        "COMPLETE",
+        "INCOMPLETE",
+        "BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED"
+      ],
+      "title": "ExecutionLockStatus",
+      "type": "string"
+    },
+    "TorchExecutionLockArtifact": {
       "additionalProperties": false,
       "properties": {
         "filename": {
-          "maxLength": 160,
-          "minLength": 1,
+          "const": "torch-2.13.0+cu129-cp313-cp313-manylinux_2_28_x86_64.whl",
           "title": "Filename",
           "type": "string"
         },
         "hash_source": {
-          "enum": [
-            "OFFICIAL_INDEX_METADATA",
-            "CONTROLLER_AUTHORIZED_SPEC",
-            "UNAVAILABLE"
-          ],
+          "const": "OFFICIAL_INDEX_METADATA",
           "title": "Hash Source",
           "type": "string"
         },
         "package": {
-          "maxLength": 160,
-          "minLength": 1,
+          "const": "torch",
           "title": "Package",
           "type": "string"
         },
         "sha256": {
-          "anyOf": [
-            {
-              "pattern": "^[0-9a-f]{64}$",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Sha256"
+          "const": "6e3bcf183e3096db45bf539dc21f820963074986ece7a56550714f12863c76af",
+          "title": "Sha256",
+          "type": "string"
         },
         "source_url": {
+          "const": "https://download-r2.pytorch.org/whl/cu129/torch-2.13.0%2Bcu129-cp313-cp313-manylinux_2_28_x86_64.whl",
           "title": "Source Url",
           "type": "string"
         },
         "version": {
-          "maxLength": 160,
-          "minLength": 1,
+          "const": "2.13.0+cu129",
           "title": "Version",
           "type": "string"
         }
@@ -55,26 +51,163 @@
         "sha256",
         "hash_source"
       ],
-      "title": "ExecutionLockArtifact",
+      "title": "TorchExecutionLockArtifact",
       "type": "object"
     },
-    "ExecutionLockStatus": {
-      "enum": [
-        "COMPLETE",
-        "INCOMPLETE",
-        "BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED"
+    "TorchaudioExecutionLockArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "filename": {
+          "const": "torchaudio-2.11.0+cu129-cp313-cp313-manylinux_2_28_x86_64.whl",
+          "title": "Filename",
+          "type": "string"
+        },
+        "hash_source": {
+          "const": "OFFICIAL_INDEX_METADATA",
+          "title": "Hash Source",
+          "type": "string"
+        },
+        "package": {
+          "const": "torchaudio",
+          "title": "Package",
+          "type": "string"
+        },
+        "sha256": {
+          "const": "45103fac849ffee337976ff19eac81725b3396e2c18e3f48ed92ba7669cb32d7",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "source_url": {
+          "const": "https://download-r2.pytorch.org/whl/cu129/torchaudio-2.11.0%2Bcu129-cp313-cp313-manylinux_2_28_x86_64.whl",
+          "title": "Source Url",
+          "type": "string"
+        },
+        "version": {
+          "const": "2.11.0+cu129",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "package",
+        "version",
+        "filename",
+        "source_url",
+        "sha256",
+        "hash_source"
       ],
-      "title": "ExecutionLockStatus",
-      "type": "string"
+      "title": "TorchaudioExecutionLockArtifact",
+      "type": "object"
+    },
+    "TorchvisionExecutionLockArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "filename": {
+          "const": "torchvision-0.28.0+cu129-cp313-cp313-manylinux_2_28_x86_64.whl",
+          "title": "Filename",
+          "type": "string"
+        },
+        "hash_source": {
+          "const": "UNAVAILABLE",
+          "title": "Hash Source",
+          "type": "string"
+        },
+        "package": {
+          "const": "torchvision",
+          "title": "Package",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "null"
+        },
+        "source_url": {
+          "const": "https://download-r2.pytorch.org/whl/cu129/torchvision-0.28.0%2Bcu129-cp313-cp313-manylinux_2_28_x86_64.whl",
+          "title": "Source Url",
+          "type": "string"
+        },
+        "version": {
+          "const": "0.28.0+cu129",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "package",
+        "version",
+        "filename",
+        "source_url",
+        "sha256",
+        "hash_source"
+      ],
+      "title": "TorchvisionExecutionLockArtifact",
+      "type": "object"
+    },
+    "VllmExecutionLockArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "filename": {
+          "const": "vllm-0.28.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl",
+          "title": "Filename",
+          "type": "string"
+        },
+        "hash_source": {
+          "const": "CONTROLLER_AUTHORIZED_SPEC",
+          "title": "Hash Source",
+          "type": "string"
+        },
+        "package": {
+          "const": "vllm",
+          "title": "Package",
+          "type": "string"
+        },
+        "sha256": {
+          "const": "8ec943b66a0c6b4351d0778e99d7bacfca5788dd8eedd49425092bacb61c4397",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "source_url": {
+          "const": "https://wheels.vllm.ai/2cf0a6915ce544dc493a0990f2ea38d81601128a/vllm-0.28.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl",
+          "title": "Source Url",
+          "type": "string"
+        },
+        "version": {
+          "const": "0.28.0",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "package",
+        "version",
+        "filename",
+        "source_url",
+        "sha256",
+        "hash_source"
+      ],
+      "title": "VllmExecutionLockArtifact",
+      "type": "object"
     }
   },
   "additionalProperties": false,
   "properties": {
     "artifacts": {
-      "items": {
-        "$ref": "#/$defs/ExecutionLockArtifact"
-      },
+      "maxItems": 4,
       "minItems": 4,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/VllmExecutionLockArtifact"
+        },
+        {
+          "$ref": "#/$defs/TorchExecutionLockArtifact"
+        },
+        {
+          "$ref": "#/$defs/TorchaudioExecutionLockArtifact"
+        },
+        {
+          "$ref": "#/$defs/TorchvisionExecutionLockArtifact"
+        }
+      ],
       "title": "Artifacts",
       "type": "array"
     },
@@ -110,9 +243,19 @@
       "title": "Pytorch Index",
       "type": "string"
     },
+    "qwen_model_repository": {
+      "const": "Qwen/Qwen2.5-0.5B-Instruct",
+      "title": "Qwen Model Repository",
+      "type": "string"
+    },
     "qwen_snapshot_revision": {
       "const": "7ae557604adf67be50417f59c2c2f167def9a775",
       "title": "Qwen Snapshot Revision",
+      "type": "string"
+    },
+    "qwen_snapshot_source_url": {
+      "const": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct/tree/7ae557604adf67be50417f59c2c2f167def9a775",
+      "title": "Qwen Snapshot Source Url",
       "type": "string"
     },
     "schema_version": {
@@ -155,7 +298,9 @@
     "vllm_git_revision",
     "pytorch_index",
     "flashinfer_index",
+    "qwen_model_repository",
     "qwen_snapshot_revision",
+    "qwen_snapshot_source_url",
     "artifacts",
     "preimport_distribution_version_command",
     "installed",

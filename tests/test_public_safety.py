@@ -229,11 +229,11 @@ def test_sufficiently_specific_private_hostname_is_detected(
 ) -> None:
     root = tmp_path / "archive"
     root.mkdir()
-    hostname = "workstation-47.internal"
+    hostname = "workstation-47." + "internal"
     (root / "unsafe.txt").write_text(f"built-by={hostname}\n", encoding="utf-8")
     monkeypatch.setattr("scripts.check_public_safety.socket.gethostname", lambda: hostname)
 
-    assert scan_repository(root) == (("unsafe.txt", "local-hostname"),)
+    assert ("unsafe.txt", "local-hostname") in scan_repository(root)
 
 
 @pytest.mark.parametrize(
@@ -262,7 +262,11 @@ def test_existing_secret_like_patterns_remain_detected(
     ("private_value", "expected_rule"),
     [
         ("Author" + "ization: Bearer fixture-secret-value", "authorization-header"),
+        ('{"Author' + 'ization":"Bearer fixture-secret-value"}', "authorization-header"),
+        ("Proxy-Author" + "ization: Basic fixture-secret-value", "authorization-header"),
         ("Cook" + "ie: session=fixture-secret", "cookie-header"),
+        ('{"Cook' + 'ie":"session=fixture-secret"}', "cookie-header"),
+        ('{"access_' + 'token":"fixture-secret"}', "credential-file-content"),
         ("https://fixture-user:" + "fixture-pass@proxy.invalid", "proxy-credential-url"),
         (
             "GPU-" + "01234567-89ab-cdef-0123-456789abcdef",
@@ -273,6 +277,12 @@ def test_existing_secret_like_patterns_remain_detected(
             "https://kaggle.com/" + "code/private-user/private-notebook",
             "notebook-account-identifier",
         ),
+        (
+            "https://colab.research.google.com/" + "drive/private-notebook-id",
+            "notebook-account-identifier",
+        ),
+        ("worker-47." + "co" + "rp." + "internal", "private-hostname-suffix"),
+        ("account_" + "id=private-account", "private-account-identifier"),
         (("sam" + "sung") + "-internal-control-plane.json", "employer-control-plane-file"),
         ("medical" + "-record.pdf", "sensitive-health-file"),
         ("loan" + "-application.json", "sensitive-credit-file"),
