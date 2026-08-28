@@ -1,0 +1,19 @@
+{
+  "cases": [
+    {
+      "case_id": "case-alpha",
+      "expected_output_token_count": 3,
+      "prompt": "Return the three fixture tokens: alpha beta gamma."
+    },
+    {
+      "case_id": "case-beta",
+      "expected_output_token_count": 3,
+      "prompt": "Return the three fixture tokens: one two three."
+    }
+  ],
+  "description": "Small deterministic prompts for future fixture-only execution.",
+  "name": "deterministic-smoke-v1",
+  "ordering_policy": "SORTED_CASE_ID",
+  "prompt_transformation": "literal-prompt-v1",
+  "schema_version": "0.1.0"
+}

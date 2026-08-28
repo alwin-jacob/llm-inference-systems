@@ -1,0 +1,98 @@
+{
+  "$defs": {
+    "ComparisonKind": {
+      "enum": [
+        "SAME_RUNTIME_AND_HARDWARE",
+        "CROSS_RUNTIME",
+        "CROSS_HARDWARE"
+      ],
+      "title": "ComparisonKind",
+      "type": "string"
+    },
+    "FailureComparisonPolicy": {
+      "enum": [
+        "INVALIDATE",
+        "REDUCE_GOODPUT"
+      ],
+      "title": "FailureComparisonPolicy",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "baseline_artifact_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Baseline Artifact Sha256",
+      "type": "string"
+    },
+    "candidate_artifact_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Candidate Artifact Sha256",
+      "type": "string"
+    },
+    "comparison_contract_version": {
+      "const": "0.1.0",
+      "title": "Comparison Contract Version",
+      "type": "string"
+    },
+    "comparison_kind": {
+      "$ref": "#/$defs/ComparisonKind"
+    },
+    "failure_policy": {
+      "$ref": "#/$defs/FailureComparisonPolicy"
+    },
+    "fields_allowed_to_differ": {
+      "items": {
+        "maxLength": 160,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Fields Allowed To Differ",
+      "type": "array"
+    },
+    "fields_required_identical": {
+      "items": {
+        "maxLength": 160,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Fields Required Identical",
+      "type": "array"
+    },
+    "minimum_metric_samples": {
+      "exclusiveMinimum": 0,
+      "title": "Minimum Metric Samples",
+      "type": "integer"
+    },
+    "minimum_successful_requests": {
+      "exclusiveMinimum": 0,
+      "title": "Minimum Successful Requests",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "0.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "slo_policy_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Slo Policy Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "comparison_contract_version",
+    "baseline_artifact_sha256",
+    "candidate_artifact_sha256",
+    "comparison_kind",
+    "fields_required_identical",
+    "fields_allowed_to_differ",
+    "slo_policy_sha256",
+    "minimum_successful_requests",
+    "minimum_metric_samples",
+    "failure_policy"
+  ],
+  "title": "ComparisonPolicy",
+  "type": "object"
+}

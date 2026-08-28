@@ -1,0 +1,54 @@
+{
+  "configured_server_batch_source": null,
+  "configured_server_maximum_batch_size": null,
+  "load_shape": {
+    "kind": "CLOSED_LOOP",
+    "requested_client_concurrency": 2,
+    "scheduling_policy": "NEXT_AVAILABLE_CLIENT"
+  },
+  "measured_request_count": 4,
+  "measurement_contract_version": "0.1.0",
+  "model_identity": {
+    "exact_revision": "fixture-v1",
+    "identity_source": "SYNTHETIC_FIXTURE",
+    "model_id": "synthetic-fixture-model",
+    "prompt_template_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "prompt_transformation": "literal-prompt-v1",
+  "sampling": {
+    "maximum_output_tokens": 3,
+    "seed": 0,
+    "stop_sequences": [],
+    "temperature": 0.0,
+    "top_p": 1.0
+  },
+  "schema_version": "0.1.0",
+  "slo": {
+    "end_to_end_threshold_ns": 100000000,
+    "itl_threshold_ns": 30000000,
+    "policy_name": "synthetic-stage0-slo-v1",
+    "tpot_threshold_ns": 30000000,
+    "ttft_threshold_ns": 50000000
+  },
+  "timeout_policy": {
+    "connect_timeout_ns": 10000000,
+    "first_output_token_timeout_ns": 50000000,
+    "request_timeout_ns": 200000000
+  },
+  "tokenizer_identity": {
+    "exact_revision": "fixture-v1",
+    "identity_source": "SYNTHETIC_FIXTURE",
+    "tokenizer_id": "synthetic-fixture-tokenizer"
+  },
+  "warmup_policy": "FIXED_COUNT",
+  "warmup_request_count": 1,
+  "workload_identity": {
+    "case_ids": [
+      "case-alpha",
+      "case-beta"
+    ],
+    "content_sha256": "1fc5f409205a9d0827b6074a6161b82a418e22c41a748c3f7e8f5b2c41423581",
+    "ordering_policy": "SORTED_CASE_ID"
+  },
+  "workload_path": "examples/workloads/deterministic-smoke-v1.json"
+}

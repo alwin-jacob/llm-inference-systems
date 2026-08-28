@@ -1,0 +1,184 @@
+{
+  "$defs": {
+    "ComparisonCompatibility": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_sample_requirement_met": {
+          "title": "Baseline Sample Requirement Met",
+          "type": "boolean"
+        },
+        "candidate_sample_requirement_met": {
+          "title": "Candidate Sample Requirement Met",
+          "type": "boolean"
+        },
+        "compatible": {
+          "title": "Compatible",
+          "type": "boolean"
+        },
+        "mismatches": {
+          "items": {
+            "$ref": "#/$defs/ComparisonMismatch"
+          },
+          "title": "Mismatches",
+          "type": "array"
+        }
+      },
+      "required": [
+        "compatible",
+        "mismatches",
+        "baseline_sample_requirement_met",
+        "candidate_sample_requirement_met"
+      ],
+      "title": "ComparisonCompatibility",
+      "type": "object"
+    },
+    "ComparisonMismatch": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {
+          "title": "Allowed",
+          "type": "boolean"
+        },
+        "baseline_value": {
+          "title": "Baseline Value",
+          "type": "string"
+        },
+        "candidate_value": {
+          "title": "Candidate Value",
+          "type": "string"
+        },
+        "field": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Field",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "baseline_value",
+        "candidate_value",
+        "allowed"
+      ],
+      "title": "ComparisonMismatch",
+      "type": "object"
+    },
+    "MetricDelta": {
+      "additionalProperties": false,
+      "properties": {
+        "absolute_delta": {
+          "title": "Absolute Delta",
+          "type": "number"
+        },
+        "baseline_value": {
+          "title": "Baseline Value",
+          "type": "number"
+        },
+        "candidate_value": {
+          "title": "Candidate Value",
+          "type": "number"
+        },
+        "metric": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Metric",
+          "type": "string"
+        },
+        "relative_delta": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Relative Delta"
+        }
+      },
+      "required": [
+        "metric",
+        "baseline_value",
+        "candidate_value",
+        "absolute_delta",
+        "relative_delta"
+      ],
+      "title": "MetricDelta",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "baseline_artifact_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Baseline Artifact Sha256",
+      "type": "string"
+    },
+    "candidate_artifact_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Candidate Artifact Sha256",
+      "type": "string"
+    },
+    "comparison_contract_version": {
+      "const": "0.1.0",
+      "title": "Comparison Contract Version",
+      "type": "string"
+    },
+    "compatibility": {
+      "$ref": "#/$defs/ComparisonCompatibility"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "deltas": {
+      "items": {
+        "$ref": "#/$defs/MetricDelta"
+      },
+      "title": "Deltas",
+      "type": "array"
+    },
+    "evidence_scope": {
+      "const": "TEST_FIXTURE_ONLY",
+      "title": "Evidence Scope",
+      "type": "string"
+    },
+    "policy_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Policy Sha256",
+      "type": "string"
+    },
+    "report_content_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Report Content Sha256"
+    },
+    "schema_version": {
+      "const": "0.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "comparison_contract_version",
+    "evidence_scope",
+    "created_at",
+    "policy_sha256",
+    "baseline_artifact_sha256",
+    "candidate_artifact_sha256",
+    "compatibility",
+    "deltas"
+  ],
+  "title": "ComparisonReport",
+  "type": "object"
+}
