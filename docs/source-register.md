@@ -8,7 +8,7 @@
 | `comparison.py` | Compatibility and delta rules | No cross-runtime/hardware comparison without explicit policy |
 | Example JSON files | Workload/configuration validation fixtures | No runtime or performance evidence |
 | Tests and `verify_stage0.py` | Adversarial and end-to-end local proof | `TEST_FIXTURE_ONLY` |
-| `.github/workflows/ci.yml` | CI configuration | Configuration evidence only; no remote execution claim |
+| `.github/workflows/ci.yml` | Remote source/evidence verification configuration | Executed at `68e64bc` by run `33164155869`; repository verification only, with no model/runtime/GPU/performance evidence |
 | [HTTPX 0.28.1 on PyPI](https://pypi.org/project/httpx/0.28.1/) | Official package metadata for the exact stable direct dependency | Released 2024-12-06; accessed 2026-08-27; package metadata only |
 | [HTTPX async support](https://www.python-httpx.org/async/) | Official documentation for `AsyncClient`, one scoped client, `send(..., stream=True)`, `aiter_raw()`, and explicit `Response.aclose()` in manual mode | Client API semantics only; no runtime-performance claim |
 | [HTTPX developer interface](https://www.python-httpx.org/api/#asyncclient) | Official parameters for `trust_env`, redirects, HTTP/2, timeouts, limits, and shared async clients | API configuration semantics only |

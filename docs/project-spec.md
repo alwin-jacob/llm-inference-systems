@@ -23,6 +23,11 @@ performance claims.
 
 ## Non-goals
 
-Real runtime integration, arbitrary or external networking, model or tokenizer acquisition, GPU
-work, profiling, containers, deployment, publication, and real benchmarking remain non-goals. The
-only networking is the Stage 1 runner's actual TCP traffic to its own `127.0.0.1` ephemeral fixture.
+Real runtime integration, arbitrary or external benchmark networking, model or tokenizer
+acquisition, GPU work, profiling, containers, deployment, package publication, and real
+benchmarking remain Stage 1 non-goals. The only benchmark networking is the Stage 1 runner's actual
+TCP traffic to its own `127.0.0.1` ephemeral fixture.
+
+Public source release is a separate governance action. It does not expand the
+`TEST_FIXTURE_ONLY` evidence scope or authorize any model, tokenizer, serving-runtime, GPU, CUDA,
+profiler, deployment, package-publication, or performance claim.

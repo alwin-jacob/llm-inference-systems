@@ -118,3 +118,23 @@ not deployed, published, historically authenticated, or accepted into the canoni
 - The source-review environment used `uv 0.12.5`, but the first private run resolved unpinned
   `uv 0.12.7`. The release-preparation descendant now pins and requires exact `uv 0.12.5`; a new
   four-job private CI run is required before any publication decision.
+
+## 2026-08-28 — Stage 1 release-preparation CI and public-release record
+
+- Release-preparation commit `68e64bc814d805464f239c452fa8261fedbfde0b` passed GitHub
+  Actions run `33164155869` while the repository remained private.
+- Exactly four jobs succeeded: `local-style-gate (3.12)`, `local-style-gate (3.13)`,
+  `checked-stage1-evidence`, and `metadata-free-git-archive`. Every job used `uv 0.12.5`.
+- The source jobs passed Ruff, formatting, strict mypy, all 198 tests, 11 synchronized schemas,
+  zero-finding public-safety verification, Stage 0 verification, and Stage 1 verification. The
+  checked-evidence and archive jobs used exact CPython `3.13.15`; the source matrix covered Python
+  3.12 and 3.13.
+- Checked Stage 1 artifacts remained byte-identical, and the metadata-free archive gate completed
+  with temporary-directory cleanup.
+- This documentation-only commit is the intended Stage 1 public-release head. Its own identical
+  four-job CI gate must succeed before repository visibility changes; workflow state and visibility
+  remain external GitHub state that must be independently verified.
+- Public source availability does not promote any runtime, model, tokenizer, GPU, CUDA, profiler,
+  performance, historical-authentication, or interview-defense claim. No tag, GitHub Release,
+  package publication, deployment, profile or pin change, outreach, Stage 2, runtime/model/GPU
+  execution, or paid-resource action is part of this documentation commit.
