@@ -1,0 +1,11 @@
+{
+  "allow_failure_count_increase": false,
+  "allow_timeout_count_increase": false,
+  "comparison_contract_version": "0.2.0",
+  "performance_gating_enabled": false,
+  "policy_name": "stage1-semantic-reproduction-v1",
+  "require_matching_input_identities": true,
+  "require_matching_semantic_fingerprint": true,
+  "require_matching_terminal_taxonomy": true,
+  "schema_version": "0.2.0"
+}

@@ -1,0 +1,63 @@
+{
+  "description": "Declared-order synthetic marker workload for the deterministic loopback fixture.",
+  "measured_cases": [
+    {
+      "case_id": "success-three-a",
+      "expected_output_token_count": 3,
+      "expected_terminal_class": "SUCCESS",
+      "prompt": "<p000><p001>"
+    },
+    {
+      "case_id": "success-three-b",
+      "expected_output_token_count": 3,
+      "expected_terminal_class": "SUCCESS",
+      "prompt": "<p002><p003>"
+    },
+    {
+      "case_id": "success-multi-token-event",
+      "expected_output_token_count": 3,
+      "expected_terminal_class": "SUCCESS",
+      "prompt": "<p004><p005>"
+    },
+    {
+      "case_id": "success-first-body-before-token",
+      "expected_output_token_count": 2,
+      "expected_terminal_class": "SUCCESS",
+      "prompt": "<p006><p007>"
+    },
+    {
+      "case_id": "success-single-output-token",
+      "expected_output_token_count": 1,
+      "expected_terminal_class": "SUCCESS",
+      "prompt": "<p008>"
+    },
+    {
+      "case_id": "malformed-after-partial-output",
+      "expected_output_token_count": 1,
+      "expected_terminal_class": "FAILED",
+      "prompt": "<p009><p010>"
+    },
+    {
+      "case_id": "http-error",
+      "expected_output_token_count": 0,
+      "expected_terminal_class": "FAILED",
+      "prompt": "<p011>"
+    },
+    {
+      "case_id": "timeout-after-partial-body",
+      "expected_output_token_count": 0,
+      "expected_terminal_class": "TIMEOUT",
+      "prompt": "<p012><p013>"
+    }
+  ],
+  "name": "streaming-fixture-v1",
+  "ordering_policy": "DECLARED",
+  "prompt_transformation": "fixture-token-markers-v1",
+  "schema_version": "0.2.0",
+  "warmup_case": {
+    "case_id": "warmup-success",
+    "expected_output_token_count": 2,
+    "expected_terminal_class": "SUCCESS",
+    "prompt": "<p900><p901>"
+  }
+}

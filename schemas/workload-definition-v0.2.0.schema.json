@@ -1,0 +1,100 @@
+{
+  "$defs": {
+    "Stage1TerminalClass": {
+      "enum": [
+        "SUCCESS",
+        "FAILED",
+        "TIMEOUT",
+        "CANCELLED"
+      ],
+      "title": "Stage1TerminalClass",
+      "type": "string"
+    },
+    "Stage1WorkloadCase": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "expected_output_token_count": {
+          "minimum": 0,
+          "title": "Expected Output Token Count",
+          "type": "integer"
+        },
+        "expected_terminal_class": {
+          "$ref": "#/$defs/Stage1TerminalClass"
+        },
+        "prompt": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Prompt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "case_id",
+        "prompt",
+        "expected_terminal_class",
+        "expected_output_token_count"
+      ],
+      "title": "Stage1WorkloadCase",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "description": {
+      "maxLength": 1024,
+      "minLength": 1,
+      "title": "Description",
+      "type": "string"
+    },
+    "measured_cases": {
+      "items": {
+        "$ref": "#/$defs/Stage1WorkloadCase"
+      },
+      "maxItems": 8,
+      "minItems": 8,
+      "title": "Measured Cases",
+      "type": "array"
+    },
+    "name": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "ordering_policy": {
+      "const": "DECLARED",
+      "title": "Ordering Policy",
+      "type": "string"
+    },
+    "prompt_transformation": {
+      "const": "fixture-token-markers-v1",
+      "title": "Prompt Transformation",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "warmup_case": {
+      "$ref": "#/$defs/Stage1WorkloadCase"
+    }
+  },
+  "required": [
+    "schema_version",
+    "name",
+    "description",
+    "ordering_policy",
+    "prompt_transformation",
+    "warmup_case",
+    "measured_cases"
+  ],
+  "title": "Stage1WorkloadDefinition",
+  "type": "object"
+}

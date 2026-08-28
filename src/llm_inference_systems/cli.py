@@ -1,8 +1,9 @@
-"""Standard-library argparse CLI for Stage 0 validation only."""
+"""Argparse CLI for versioned validation and the loopback-only Stage 1 fixture."""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -11,8 +12,14 @@ from typing import cast
 from pydantic import BaseModel, ValidationError
 
 from llm_inference_systems import __version__
+from llm_inference_systems.artifact_io import (
+    atomic_write,
+    reconstruct_summary,
+    validate_execution_bundle,
+)
 from llm_inference_systems.canonical import (
     canonical_json,
+    canonical_json_bytes,
     verify_artifact_content_hash,
     verify_report_content_hash,
 )
@@ -23,16 +30,23 @@ from llm_inference_systems.contracts import (
     RunConfiguration,
     WorkloadDefinition,
 )
-from llm_inference_systems.schema_io import schema_sync_mismatches
+from llm_inference_systems.runner import run_fixture_to_directory
+from llm_inference_systems.schema_io import SCHEMA_MODELS, schema_sync_mismatches
+from llm_inference_systems.stage1_comparison import compare_validated_bundles
+from llm_inference_systems.stage1_contracts import (
+    FixtureDefinition,
+    Stage1ComparisonPolicy,
+    Stage1RunConfiguration,
+    Stage1WorkloadDefinition,
+)
 
 MAX_VALIDATION_BYTES = 10 * 1024 * 1024
 
 VALIDATION_MODELS: dict[str, type[BaseModel]] = {
-    "validate-workload": WorkloadDefinition,
-    "validate-config": RunConfiguration,
     "validate-artifact": RunArtifact,
     "validate-comparison-policy": ComparisonPolicy,
     "validate-comparison-report": ComparisonReport,
+    "validate-fixture": FixtureDefinition,
 }
 
 
@@ -44,12 +58,37 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="llm-inference")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("version", help="print package and contract versions")
-    for command in VALIDATION_MODELS:
+    for command in ("validate-workload", "validate-config", *VALIDATION_MODELS):
         child = subparsers.add_parser(
             command, help=f"validate a {command.removeprefix('validate-')}"
         )
         child.add_argument("path", metavar="PATH")
     subparsers.add_parser("schema-check", help="verify generated schemas are synchronized")
+
+    fixture_run = subparsers.add_parser(
+        "fixture-run", help="execute the built-in loopback-only Stage 1 fixture path"
+    )
+    fixture_run.add_argument("--workload", required=True)
+    fixture_run.add_argument("--config", required=True)
+    fixture_run.add_argument("--fixture", required=True)
+    fixture_run.add_argument("--output-dir", required=True)
+
+    validate_run = subparsers.add_parser(
+        "validate-run-dir", help="validate and reconstruct a Stage 1 raw bundle"
+    )
+    validate_run.add_argument("path", metavar="RUN_DIRECTORY")
+    summarize = subparsers.add_parser(
+        "summarize-run", help="reconstruct a Stage 1 summary from raw evidence"
+    )
+    summarize.add_argument("path", metavar="RUN_DIRECTORY")
+
+    compare = subparsers.add_parser(
+        "compare-runs", help="compare two validated bundles under a semantic-only policy"
+    )
+    compare.add_argument("--baseline", required=True)
+    compare.add_argument("--candidate", required=True)
+    compare.add_argument("--policy", required=True)
+    compare.add_argument("--output", required=True)
     return parser
 
 
@@ -61,12 +100,36 @@ def _validation_error(error: ValidationError) -> dict[str, object]:
     return {"error": "validation_failed", "issue_count": error.error_count(), "issues": issues}
 
 
-def _validate(path_text: str, model: type[BaseModel]) -> int:
+def _read_validation_bytes(path_text: str) -> bytes:
+    path = Path(path_text)
+    if path.stat().st_size > MAX_VALIDATION_BYTES:
+        raise ValueError("input exceeds validation size limit")
+    return path.read_bytes()
+
+
+def _versioned_model(data: bytes, *, kind: str) -> BaseModel:
+    decoded = json.loads(data)
+    if not isinstance(decoded, dict):
+        raise ValueError("versioned input must be an object")
+    version = decoded.get("schema_version")
+    if kind == "workload":
+        model: type[BaseModel] = (
+            WorkloadDefinition if version == "0.1.0" else Stage1WorkloadDefinition
+        )
+    else:
+        model = RunConfiguration if version == "0.1.0" else Stage1RunConfiguration
+    return model.model_validate_json(data)
+
+
+def _validate(path_text: str, command: str) -> int:
     try:
-        path = Path(path_text)
-        if path.stat().st_size > MAX_VALIDATION_BYTES:
-            raise ValueError("input exceeds validation size limit")
-        value = model.model_validate_json(path.read_bytes())
+        data = _read_validation_bytes(path_text)
+        if command == "validate-workload":
+            value = _versioned_model(data, kind="workload")
+        elif command == "validate-config":
+            value = _versioned_model(data, kind="config")
+        else:
+            value = VALIDATION_MODELS[command].model_validate_json(data)
         if isinstance(value, RunArtifact) and not verify_artifact_content_hash(value):
             raise ValueError("artifact content hash is missing or invalid")
         if isinstance(value, ComparisonReport) and not verify_report_content_hash(value):
@@ -74,11 +137,84 @@ def _validate(path_text: str, model: type[BaseModel]) -> int:
     except ValidationError as error:
         _emit(_validation_error(error))
         return 1
-    except (OSError, ValueError, json.JSONDecodeError):
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
         _emit({"error": "validation_failed", "issue_count": 1})
         return 1
-    _emit({"model": model.__name__, "status": "valid"})
+    _emit({"model": type(value).__name__, "status": "valid"})
     return 0
+
+
+def _fixture_run(args: argparse.Namespace) -> int:
+    try:
+        bundle = asyncio.run(
+            run_fixture_to_directory(
+                workload_path=Path(cast(str, args.workload)),
+                configuration_path=Path(cast(str, args.config)),
+                fixture_path=Path(cast(str, args.fixture)),
+                output_directory=Path(cast(str, args.output_dir)),
+            )
+        )
+    except (OSError, ValueError, RuntimeError, ValidationError):
+        _emit({"error": "fixture_run_failed", "status": "failed"})
+        return 1
+    _emit(
+        {
+            "content_sha256": bundle.manifest.content_sha256,
+            "evidence_scope": "TEST_FIXTURE_ONLY",
+            "semantic_fingerprint": bundle.manifest.semantic_fingerprint,
+            "status": "completed",
+        }
+    )
+    return 0
+
+
+def _validate_run(path_text: str) -> int:
+    try:
+        bundle = validate_execution_bundle(Path(path_text))
+    except (OSError, ValueError, ValidationError):
+        _emit({"error": "run_validation_failed", "status": "invalid"})
+        return 1
+    _emit(
+        {
+            "content_sha256": bundle.manifest.content_sha256,
+            "semantic_fingerprint": bundle.manifest.semantic_fingerprint,
+            "status": "valid",
+        }
+    )
+    return 0
+
+
+def _summarize(path_text: str) -> int:
+    try:
+        summary = reconstruct_summary(Path(path_text))
+    except (OSError, ValueError, ValidationError):
+        _emit({"error": "summary_reconstruction_failed", "status": "invalid"})
+        return 1
+    _emit(summary)
+    return 0
+
+
+def _compare(args: argparse.Namespace) -> int:
+    try:
+        baseline = validate_execution_bundle(Path(cast(str, args.baseline)))
+        candidate = validate_execution_bundle(Path(cast(str, args.candidate)))
+        policy = Stage1ComparisonPolicy.model_validate_json(
+            _read_validation_bytes(cast(str, args.policy))
+        )
+        report = compare_validated_bundles(baseline, candidate, policy)
+        atomic_write(Path(cast(str, args.output)), canonical_json_bytes(report) + b"\n")
+    except (OSError, ValueError, ValidationError):
+        _emit({"error": "comparison_failed", "status": "invalid"})
+        return 1
+    _emit(
+        {
+            "performance_interpretation_allowed": False,
+            "policy_passed": report.policy_passed,
+            "report_content_sha256": report.content_sha256,
+            "status": "passed" if report.policy_passed else "regression",
+        }
+    )
+    return 0 if report.policy_passed else 3
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -87,9 +223,10 @@ def main(argv: list[str] | None = None) -> int:
     if command == "version":
         _emit(
             {
-                "artifact_schema_version": "0.1.0",
-                "measurement_contract_version": "0.1.0",
-                "version": __version__,
+                "package_version": __version__,
+                "stage0_artifact_schema_version": "0.1.0",
+                "stage0_measurement_contract_version": "0.1.0",
+                "stage1_measurement_contract_version": "0.2.0",
             }
         )
         return 0
@@ -99,6 +236,14 @@ def main(argv: list[str] | None = None) -> int:
         if mismatches:
             _emit({"mismatches": list(mismatches), "status": "out_of_sync"})
             return 1
-        _emit({"schema_count": 5, "status": "synchronized"})
+        _emit({"schema_count": len(SCHEMA_MODELS), "status": "synchronized"})
         return 0
-    return _validate(cast(str, args.path), VALIDATION_MODELS[command])
+    if command == "fixture-run":
+        return _fixture_run(args)
+    if command == "validate-run-dir":
+        return _validate_run(cast(str, args.path))
+    if command == "summarize-run":
+        return _summarize(cast(str, args.path))
+    if command == "compare-runs":
+        return _compare(args)
+    return _validate(cast(str, args.path), command)
