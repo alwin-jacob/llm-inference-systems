@@ -1,4 +1,4 @@
-"""Argparse CLI for versioned validation and the loopback-only Stage 1 fixture."""
+"""Argparse CLI for versioned validation and loopback-only Stage 1/Stage 2A fixtures."""
 
 from __future__ import annotations
 
@@ -39,6 +39,12 @@ from llm_inference_systems.stage1_contracts import (
     Stage1RunConfiguration,
     Stage1WorkloadDefinition,
 )
+from llm_inference_systems.stage2_contracts import (
+    Stage2BundleManifest,
+    Stage2CompletionRequest,
+    Stage2ExecutionLock,
+    Stage2RunConfiguration,
+)
 
 MAX_VALIDATION_BYTES = 10 * 1024 * 1024
 
@@ -47,6 +53,9 @@ VALIDATION_MODELS: dict[str, type[BaseModel]] = {
     "validate-comparison-policy": ComparisonPolicy,
     "validate-comparison-report": ComparisonReport,
     "validate-fixture": FixtureDefinition,
+    "validate-stage2-request": Stage2CompletionRequest,
+    "validate-stage2-bundle-manifest": Stage2BundleManifest,
+    "validate-stage2-execution-lock": Stage2ExecutionLock,
 }
 
 
@@ -117,7 +126,12 @@ def _versioned_model(data: bytes, *, kind: str) -> BaseModel:
             WorkloadDefinition if version == "0.1.0" else Stage1WorkloadDefinition
         )
     else:
-        model = RunConfiguration if version == "0.1.0" else Stage1RunConfiguration
+        if version == "0.1.0":
+            model = RunConfiguration
+        elif version == "0.2.0":
+            model = Stage1RunConfiguration
+        else:
+            model = Stage2RunConfiguration
     return model.model_validate_json(data)
 
 
@@ -227,6 +241,7 @@ def main(argv: list[str] | None = None) -> int:
                 "stage0_artifact_schema_version": "0.1.0",
                 "stage0_measurement_contract_version": "0.1.0",
                 "stage1_measurement_contract_version": "0.2.0",
+                "stage2_measurement_protocol_version": "0.3.0",
             }
         )
         return 0

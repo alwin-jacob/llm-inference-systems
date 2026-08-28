@@ -1,0 +1,125 @@
+{
+  "$defs": {
+    "Stage2StreamOptions": {
+      "additionalProperties": false,
+      "properties": {
+        "include_usage": {
+          "const": true,
+          "title": "Include Usage",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "include_usage"
+      ],
+      "title": "Stage2StreamOptions",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "add_special_tokens": {
+      "const": false,
+      "title": "Add Special Tokens",
+      "type": "boolean"
+    },
+    "echo": {
+      "const": false,
+      "title": "Echo",
+      "type": "boolean"
+    },
+    "ignore_eos": {
+      "const": true,
+      "title": "Ignore Eos",
+      "type": "boolean"
+    },
+    "max_tokens": {
+      "const": 32,
+      "title": "Max Tokens",
+      "type": "integer"
+    },
+    "min_tokens": {
+      "const": 32,
+      "title": "Min Tokens",
+      "type": "integer"
+    },
+    "model": {
+      "const": "qwen2.5-0.5b-instruct-stage2",
+      "title": "Model",
+      "type": "string"
+    },
+    "n": {
+      "const": 1,
+      "title": "N",
+      "type": "integer"
+    },
+    "prompt": {
+      "items": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "maxItems": 64,
+      "minItems": 64,
+      "title": "Prompt",
+      "type": "array"
+    },
+    "request_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "return_token_ids": {
+      "const": true,
+      "title": "Return Token Ids",
+      "type": "boolean"
+    },
+    "seed": {
+      "const": 0,
+      "title": "Seed",
+      "type": "integer"
+    },
+    "stream": {
+      "const": true,
+      "title": "Stream",
+      "type": "boolean"
+    },
+    "stream_interval": {
+      "const": 1,
+      "title": "Stream Interval",
+      "type": "integer"
+    },
+    "stream_options": {
+      "$ref": "#/$defs/Stage2StreamOptions"
+    },
+    "temperature": {
+      "const": 0,
+      "title": "Temperature",
+      "type": "integer"
+    },
+    "top_p": {
+      "const": 1,
+      "title": "Top P",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "model",
+    "prompt",
+    "request_id",
+    "stream",
+    "stream_options",
+    "return_token_ids",
+    "stream_interval",
+    "add_special_tokens",
+    "temperature",
+    "top_p",
+    "seed",
+    "n",
+    "max_tokens",
+    "min_tokens",
+    "ignore_eos",
+    "echo"
+  ],
+  "title": "Stage2CompletionRequest",
+  "type": "object"
+}

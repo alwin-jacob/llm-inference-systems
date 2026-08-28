@@ -24,6 +24,12 @@ from llm_inference_systems.stage1_contracts import (
     Stage1RunConfiguration,
     Stage1WorkloadDefinition,
 )
+from llm_inference_systems.stage2_contracts import (
+    Stage2BundleManifest,
+    Stage2CompletionRequest,
+    Stage2ExecutionLock,
+    Stage2RunConfiguration,
+)
 
 SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "comparison-policy-v0.1.0.schema.json": ComparisonPolicy,
@@ -37,6 +43,10 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "fixture-definition-v0.2.0.schema.json": FixtureDefinition,
     "run-configuration-v0.2.0.schema.json": Stage1RunConfiguration,
     "workload-definition-v0.2.0.schema.json": Stage1WorkloadDefinition,
+    "bundle-manifest-v0.3.0.schema.json": Stage2BundleManifest,
+    "completion-request-v0.3.0.schema.json": Stage2CompletionRequest,
+    "execution-lock-v0.3.0.schema.json": Stage2ExecutionLock,
+    "run-configuration-v0.3.0.schema.json": Stage2RunConfiguration,
 }
 
 
