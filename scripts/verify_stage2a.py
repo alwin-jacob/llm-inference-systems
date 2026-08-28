@@ -10,6 +10,7 @@ from pathlib import Path
 
 from llm_inference_systems import __version__
 from llm_inference_systems.canonical import canonical_json
+from llm_inference_systems.schema_io import SCHEMA_MODELS, schema_sync_mismatches
 from llm_inference_systems.stage2_contracts import (
     ExecutionLockStatus,
     Stage2CompletionRequest,
@@ -52,9 +53,40 @@ FROZEN_HASHES = {
 HISTORICAL_STAGE1_UV_LOCK_SHA256 = (
     "748fd114d05ea6e96c058f41b8a1ee0736d30339f100179e3ee7c47c7e6c59e6"
 )
-FORBIDDEN_IMPORT_ROOTS = frozenset({"vllm", "torch", "transformers", "huggingface_hub"})
+ORDINARY_UV_LOCK_SHA256 = "96419af34fa7338fcf99916d4db3a25f480d32c6c2ffcdfc7366b5138025036d"
+VLLM_WHEEL_SOURCE_URL = (
+    "https://github.com/vllm-project/vllm/releases/download/v0.28.0/"
+    "vllm-0.28.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl"
+)
+VLLM_WHEEL_SHA256 = "8ec943b66a0c6b4351d0778e99d7bacfca5788dd8eedd49425092bacb61c4397"
+FORBIDDEN_IMPORT_ROOTS = frozenset(
+    {
+        "cuda",
+        "cupy",
+        "flashinfer",
+        "huggingface_hub",
+        "kaggle",
+        "nvidia",
+        "torch",
+        "torchaudio",
+        "torchvision",
+        "transformers",
+        "vllm",
+    }
+)
 FORBIDDEN_LOCK_NAMES = frozenset(
-    {"vllm", "torch", "torchaudio", "torchvision", "transformers", "huggingface-hub"}
+    {
+        "cupy",
+        "flashinfer-python",
+        "huggingface-hub",
+        "kaggle",
+        "nvidia-cuda-runtime",
+        "torch",
+        "torchaudio",
+        "torchvision",
+        "transformers",
+        "vllm",
+    }
 )
 
 
@@ -78,6 +110,28 @@ def _verify_import_boundary(root: Path) -> None:
     for path in candidates:
         tree = ast.parse(path.read_bytes(), filename=path.as_posix())
         for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and (
+                    (isinstance(node.func, ast.Name) and node.func.id == "__import__")
+                    or (
+                        isinstance(node.func, ast.Attribute)
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "importlib"
+                        and node.func.attr == "import_module"
+                    )
+                )
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+            ):
+                imported = node.args[0].value
+                if (
+                    isinstance(imported, str)
+                    and imported.split(".", 1)[0] in FORBIDDEN_IMPORT_ROOTS
+                ):
+                    raise AssertionError(
+                        f"forbidden dynamic ordinary import in {path.relative_to(root)}"
+                    )
             names: tuple[str, ...]
             if isinstance(node, ast.Import):
                 names = tuple(alias.name for alias in node.names)
@@ -90,6 +144,8 @@ def _verify_import_boundary(root: Path) -> None:
 
 
 def _verify_ordinary_lock(root: Path) -> None:
+    if _sha256(root / "uv.lock") != ORDINARY_UV_LOCK_SHA256:
+        raise AssertionError("ordinary uv.lock bytes differ from the authorized Stage 2A lock")
     names: set[str] = set()
     for line in (root / "uv.lock").read_text().splitlines():
         if line.startswith("name = "):
@@ -97,6 +153,18 @@ def _verify_ordinary_lock(root: Path) -> None:
     forbidden = names & FORBIDDEN_LOCK_NAMES
     if forbidden:
         raise AssertionError(f"forbidden ordinary lock dependencies: {sorted(forbidden)}")
+    project_text = (root / "pyproject.toml").read_text()
+    declared = _declared_forbidden_dependencies(project_text)
+    if declared:
+        raise AssertionError(f"forbidden ordinary declared dependencies: {sorted(declared)}")
+
+
+def _declared_forbidden_dependencies(project_text: str) -> set[str]:
+    folded = project_text.casefold()
+    declared = {
+        name for name in FORBIDDEN_LOCK_NAMES if f'"{name}' in folded or f"'{name}" in folded
+    }
+    return declared
 
 
 def main() -> int:
@@ -117,6 +185,19 @@ def main() -> int:
         is not ExecutionLockStatus.BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED
     ):
         raise AssertionError("execution-lock status differs")
+    vllm_artifact = next(
+        artifact for artifact in execution_lock.artifacts if artifact.package == "vllm"
+    )
+    if (
+        vllm_artifact.source_url != VLLM_WHEEL_SOURCE_URL
+        or vllm_artifact.sha256 != VLLM_WHEEL_SHA256
+        or execution_lock.installed
+        or execution_lock.executed
+        or execution_lock.resolver_lock_claimed_complete
+    ):
+        raise AssertionError("Stage 2 execution lock differs from the exact blocked contract")
+    if schema_sync_mismatches(root / "schemas"):
+        raise AssertionError("Stage 2 generated schemas are not synchronized")
     _verify_frozen_bytes(root)
     _verify_import_boundary(root)
     _verify_ordinary_lock(root)
@@ -131,8 +212,12 @@ def main() -> int:
                 "package_version": __version__,
                 "preserved_stage0_stage1_file_count": len(FROZEN_HASHES),
                 "protocol_version": "0.3.0",
+                "resolver_lock_claimed_complete": False,
+                "schema_count": len(SCHEMA_MODELS),
                 "stage2a_execution_scope": "TEST_FIXTURE_ONLY",
                 "status": "verified",
+                "vllm_wheel_sha256": vllm_artifact.sha256,
+                "vllm_wheel_source_url": vllm_artifact.source_url,
             }
         )
     )

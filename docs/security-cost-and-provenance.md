@@ -35,6 +35,14 @@ Stage 2A adds only another project-authored CPU fixture server fixed to IPv4 `12
 implemented. The separate execution-lock JSON is inert metadata and is neither resolved nor
 installed by ordinary verification.
 
+Future process records are fail-closed by kind. The single online snapshot process must set
+telemetry and implicit-token controls before import, prove all token variables absent, use
+`token=False`, bind only the exact pinned snapshot source, and exit. Offline tokenizer and three
+fresh offline vLLM restart records require their stricter offline/no-proxy environments before any
+relevant import and bind only a verified local snapshot. These are validated synthetic contracts;
+Stage 2A did not launch any such process. The only correction-time external read was exact pinned
+Hugging Face tree metadata used to define the ten-file allowlist; no file content was retrieved.
+
 Stage 2A repetition bundles reject path traversal, symlinked parent or evidence paths, non-UTF-8
 evidence, sensitive private material, unapproved binary suffixes, replacement of retained files,
 incomplete or duplicate inventory, altered hashes, and derived data that cannot be reconstructed

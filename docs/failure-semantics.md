@@ -30,7 +30,8 @@ denominator produces null/unavailable, never division by zero.
 Stage 2A adds protocol-lifecycle failures without changing either historical taxonomy. A future
 successful response requires one generation, usage, protocol, and transport terminal in strict
 order. Malformed, missing, duplicated, reordered, or post-terminal data; token/usage disagreement;
-or ambiguous identity correlation invalidates the repetition while raw evidence remains retained.
+an omitted/incomplete/non-finite five-field metrics object; or ambiguous identity correlation
+invalidates the repetition while raw evidence remains retained.
 
 The cancellation evaluator reports one of
 `SERVER_ABORT_ACKNOWLEDGED_AND_DRAINED`, `UNKNOWN_ACKNOWLEDGEMENT`, `LATER_COMPLETION`,
@@ -38,6 +39,12 @@ The cancellation evaluator reports one of
 correlated abort chain, exact drain cadence, stable generation counter, cooldown, deadline, allowed
 abort counter, and no residual state. A terminal or counter from a non-abort reason is not accepted
 as cancellation success.
+
+A future real-runtime boundary is rejected when any one of its 15 typed component attestations or
+canonical component identities is missing, inconsistent, fixture-bound, or non-reconstructable.
+Phase names and `passed=true` without positive boundaries and phase-specific evidence are invalid;
+missing final drain, failed/incomplete server-and-worker shutdown, or residual state is invalid.
+Synthetic completeness demonstrates validator behavior only.
 
 Stage 2A bundles expose `INCOMPLETE`, `INVALID`, and `COMMITTED`. A crash before the final manifest
 remains inspectably incomplete. Durability-operation failure is recorded as invalid at the visible

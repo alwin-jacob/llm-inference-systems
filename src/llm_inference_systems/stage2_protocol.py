@@ -10,13 +10,17 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import pairwise
 
+from pydantic import ValidationError
+
+from llm_inference_systems.canonical import sha256_identity
 from llm_inference_systems.sse import IncrementalSSEParser, SSEProtocolError
 from llm_inference_systems.stage2_contracts import (
     MetricAvailability,
+    RawLogRecord,
+    RequestIdentityChain,
     Stage2CancellationRequest,
     Stage2CompletionRequest,
-    Stage2EvidenceBoundary,
-    Stage2EvidenceScope,
+    Stage2PerRequestMetrics,
     Stage2RequestEnvelope,
     Stage2RequestEvidence,
     Stage2StreamOptions,
@@ -28,16 +32,6 @@ from llm_inference_systems.stage2_contracts import (
 
 class Stage2ProtocolError(ValueError):
     """Raised when future-runtime evidence violates the Stage 2 protocol."""
-
-
-@dataclass(frozen=True, slots=True)
-class RequestIdentityChain:
-    external_base_id: str
-    response_body_id: str
-    serving_item_id: str
-    internal_engine_id: str
-    external_abort_observed: bool
-    internal_abort_observed: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,24 +100,34 @@ def validate_effective_request(
 
 def correlate_request_logs(
     external_base_id: str,
-    lines: tuple[str, ...],
+    records: tuple[RawLogRecord, ...],
     *,
     cancellation: bool,
 ) -> RequestIdentityChain:
+    lines = tuple(record.raw_record for record in records)
     serving_item = f"cmpl-{external_base_id}-0"
     received_pattern = re.compile(rf"\bReceived request {re.escape(serving_item)}:")
     internal_pattern = re.compile(rf"\bAdded request ({re.escape(serving_item)}-[0-9a-f]{{8}})\.")
     external_abort_pattern = re.compile(rf"\bRequest {re.escape(serving_item)} aborted\.")
-    received = [line for line in lines if received_pattern.search(line)]
-    internal_matches = [match for line in lines if (match := internal_pattern.search(line))]
-    external_aborts = [line for line in lines if external_abort_pattern.search(line)]
+    received = [record for record in records if received_pattern.search(record.raw_record)]
+    internal_matches = [
+        (record, match)
+        for record in records
+        if (match := internal_pattern.search(record.raw_record))
+    ]
+    external_aborts = [
+        record for record in records if external_abort_pattern.search(record.raw_record)
+    ]
     if len(received) != 1:
         raise Stage2ProtocolError("request logger correlation is missing or ambiguous")
     if len(internal_matches) != 1:
         raise Stage2ProtocolError("internal request-add correlation is missing or ambiguous")
-    internal_id = internal_matches[0].group(1)
+    request_add_record, internal_match = internal_matches[0]
+    internal_id = internal_match.group(1)
     internal_abort_pattern = re.compile(rf"\bAborted request\(s\) {re.escape(internal_id)}\.")
-    internal_aborts = [line for line in lines if internal_abort_pattern.search(line)]
+    internal_aborts = [
+        record for record in records if internal_abort_pattern.search(record.raw_record)
+    ]
 
     generic_ids = {
         match.group(0)
@@ -142,9 +146,48 @@ def correlate_request_logs(
         response_body_id=f"cmpl-{external_base_id}",
         serving_item_id=serving_item,
         internal_engine_id=internal_id,
-        external_abort_observed=bool(external_aborts),
-        internal_abort_observed=bool(internal_aborts),
+        request_received_log=received[0],
+        request_add_log=request_add_record,
+        external_abort_log=external_aborts[0] if external_aborts else None,
+        internal_abort_log=internal_aborts[0] if internal_aborts else None,
     )
+
+
+def retain_raw_log_records(
+    lines: tuple[str, ...],
+    *,
+    source_stream_id: str,
+    first_observation_offset_ns: int = 0,
+    observation_offsets_ns: tuple[int, ...] | None = None,
+) -> tuple[RawLogRecord, ...]:
+    """Retain exact fixture log bytes with deterministic offsets and hashes."""
+
+    if observation_offsets_ns is not None and (
+        len(observation_offsets_ns) != len(lines)
+        or observation_offsets_ns != tuple(sorted(observation_offsets_ns))
+    ):
+        raise Stage2ProtocolError("raw log observation offsets must match and be monotonic")
+    records: list[RawLogRecord] = []
+    byte_offset = 0
+    for ordinal, line in enumerate(lines):
+        encoded = line.encode("utf-8")
+        records.append(
+            RawLogRecord(
+                source_stream_id=source_stream_id,
+                record_ordinal=ordinal,
+                byte_start=byte_offset,
+                byte_end=byte_offset + len(encoded),
+                observation_offset_ns=(
+                    observation_offsets_ns[ordinal]
+                    if observation_offsets_ns is not None
+                    else first_observation_offset_ns + ordinal
+                ),
+                raw_record=line,
+                raw_record_sha256=hashlib.sha256(encoded).hexdigest(),
+            )
+        )
+        byte_offset += len(encoded) + 1
+    return tuple(records)
 
 
 def _object(value: object, *, field: str) -> dict[str, object]:
@@ -166,19 +209,25 @@ def _token_ids(value: object, *, field: str) -> tuple[int, ...]:
     return tuple(item for item in values if isinstance(item, int))
 
 
-def _metrics(value: object) -> dict[str, float | None]:
+def _metrics(value: object) -> Stage2PerRequestMetrics:
     raw = _object(value, field="metrics")
-    result: dict[str, float | None] = {}
-    for key, item in raw.items():
-        if item is None:
-            result[key] = None
-        elif isinstance(item, bool) or not isinstance(item, (int, float)):
-            raise Stage2ProtocolError("per-request metrics must be finite numbers or null")
-        elif not math.isfinite(float(item)) or float(item) < 0:
-            raise Stage2ProtocolError("per-request metrics must be finite and nonnegative")
-        else:
-            result[key] = float(item)
-    return result
+    if any(
+        item is not None
+        and (
+            isinstance(item, bool)
+            or not isinstance(item, (int, float))
+            or not math.isfinite(float(item))
+            or float(item) < 0
+        )
+        for item in raw.values()
+    ):
+        raise Stage2ProtocolError("per-request metrics must be finite nonnegative numbers or null")
+    try:
+        return Stage2PerRequestMetrics.model_validate(raw)
+    except ValidationError as error:
+        raise Stage2ProtocolError(
+            "per-request metrics require the exact five-field shape"
+        ) from error
 
 
 class Stage2StreamValidator:
@@ -190,12 +239,14 @@ class Stage2StreamValidator:
         external_base_id: str,
         sent_prompt_token_ids: tuple[int, ...],
         dispatch_offset_ns: int,
+        fixture_identity_sha256: str | None = None,
         frame_clock: Callable[[], int] | None = None,
     ) -> None:
         request = build_completion_request(external_base_id, sent_prompt_token_ids)
         self._external_base_id = external_base_id
         self._sent_prompt_token_ids = request.body.prompt
         self._dispatch_offset_ns = dispatch_offset_ns
+        self._fixture_identity_sha256 = fixture_identity_sha256
         self._frame_clock = frame_clock
         self._parser = IncrementalSSEParser()
         self._response_headers_offset_ns: int | None = None
@@ -209,7 +260,7 @@ class Stage2StreamValidator:
         self._output_ids: list[int] = []
         self._output_text_parts: list[str] = []
         self._usage: Stage2Usage | None = None
-        self._server_metrics: dict[str, float | None] = {}
+        self._server_metrics: Stage2PerRequestMetrics | None = None
         self._terminal_carried_tokens: bool | None = None
         self._last_observation_offset_ns = dispatch_offset_ns
         self._raw_body_chunks: list[RetainedBodyChunk] = []
@@ -340,9 +391,9 @@ class Stage2StreamValidator:
             self._usage = Stage2Usage.model_validate(usage)
         except ValueError as error:
             raise Stage2ProtocolError("usage reconciliation failed") from error
-        metrics_value = value.get("metrics")
-        if metrics_value is not None:
-            self._server_metrics = _metrics(metrics_value)
+        if "metrics" not in value:
+            raise Stage2ProtocolError("usage terminal requires per-request metrics")
+        self._server_metrics = _metrics(value["metrics"])
         self._usage_terminal_offset_ns = observation_offset_ns
 
     def close_transport(
@@ -369,8 +420,8 @@ class Stage2StreamValidator:
             identity_chain.external_base_id != self._external_base_id
             or identity_chain.response_body_id != expected_response_id
             or identity_chain.serving_item_id != expected_serving_item_id
-            or identity_chain.external_abort_observed
-            or identity_chain.internal_abort_observed
+            or identity_chain.external_abort_log is not None
+            or identity_chain.internal_abort_log is not None
         ):
             raise Stage2ProtocolError("validated request-log identity chain differs")
         return self._evidence(identity_chain)
@@ -388,7 +439,11 @@ class Stage2StreamValidator:
             raise Stage2ProtocolError("stream is missing a required terminal or timing boundary")
         if self._returned_prompt_ids != self._sent_prompt_token_ids:
             raise Stage2ProtocolError("returned prompt token IDs differ from sent IDs")
-        if self._usage is None or self._terminal_carried_tokens is None:
+        if (
+            self._usage is None
+            or self._server_metrics is None
+            or self._terminal_carried_tokens is None
+        ):
             raise Stage2ProtocolError("stream is missing usage or generation terminal evidence")
         assert self._response_headers_offset_ns is not None
         assert self._first_body_offset_ns is not None
@@ -425,15 +480,8 @@ class Stage2StreamValidator:
         response_id = f"cmpl-{self._external_base_id}"
         serving_item_id = f"{response_id}-0"
         return Stage2RequestEvidence(
-            boundary=Stage2EvidenceBoundary(
-                evidence_scope=Stage2EvidenceScope.TEST_FIXTURE_ONLY,
-                stage2a_cpu_fixture_tested=True,
-                real_runtime_execution=False,
-                model_execution=False,
-                tokenizer_execution=False,
-                gpu_execution=False,
-                cuda_execution=False,
-            ),
+            fixture_identity_sha256=self._fixture_identity_sha256,
+            request_identity_chain_sha256=sha256_identity(identity_chain),
             external_request_id=self._external_base_id,
             response_request_id=response_id,
             serving_item_request_id=serving_item_id,

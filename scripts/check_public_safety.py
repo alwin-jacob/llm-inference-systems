@@ -228,12 +228,15 @@ def _patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
         ("aws-access-key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
         ("github-token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}\b")),
         ("generic-api-token", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
+        ("hugging-face-token", re.compile(r"\bhf_[A-Za-z0-9]{20,}\b")),
         (
             "credential-file-content",
             re.compile(
                 r"(?im)(?:^|[\"'])"
                 r"(?:aws_secret_access_key|api_key|client_secret|proxy_password|"
-                r"access_token|refresh_token)[\"']?\s*(?:=|:)\s*[\"']?\S+"
+                r"access_token|refresh_token|HF_TOKEN|HUGGING_FACE_HUB_TOKEN|"
+                r"HUGGINGFACE_HUB_TOKEN|HUGGINGFACEHUB_API_TOKEN)"
+                r"[\"']?\s*(?:=|:)\s*[\"']?\S+"
             ),
         ),
         (

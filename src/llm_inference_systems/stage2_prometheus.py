@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -14,6 +15,7 @@ from llm_inference_systems.contracts import (
     Identifier,
     NonNegativeFloat,
     NonNegativeInt,
+    Sha256,
     StrictModel,
 )
 
@@ -81,6 +83,7 @@ class PrometheusSnapshot(StrictModel):
     scrape_wall_clock_utc: AwareDatetime
     scrape_monotonic_offset_ns: NonNegativeInt
     raw_exposition: str
+    raw_exposition_sha256: Sha256
     samples: tuple[PrometheusSample, ...]
     label_inventory: dict[str, tuple[tuple[tuple[str, str], ...], ...]]
 
@@ -88,6 +91,14 @@ class PrometheusSnapshot(StrictModel):
     def validate_utc(self) -> Self:
         if self.scrape_wall_clock_utc.utcoffset() != timedelta(0):
             raise ValueError("scrape wall-clock provenance must use UTC")
+        if (
+            self.raw_exposition_sha256
+            != hashlib.sha256(self.raw_exposition.encode("utf-8")).hexdigest()
+        ):
+            raise ValueError("Prometheus raw exposition SHA-256 does not reconstruct")
+        samples, inventory = _parse_exposition(self.raw_exposition)
+        if self.samples != samples or self.label_inventory != inventory:
+            raise ValueError("Prometheus samples and labels do not reconstruct from raw exposition")
         return self
 
 
@@ -134,13 +145,12 @@ def _parse_labels(raw: str | None) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(labels))
 
 
-def parse_prometheus_snapshot(
+def _parse_exposition(
     raw_exposition: str,
-    *,
-    process_start_id: str,
-    scrape_wall_clock_utc: AwareDatetime,
-    scrape_monotonic_offset_ns: int,
-) -> PrometheusSnapshot:
+) -> tuple[
+    tuple[PrometheusSample, ...],
+    dict[str, tuple[tuple[tuple[str, str], ...], ...]],
+]:
     if not raw_exposition or not raw_exposition.endswith("\n"):
         raise PrometheusProtocolError(
             "Prometheus exposition must be nonempty and newline terminated"
@@ -173,12 +183,24 @@ def parse_prometheus_snapshot(
     label_inventory = {
         name: tuple(sorted(label_sets)) for name, label_sets in sorted(inventory.items())
     }
+    return tuple(samples), label_inventory
+
+
+def parse_prometheus_snapshot(
+    raw_exposition: str,
+    *,
+    process_start_id: str,
+    scrape_wall_clock_utc: AwareDatetime,
+    scrape_monotonic_offset_ns: int,
+) -> PrometheusSnapshot:
+    samples, label_inventory = _parse_exposition(raw_exposition)
     return PrometheusSnapshot(
         process_start_id=process_start_id,
         scrape_wall_clock_utc=scrape_wall_clock_utc,
         scrape_monotonic_offset_ns=scrape_monotonic_offset_ns,
         raw_exposition=raw_exposition,
-        samples=tuple(samples),
+        raw_exposition_sha256=hashlib.sha256(raw_exposition.encode("utf-8")).hexdigest(),
+        samples=samples,
         label_inventory=label_inventory,
     )
 

@@ -37,13 +37,19 @@ Stage 2A adds a separate `0.3.0` protocol layer exercised only by CPU fixtures:
    terminals, token IDs, usage, and timing without importing a serving runtime;
 3. `stage2_prometheus.py` retains raw exposition and provenance, parses exact metric/label series,
    and derives same-process nondecreasing counter deltas;
-4. `stage2_control.py` evaluates ordered runtime phases, offline process separation, dynamic
-   resources, cancellation/drain samples, three-restart semantics, aggregate eligibility, and
-   tiny-sample reporting limits;
-5. `stage2_bundle.py` manages inspectable staging state, durable raw and derived evidence,
+4. `stage2_runtime.py` defines the immutable launch identity, exact process-kind pre-import
+   environments, pinned snapshot inventory/identity, read-only transition, and GPU-memory
+   stability contracts;
+5. `stage2_control.py` derives cancellation from raw logs and raw Prometheus snapshots and requires
+   the 17 ordered phase-specific evidence records, memory/steady-state gates, exact excluded and
+   measured counts, final drain, complete shutdown, and no-residual verification;
+6. `stage2_attestation.py` keeps parsing evidence-neutral, assigns fixture scope separately, and
+   requires all 15 cross-bound future real-runtime component identities together;
+7. `stage2_bundle.py` manages inspectable staging state, durable raw and derived evidence,
    public-safety checks, reconstruction, manifest-last commit, directory durability, and tamper
    validation; and
-6. `stage2_fixture_server.py` scripts compatible response, log, and metric shapes on a server fixed
+8. `stage2_fixture_server.py` scripts compatible response, log, and complete five-field metric
+   shapes on a server fixed
    to `127.0.0.1:0`.
 
 The Stage 2A code does not expose a runtime launcher, model/tokenizer loader, arbitrary endpoint,

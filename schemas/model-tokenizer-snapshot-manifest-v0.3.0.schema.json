@@ -1,0 +1,430 @@
+{
+  "$defs": {
+    "SnapshotFileEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_size": {
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "entry_type": {
+          "const": "regular_file",
+          "title": "Entry Type",
+          "type": "string"
+        },
+        "observed_byte_size": {
+          "minimum": 0,
+          "title": "Observed Byte Size",
+          "type": "integer"
+        },
+        "observed_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Observed Sha256",
+          "type": "string"
+        },
+        "relative_path": {
+          "title": "Relative Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "relative_path",
+        "entry_type",
+        "byte_size",
+        "observed_byte_size",
+        "sha256",
+        "observed_sha256"
+      ],
+      "title": "SnapshotFileEntry",
+      "type": "object"
+    },
+    "SnapshotReadOnlyTransition": {
+      "additionalProperties": false,
+      "properties": {
+        "completed_offset_ns": {
+          "exclusiveMinimum": 0,
+          "title": "Completed Offset Ns",
+          "type": "integer"
+        },
+        "started_offset_ns": {
+          "minimum": 0,
+          "title": "Started Offset Ns",
+          "type": "integer"
+        },
+        "verification_evidence_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Verification Evidence Sha256",
+          "type": "string"
+        },
+        "verified_regular_file_count": {
+          "const": 10,
+          "title": "Verified Regular File Count",
+          "type": "integer"
+        },
+        "writable_after": {
+          "const": false,
+          "title": "Writable After",
+          "type": "boolean"
+        },
+        "writable_before": {
+          "const": true,
+          "title": "Writable Before",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "started_offset_ns",
+        "completed_offset_ns",
+        "writable_before",
+        "writable_after",
+        "verified_regular_file_count",
+        "verification_evidence_sha256"
+      ],
+      "title": "SnapshotReadOnlyTransition",
+      "type": "object"
+    },
+    "SnapshotSpecialTokenIds": {
+      "additionalProperties": false,
+      "properties": {
+        "bos_token_id": {
+          "const": 151643,
+          "title": "Bos Token Id",
+          "type": "integer"
+        },
+        "eos_token_id": {
+          "const": 151645,
+          "title": "Eos Token Id",
+          "type": "integer"
+        },
+        "pad_token_id": {
+          "const": 151643,
+          "title": "Pad Token Id",
+          "type": "integer"
+        },
+        "unk_token_id": {
+          "title": "Unk Token Id",
+          "type": "null"
+        }
+      },
+      "required": [
+        "bos_token_id",
+        "eos_token_id",
+        "pad_token_id",
+        "unk_token_id"
+      ],
+      "title": "SnapshotSpecialTokenIds",
+      "type": "object"
+    },
+    "Stage2ProcessKind": {
+      "enum": [
+        "ONLINE_SNAPSHOT_DOWNLOAD",
+        "OFFLINE_TOKENIZER_VERIFICATION",
+        "OFFLINE_VLLM_RESTART_1",
+        "OFFLINE_VLLM_RESTART_2",
+        "OFFLINE_VLLM_RESTART_3"
+      ],
+      "title": "Stage2ProcessKind",
+      "type": "string"
+    },
+    "Stage2ProcessOperation": {
+      "additionalProperties": false,
+      "properties": {
+        "exact_network_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Exact Network Source"
+        },
+        "exits_after_operation": {
+          "title": "Exits After Operation",
+          "type": "boolean"
+        },
+        "local_files_only": {
+          "title": "Local Files Only",
+          "type": "boolean"
+        },
+        "repository_id": {
+          "anyOf": [
+            {
+              "const": "Qwen/Qwen2.5-0.5B-Instruct",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Repository Id"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "const": "7ae557604adf67be50417f59c2c2f167def9a775",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Revision"
+        },
+        "token_false": {
+          "title": "Token False",
+          "type": "boolean"
+        },
+        "verified_local_snapshot_path": {
+          "title": "Verified Local Snapshot Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "token_false",
+        "local_files_only",
+        "repository_id",
+        "revision",
+        "exact_network_source",
+        "verified_local_snapshot_path",
+        "exits_after_operation"
+      ],
+      "title": "Stage2ProcessOperation",
+      "type": "object"
+    },
+    "Stage2ProcessRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "absent_environment_variables": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Absent Environment Variables",
+          "type": "array"
+        },
+        "environment": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Environment",
+          "type": "object"
+        },
+        "environment_capture_offset_ns": {
+          "minimum": 0,
+          "title": "Environment Capture Offset Ns",
+          "type": "integer"
+        },
+        "first_relevant_import_offset_ns": {
+          "exclusiveMinimum": 0,
+          "title": "First Relevant Import Offset Ns",
+          "type": "integer"
+        },
+        "operation": {
+          "$ref": "#/$defs/Stage2ProcessOperation"
+        },
+        "process_identity": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Process Identity",
+          "type": "string"
+        },
+        "process_kind": {
+          "$ref": "#/$defs/Stage2ProcessKind"
+        },
+        "process_start_offset_ns": {
+          "minimum": 0,
+          "title": "Process Start Offset Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "process_kind",
+        "process_identity",
+        "process_start_offset_ns",
+        "environment_capture_offset_ns",
+        "first_relevant_import_offset_ns",
+        "environment",
+        "absent_environment_variables",
+        "operation"
+      ],
+      "title": "Stage2ProcessRecord",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "chat_template_absent": {
+      "title": "Chat Template Absent",
+      "type": "boolean"
+    },
+    "chat_template_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Chat Template Sha256"
+    },
+    "config_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Config Sha256",
+      "type": "string"
+    },
+    "content_identity_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Content Identity Sha256",
+      "type": "string"
+    },
+    "download_process": {
+      "$ref": "#/$defs/Stage2ProcessRecord"
+    },
+    "download_process_identity_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Download Process Identity Sha256",
+      "type": "string"
+    },
+    "hf_local_metadata_inventory": {
+      "items": {
+        "$ref": "#/$defs/SnapshotFileEntry"
+      },
+      "minItems": 1,
+      "title": "Hf Local Metadata Inventory",
+      "type": "array"
+    },
+    "license": {
+      "const": "Apache-2.0",
+      "title": "License",
+      "type": "string"
+    },
+    "manifest_name": {
+      "const": "model-tokenizer-snapshot-manifest-v0.3.0",
+      "title": "Manifest Name",
+      "type": "string"
+    },
+    "merges_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Merges Sha256",
+      "type": "string"
+    },
+    "model_content_inventory": {
+      "items": {
+        "$ref": "#/$defs/SnapshotFileEntry"
+      },
+      "maxItems": 10,
+      "minItems": 10,
+      "title": "Model Content Inventory",
+      "type": "array"
+    },
+    "offline_tokenizer_verification_process": {
+      "$ref": "#/$defs/Stage2ProcessRecord"
+    },
+    "offline_tokenizer_verification_process_identity_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Offline Tokenizer Verification Process Identity Sha256",
+      "type": "string"
+    },
+    "read_only_transition": {
+      "$ref": "#/$defs/SnapshotReadOnlyTransition"
+    },
+    "repository": {
+      "const": "Qwen/Qwen2.5-0.5B-Instruct",
+      "title": "Repository",
+      "type": "string"
+    },
+    "required_file_allowlist": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Required File Allowlist",
+      "type": "array"
+    },
+    "revision": {
+      "const": "7ae557604adf67be50417f59c2c2f167def9a775",
+      "title": "Revision",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.3.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "snapshot_root_identity_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Snapshot Root Identity Sha256",
+      "type": "string"
+    },
+    "snapshot_root_path": {
+      "title": "Snapshot Root Path",
+      "type": "string"
+    },
+    "source_url": {
+      "const": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct/tree/7ae557604adf67be50417f59c2c2f167def9a775",
+      "title": "Source Url",
+      "type": "string"
+    },
+    "special_token_ids": {
+      "$ref": "#/$defs/SnapshotSpecialTokenIds"
+    },
+    "tokenizer_class": {
+      "const": "Qwen2TokenizerFast",
+      "title": "Tokenizer Class",
+      "type": "string"
+    },
+    "tokenizer_config_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Tokenizer Config Sha256",
+      "type": "string"
+    },
+    "tokenizer_json_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Tokenizer Json Sha256",
+      "type": "string"
+    },
+    "vocabulary_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Vocabulary Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "manifest_name",
+    "repository",
+    "revision",
+    "source_url",
+    "license",
+    "download_process",
+    "download_process_identity_sha256",
+    "required_file_allowlist",
+    "model_content_inventory",
+    "hf_local_metadata_inventory",
+    "content_identity_sha256",
+    "tokenizer_class",
+    "config_sha256",
+    "tokenizer_json_sha256",
+    "tokenizer_config_sha256",
+    "vocabulary_sha256",
+    "merges_sha256",
+    "special_token_ids",
+    "chat_template_sha256",
+    "chat_template_absent",
+    "read_only_transition",
+    "offline_tokenizer_verification_process",
+    "offline_tokenizer_verification_process_identity_sha256",
+    "snapshot_root_path",
+    "snapshot_root_identity_sha256"
+  ],
+  "title": "ModelTokenizerSnapshotManifest",
+  "type": "object"
+}

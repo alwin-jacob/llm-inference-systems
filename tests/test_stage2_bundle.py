@@ -18,21 +18,7 @@ from llm_inference_systems.stage2_bundle import (
 from llm_inference_systems.stage2_contracts import (
     BundleState,
     Stage2BundleManifest,
-    Stage2EvidenceBoundary,
-    Stage2EvidenceScope,
 )
-
-
-def _boundary() -> Stage2EvidenceBoundary:
-    return Stage2EvidenceBoundary(
-        evidence_scope=Stage2EvidenceScope.TEST_FIXTURE_ONLY,
-        stage2a_cpu_fixture_tested=True,
-        real_runtime_execution=False,
-        model_execution=False,
-        tokenizer_execution=False,
-        gpu_execution=False,
-        cuda_execution=False,
-    )
 
 
 def _reconstruct(raw: dict[str, bytes]) -> dict[str, bytes]:
@@ -45,7 +31,6 @@ def _builder(tmp_path: Path, name: str = "restart-1") -> Stage2BundleBuilder:
         tmp_path,
         name,
         repetition_index=1,
-        boundary=_boundary(),
         source_commit="a" * 40,
     )
 
@@ -189,6 +174,12 @@ def test_symlinked_bundle_parent_is_rejected_before_external_write(tmp_path: Pat
         "Author" + "ization: Bearer fixture-secret",
         '{"Author' + 'ization":"Bearer fixture-secret"}',
         "Proxy-Author" + "ization: Basic fixture-secret",
+        "-----BEGIN " + "PRIVATE KEY-----",
+        "AKIA" + "0123456789ABCDEF",
+        "ghp_" + "A" * 36,
+        "sk-" + "synthetic_token_value_12345",
+        "hf_" + "A" * 30,
+        '{"HF_' + 'TOKEN":"fixture-secret"}',
         '{"Cook' + 'ie":"session=fixture-secret"}',
         '{"access_' + 'token":"fixture-secret"}',
         "https://fixture-user:" + "fixture-pass@proxy.invalid",
@@ -228,7 +219,6 @@ def test_atomic_rename_failure_becomes_invalid(tmp_path: Path) -> None:
         tmp_path,
         "restart-1",
         repetition_index=1,
-        boundary=_boundary(),
         source_commit="a" * 40,
         replace=fail_replace,
     )
