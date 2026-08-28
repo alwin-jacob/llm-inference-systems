@@ -39,3 +39,13 @@ ran remotely.
 
 This implementation evidence is local and `TEST_FIXTURE_ONLY`. It executes no model, tokenizer,
 LLM-serving runtime, GPU, CUDA, profiler, container, paid resource, remote CI, or Git remote.
+
+## 2026-08-27 — Stage 1 archive-safety recovery
+
+- Preserved Stage 1 implementation commit `927a0a1c57e7c90aef87f5282093a3076e786b73` after the
+  mandatory fresh-archive verification exposed that `check_public_safety.py` depended on Git
+  metadata, which an intentionally metadata-free Git archive does not contain.
+- The defect blocked fresh-checkout acceptance. Corrected it with deterministic Git-worktree and
+  archive-safe file discovery without weakening any content checks.
+- No Stage 1 evidence was accepted or published after the failed gate, and no canonical
+  claim ledger status changed.
