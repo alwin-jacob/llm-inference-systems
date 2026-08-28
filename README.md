@@ -49,12 +49,20 @@ status or public résumé wording advances.
 - CLI commands for local fixture execution, run-directory validation, raw summary reconstruction,
   and semantic comparison. The fixture command accepts no host, endpoint, URL, or base URL.
 - Strict Stage 2A request, four-terminal SSE, token/usage, request-ID, Prometheus, cancellation,
-  runtime-phase, offline-process, dynamic-resource, and tiny-sample reporting contracts.
+  runtime-phase, process-specific environment, immutable launch, snapshot-manifest,
+  fixture/real-attestation, dynamic-resource, and tiny-sample reporting contracts. A successful
+  usage terminal requires the exact five-field typed metrics object, including explicit nulls.
 - Manifest-last `INCOMPLETE`/`INVALID`/`COMMITTED` repetition bundles, exact raw reconstruction,
   three-restart semantic comparison, and aggregate-commit gating.
 - A CPU-only Stage 2A fixture server fixed to `127.0.0.1:0`, plus generated `0.3.0` schemas and a
   verifier that proves historical Stage 0/1 bytes and ordinary dependency boundaries remain
   unchanged.
+
+Parsing and reconciliation are evidence-neutral. `FixtureAttestation` alone assigns
+`TEST_FIXTURE_ONLY`; the separate future real-runtime attestation cannot validate unless all 15
+typed component identities validate together. Complete synthetic attestation fixtures prove only
+the contract shape and never establish runtime, model, tokenizer, Linux/NVIDIA, CUDA, GPU, Kaggle,
+or performance evidence.
 
 Client concurrency is a load-generator property. A configured or observed server batch size is
 a separate field and is never inferred from client concurrency.

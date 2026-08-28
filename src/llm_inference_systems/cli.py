@@ -39,11 +39,17 @@ from llm_inference_systems.stage1_contracts import (
     Stage1RunConfiguration,
     Stage1WorkloadDefinition,
 )
+from llm_inference_systems.stage2_attestation import FutureRealRuntimeAttestation
 from llm_inference_systems.stage2_contracts import (
     Stage2BundleManifest,
     Stage2CompletionRequest,
     Stage2ExecutionLock,
     Stage2RunConfiguration,
+)
+from llm_inference_systems.stage2_control import Stage2RuntimeControlEvidence
+from llm_inference_systems.stage2_runtime import (
+    ModelTokenizerSnapshotManifest,
+    Stage2LaunchSpec,
 )
 
 MAX_VALIDATION_BYTES = 10 * 1024 * 1024
@@ -56,6 +62,10 @@ VALIDATION_MODELS: dict[str, type[BaseModel]] = {
     "validate-stage2-request": Stage2CompletionRequest,
     "validate-stage2-bundle-manifest": Stage2BundleManifest,
     "validate-stage2-execution-lock": Stage2ExecutionLock,
+    "validate-stage2-launch-spec": Stage2LaunchSpec,
+    "validate-stage2-snapshot-manifest": ModelTokenizerSnapshotManifest,
+    "validate-stage2-runtime-control": Stage2RuntimeControlEvidence,
+    "validate-stage2-real-runtime-attestation": FutureRealRuntimeAttestation,
 }
 
 

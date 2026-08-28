@@ -247,7 +247,13 @@ class Stage2FixtureServer:
             "model": request.model,
             "choices": [],
             "usage": {"prompt_tokens": 64, "completion_tokens": 32, "total_tokens": 96},
-            "metrics": {"time_to_first_token_ms": 1.0, "generation_time_ms": 2.0},
+            "metrics": {
+                "time_to_first_token_ms": 1.0,
+                "generation_time_ms": 2.0,
+                "queue_time_ms": 0.0,
+                "mean_itl_ms": 0.031,
+                "tokens_per_second": 16.0,
+            },
         }
         payloads.append(
             f"data: {json.dumps(usage, sort_keys=True, separators=(',', ':'))}\n\n".encode()

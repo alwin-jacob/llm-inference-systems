@@ -1,32 +1,41 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
 from pydantic import ValidationError
 
+from llm_inference_systems.canonical import sha256_identity
 from llm_inference_systems.stage2_contracts import (
+    RawLogRecord,
+    RequestIdentityChain,
     Stage2CompletionRequest,
     Stage2RequestEnvelope,
     Stage2RequestEvidence,
 )
 from llm_inference_systems.stage2_protocol import (
-    RequestIdentityChain,
     Stage2ProtocolError,
     Stage2StreamValidator,
     build_cancellation_request,
     build_completion_request,
     correlate_request_logs,
+    retain_raw_log_records,
     validate_effective_request,
 )
 
 PROMPT = tuple(range(64))
 EXTERNAL_ID = "stage2-fixture-001"
 INTERNAL_ID = "cmpl-stage2-fixture-001-0-deadbeef"
+FIXTURE_IDENTITY = "f" * 64
 
 
 def _data(value: dict[str, object]) -> bytes:
     return f"data: {json.dumps(value, sort_keys=True, separators=(',', ':'))}\n\n".encode()
+
+
+def _log_records(lines: tuple[str, ...]) -> tuple[RawLogRecord, ...]:
+    return retain_raw_log_records(lines, source_stream_id="fixture-log")
 
 
 def _choice(
@@ -62,7 +71,13 @@ def _usage(
                 "completion_tokens": completion_tokens,
                 "total_tokens": total_tokens,
             },
-            "metrics": {"time_to_first_token_ms": 1.25},
+            "metrics": {
+                "time_to_first_token_ms": 1.25,
+                "generation_time_ms": 2.5,
+                "queue_time_ms": 0.0,
+                "mean_itl_ms": None,
+                "tokens_per_second": 12.8,
+            },
         }
     )
 
@@ -72,6 +87,7 @@ def _validator() -> Stage2StreamValidator:
         external_base_id=EXTERNAL_ID,
         sent_prompt_token_ids=PROMPT,
         dispatch_offset_ns=0,
+        fixture_identity_sha256=FIXTURE_IDENTITY,
     )
     validator.accept_response_headers(EXTERNAL_ID, 10)
     return validator
@@ -80,9 +96,12 @@ def _validator() -> Stage2StreamValidator:
 def _identity_chain() -> RequestIdentityChain:
     return correlate_request_logs(
         EXTERNAL_ID,
-        (
-            f"Received request cmpl-{EXTERNAL_ID}-0: params: TEST_FIXTURE_ONLY.",
-            f"Added request {INTERNAL_ID}.",
+        retain_raw_log_records(
+            (
+                f"Received request cmpl-{EXTERNAL_ID}-0: params: TEST_FIXTURE_ONLY.",
+                f"Added request {INTERNAL_ID}.",
+            ),
+            source_stream_id="fixture-log",
         ),
         cancellation=False,
     )
@@ -116,6 +135,31 @@ def _complete(
         terminal_offset + 30,
         identity_chain=identity_chain or _identity_chain(),
     )
+
+
+def _validator_ready_for_usage() -> tuple[Stage2StreamValidator, int]:
+    validator = _validator()
+    for token in range(32):
+        validator.feed(
+            _choice(
+                (token,),
+                finish_reason="length" if token == 31 else None,
+                prompt=PROMPT if token == 0 else None,
+            ),
+            20 + token,
+        )
+    return validator, 60
+
+
+def _usage_with_metrics(metrics: object, *, include_metrics: bool = True) -> bytes:
+    value: dict[str, object] = {
+        "id": f"cmpl-{EXTERNAL_ID}",
+        "choices": [],
+        "usage": {"prompt_tokens": 64, "completion_tokens": 32, "total_tokens": 96},
+    }
+    if include_metrics:
+        value["metrics"] = metrics
+    return _data(value)
 
 
 def test_exact_completion_request_and_cancellation_shape() -> None:
@@ -172,7 +216,8 @@ def test_token_bearing_generation_terminal_reconciles_exactly() -> None:
     assert evidence.terminal_event_carried_token_ids is True
     assert evidence.usage.total_tokens == 96
     assert evidence.client_generation_tpot.value_ns is not None
-    assert evidence.server_per_request_metrics == {"time_to_first_token_ms": 1.25}
+    assert evidence.server_per_request_metrics.time_to_first_token_ms == 1.25
+    assert evidence.server_per_request_metrics.mean_itl_ms is None
     assert evidence.local_prompt_token_count is None
 
 
@@ -242,6 +287,7 @@ def test_coalesced_generation_usage_and_done_capture_distinct_frame_times() -> N
         external_base_id=EXTERNAL_ID,
         sent_prompt_token_ids=PROMPT,
         dispatch_offset_ns=0,
+        fixture_identity_sha256=FIXTURE_IDENTITY,
         frame_clock=frame_offsets.__next__,
     )
     validator.accept_response_headers(EXTERNAL_ID, 10)
@@ -320,6 +366,81 @@ def test_usage_mismatch_is_rejected() -> None:
         validator.feed(_usage(total_tokens=95), 60)
 
 
+def test_usage_terminal_omitting_metrics_object_is_rejected() -> None:
+    validator, offset = _validator_ready_for_usage()
+    with pytest.raises(Stage2ProtocolError, match="requires per-request metrics"):
+        validator.feed(_usage_with_metrics({}, include_metrics=False), offset)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "time_to_first_token_ms",
+        "generation_time_ms",
+        "queue_time_ms",
+        "mean_itl_ms",
+        "tokens_per_second",
+    ],
+)
+def test_usage_metrics_omitting_each_required_key_is_rejected(missing: str) -> None:
+    metrics: dict[str, object] = {
+        "time_to_first_token_ms": 1.0,
+        "generation_time_ms": 2.0,
+        "queue_time_ms": 0.0,
+        "mean_itl_ms": 0.1,
+        "tokens_per_second": 10.0,
+    }
+    metrics.pop(missing)
+    validator, offset = _validator_ready_for_usage()
+    with pytest.raises(Stage2ProtocolError, match="exact five-field shape"):
+        validator.feed(_usage_with_metrics(metrics), offset)
+
+
+def test_usage_metrics_arbitrary_key_is_rejected() -> None:
+    metrics = {
+        "time_to_first_token_ms": 1.0,
+        "generation_time_ms": 2.0,
+        "queue_time_ms": 0.0,
+        "mean_itl_ms": 0.1,
+        "tokens_per_second": 10.0,
+        "client_latency_ms": 3.0,
+    }
+    validator, offset = _validator_ready_for_usage()
+    with pytest.raises(Stage2ProtocolError, match="exact five-field shape"):
+        validator.feed(_usage_with_metrics(metrics), offset)
+
+
+@pytest.mark.parametrize("invalid", [-1.0, float("nan"), float("inf"), "1.0", True])
+def test_usage_metrics_invalid_values_are_rejected(invalid: object) -> None:
+    metrics: dict[str, object] = {
+        "time_to_first_token_ms": invalid,
+        "generation_time_ms": 2.0,
+        "queue_time_ms": 0.0,
+        "mean_itl_ms": 0.1,
+        "tokens_per_second": 10.0,
+    }
+    validator, offset = _validator_ready_for_usage()
+    with pytest.raises(Stage2ProtocolError, match="finite nonnegative"):
+        validator.feed(_usage_with_metrics(metrics), offset)
+
+
+def test_usage_metrics_complete_finite_and_explicit_null_shapes_are_retained() -> None:
+    finite = _complete().server_per_request_metrics
+    assert finite.model_dump(mode="python") == {
+        "time_to_first_token_ms": 1.25,
+        "generation_time_ms": 2.5,
+        "queue_time_ms": 0.0,
+        "mean_itl_ms": None,
+        "tokens_per_second": 12.8,
+    }
+    validator, offset = _validator_ready_for_usage()
+    metrics = dict.fromkeys(type(finite).model_fields)
+    validator.feed(_usage_with_metrics(metrics), offset)
+    validator.feed(b"data: [DONE]\n\n", offset + 10)
+    evidence = validator.close_transport(offset + 20, identity_chain=_identity_chain())
+    assert all(value is None for value in evidence.server_per_request_metrics.model_dump().values())
+
+
 def test_terminal_requires_exactly_32_output_ids() -> None:
     validator = _validator()
     validator.feed(_choice((0,), finish_reason=None, prompt=PROMPT), 20)
@@ -368,24 +489,33 @@ def test_identity_chain_requires_exact_single_log_chain() -> None:
         f"Received request cmpl-{EXTERNAL_ID}-0: params: TEST_FIXTURE_ONLY.",
         f"Added request {INTERNAL_ID}.",
     )
-    chain = correlate_request_logs(EXTERNAL_ID, lines, cancellation=False)
+    chain = correlate_request_logs(EXTERNAL_ID, _log_records(lines), cancellation=False)
     assert chain.internal_engine_id == INTERNAL_ID
+    assert chain.request_add_log.raw_record_sha256 == hashlib.sha256(lines[1].encode()).hexdigest()
     with pytest.raises(Stage2ProtocolError, match="ambiguous"):
-        correlate_request_logs(EXTERNAL_ID, (*lines, lines[1]), cancellation=False)
+        correlate_request_logs(
+            EXTERNAL_ID,
+            _log_records((*lines, lines[1])),
+            cancellation=False,
+        )
 
 
 def test_request_evidence_requires_matching_validated_log_chain() -> None:
     other = "other-fixture"
     wrong_chain = correlate_request_logs(
         other,
-        (
-            f"Received request cmpl-{other}-0: params: TEST_FIXTURE_ONLY.",
-            f"Added request cmpl-{other}-0-cafebabe.",
+        _log_records(
+            (
+                f"Received request cmpl-{other}-0: params: TEST_FIXTURE_ONLY.",
+                f"Added request cmpl-{other}-0-cafebabe.",
+            )
         ),
         cancellation=False,
     )
     with pytest.raises(Stage2ProtocolError, match="identity chain differs"):
         _complete(identity_chain=wrong_chain)
+    evidence = _complete()
+    assert evidence.request_identity_chain_sha256 == sha256_identity(_identity_chain())
 
 
 def test_cancellation_identity_requires_both_abort_logs() -> None:
@@ -397,11 +527,19 @@ def test_cancellation_identity_requires_both_abort_logs() -> None:
         f"Request cmpl-{EXTERNAL_ID}-0 aborted.",
         f"Aborted request(s) {INTERNAL_ID}.",
     )
-    chain = correlate_request_logs(EXTERNAL_ID, (*base, *aborts), cancellation=True)
-    assert chain.external_abort_observed
-    assert chain.internal_abort_observed
+    chain = correlate_request_logs(
+        EXTERNAL_ID,
+        _log_records((*base, *aborts)),
+        cancellation=True,
+    )
+    assert chain.external_abort_log is not None
+    assert chain.internal_abort_log is not None
     with pytest.raises(Stage2ProtocolError, match="both external and internal"):
-        correlate_request_logs(EXTERNAL_ID, (*base, aborts[0]), cancellation=True)
+        correlate_request_logs(
+            EXTERNAL_ID,
+            _log_records((*base, aborts[0])),
+            cancellation=True,
+        )
 
 
 def test_cross_request_log_correlation_is_rejected() -> None:
@@ -411,4 +549,4 @@ def test_cross_request_log_correlation_is_rejected() -> None:
         "Added request cmpl-other-0-cafebabe.",
     )
     with pytest.raises(Stage2ProtocolError, match="cross-request"):
-        correlate_request_logs(EXTERNAL_ID, lines, cancellation=False)
+        correlate_request_logs(EXTERNAL_ID, _log_records(lines), cancellation=False)

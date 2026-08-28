@@ -43,3 +43,8 @@ required_free_before_setup = max(
 ```
 
 Both fixed and dynamic gates must pass before any separately authorized Stage 2B execution.
+
+The future runtime-control contract separately requires exactly five nonnegative GPU-memory
+samples at least 200 ms apart. Its stability tolerance is the larger of one percent of the first
+sample rounded upward and 67,108,864 bytes; the observed range may not exceed that value. Stage 2A
+tests this arithmetic with CPU synthetic values and does not observe or assert GPU memory.

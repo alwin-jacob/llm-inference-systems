@@ -30,13 +30,20 @@ from llm_inference_systems.stage2_protocol import (
     Stage2StreamValidator,
     build_completion_request,
     correlate_request_logs,
+    retain_raw_log_records,
 )
 from scripts.verify_checked_stage1_evidence import (
     HISTORICAL_STAGE1_PACKAGE_VERSION,
     _verify,
 )
-from scripts.verify_stage2a import FROZEN_HASHES, HISTORICAL_STAGE1_UV_LOCK_SHA256
+from scripts.verify_stage2a import (
+    FROZEN_HASHES,
+    HISTORICAL_STAGE1_UV_LOCK_SHA256,
+    _declared_forbidden_dependencies,
+    _verify_import_boundary,
+)
 from scripts.verify_stage2a import main as verify_stage2a
+from tests.stage2_factories import FIXTURE_IDENTITY
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -83,6 +90,7 @@ async def _exercise_fixture(
             external_base_id=envelope.x_request_id,
             sent_prompt_token_ids=envelope.body.prompt,
             dispatch_offset_ns=0,
+            fixture_identity_sha256=FIXTURE_IDENTITY,
             frame_clock=offset_ns,
         )
         async with httpx.AsyncClient(
@@ -103,7 +111,11 @@ async def _exercise_fixture(
                 async for chunk in response.aiter_bytes():
                     validator.feed(chunk, offset_ns())
             chain = correlate_request_logs(
-                envelope.x_request_id, tuple(server.logs), cancellation=False
+                envelope.x_request_id,
+                retain_raw_log_records(
+                    tuple(server.logs), source_stream_id="stage2-fixture-server-log"
+                ),
+                cancellation=False,
             )
             evidence = validator.close_transport(offset_ns(), identity_chain=chain)
             metrics = await client.get("/metrics")
@@ -140,7 +152,11 @@ def test_cpu_fixture_server_stream_logs_and_metrics(finish_only: bool, grouped: 
     if grouped:
         assert evidence.client_generation_tpot.unavailable_reason == "GROUPED_TOKEN_EVENT"
     assert evidence.final_output_token_ids == tuple(range(1000, 1032))
-    chain = correlate_request_logs("fixture-http-001", tuple(server.logs), cancellation=False)
+    chain = correlate_request_logs(
+        "fixture-http-001",
+        retain_raw_log_records(tuple(server.logs), source_stream_id="stage2-fixture-server-log"),
+        cancellation=False,
+    )
     assert chain.internal_engine_id.endswith("deadbeef")
 
 
@@ -175,18 +191,34 @@ def test_execution_lock_is_separate_uninstalled_and_explicitly_blocked() -> None
     assert lock.status is ExecutionLockStatus.BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED
     assert lock.installed is False
     assert lock.executed is False
+    assert lock.resolver_lock_claimed_complete is False
     assert lock.vllm_git_revision == "2cf0a6915ce544dc493a0990f2ea38d81601128a"
     assert lock.qwen_model_repository == "Qwen/Qwen2.5-0.5B-Instruct"
     assert lock.qwen_snapshot_source_url.endswith(lock.qwen_snapshot_revision)
     vllm = next(item for item in lock.artifacts if item.package == "vllm")
     assert vllm.sha256 == "8ec943b66a0c6b4351d0778e99d7bacfca5788dd8eedd49425092bacb61c4397"
+    assert vllm.source_url == (
+        "https://github.com/vllm-project/vllm/releases/download/v0.28.0/"
+        "vllm-0.28.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl"
+    )
     torchvision = next(item for item in lock.artifacts if item.package == "torchvision")
     assert torchvision.sha256 is None
 
 
 @pytest.mark.parametrize(
     "mutation",
-    ["duplicate", "source", "hash", "model-repository", "model-source", "false-complete"],
+    [
+        "duplicate",
+        "source",
+        "hash",
+        "model-repository",
+        "model-source",
+        "false-complete",
+        "incomplete-status",
+        "resolver-complete",
+        "empty-unresolved",
+        "substituted-unresolved",
+    ],
 )
 def test_execution_lock_rejects_supply_chain_or_status_drift(mutation: str) -> None:
     path = ROOT / "execution-lock/stage2-execution-lock.json"
@@ -205,14 +237,31 @@ def test_execution_lock_rejects_supply_chain_or_status_drift(mutation: str) -> N
         value["qwen_model_repository"] = "substituted/model"
     elif mutation == "model-source":
         value["qwen_snapshot_source_url"] = "https://models.invalid/substituted"
-    else:
+    elif mutation == "false-complete":
         value["status"] = "COMPLETE"
+    elif mutation == "incomplete-status":
+        value["status"] = "INCOMPLETE"
+    elif mutation == "resolver-complete":
+        value["resolver_lock_claimed_complete"] = True
+    elif mutation == "empty-unresolved":
+        value["unresolved"] = ()
+    else:
+        value["unresolved"] = ("unrelated unresolved item",)
     value["artifacts"] = tuple(artifacts)
     with pytest.raises(ValidationError):
         Stage2ExecutionLock.model_validate(value)
 
 
-@pytest.mark.parametrize("mutation", ["duplicate", "artifact-source", "model-source"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "duplicate",
+        "artifact-source",
+        "model-source",
+        "status",
+        "unresolved",
+    ],
+)
 def test_execution_lock_schema_encodes_exact_supply_chain_allowlist(mutation: str) -> None:
     value = json.loads((ROOT / "execution-lock/stage2-execution-lock.json").read_bytes())
     schema = json.loads((ROOT / "schemas/execution-lock-v0.3.0.schema.json").read_bytes())
@@ -220,8 +269,12 @@ def test_execution_lock_schema_encodes_exact_supply_chain_allowlist(mutation: st
         value["artifacts"][3] = value["artifacts"][0]
     elif mutation == "artifact-source":
         value["artifacts"][0]["source_url"] = "https://packages.invalid/substituted"
-    else:
+    elif mutation == "model-source":
         value["qwen_snapshot_source_url"] = "https://models.invalid/substituted"
+    elif mutation == "status":
+        value["status"] = "INCOMPLETE"
+    else:
+        value["unresolved"] = []
     with pytest.raises(JsonSchemaValidationError):
         validate_json_schema(value, schema)
 
@@ -250,6 +303,32 @@ def test_ordinary_lock_has_no_runtime_gpu_or_model_dependency() -> None:
     lock = (ROOT / "uv.lock").read_text().casefold()
     forbidden = ('name = "vllm"', 'name = "torch"', 'name = "transformers"')
     assert not any(name in lock for name in forbidden)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import " + "vllm\n",
+        "from torch import cuda\n",
+        "runtime = __import__('transformers')\n",
+        "import importlib\nruntime = importlib.import_module('torchvision.models')\n",
+    ],
+)
+def test_stage2_verifier_rejects_static_and_dynamic_runtime_imports(
+    tmp_path: Path,
+    source: str,
+) -> None:
+    for directory in ("src", "tests", "scripts"):
+        (tmp_path / directory).mkdir()
+    (tmp_path / "src" / "forbidden.py").write_text(source)
+    with pytest.raises(AssertionError, match="forbidden"):
+        _verify_import_boundary(tmp_path)
+
+
+@pytest.mark.parametrize("name", ["vllm", "torch", "transformers", "huggingface-hub"])
+def test_stage2_verifier_rejects_declared_runtime_dependencies(name: str) -> None:
+    project = f'[project]\ndependencies = ["{name}>=1"]\n'
+    assert name in _declared_forbidden_dependencies(project)
 
 
 def test_no_ordinary_source_or_test_imports_runtime_packages() -> None:

@@ -20,7 +20,6 @@ from llm_inference_systems.stage2_contracts import (
     BundleFileEntry,
     BundleState,
     Stage2BundleManifest,
-    Stage2EvidenceBoundary,
 )
 
 MAX_STAGE2_FILE_BYTES = 16 * 1024 * 1024
@@ -28,11 +27,18 @@ ALLOWED_TEXT_SUFFIXES = frozenset({".json", ".jsonl", ".log", ".prom", ".txt"})
 Reconstructor = Callable[[dict[str, bytes]], dict[str, bytes]]
 
 _SENSITIVE_EVIDENCE_PATTERNS = (
+    re.compile(re.escape("-----BEGIN " + "PRIVATE KEY-----"), re.IGNORECASE),
+    re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bhf_[A-Za-z0-9]{20,}\b"),
     re.compile(r"(?im)(?:^|[,{])\s*[\"']?(?:proxy-)?authorization[\"']?\s*:\s*[\"']?\S+"),
     re.compile(r"(?im)(?:^|[,{])\s*[\"']?(?:cookie|set-cookie)[\"']?\s*:\s*[\"']?\S+"),
     re.compile(
         r"(?im)(?:^|[\"'])"
-        r"(?:api_key|client_secret|access_token|refresh_token|proxy_password)"
+        r"(?:aws_secret_access_key|api_key|client_secret|access_token|"
+        r"refresh_token|proxy_password|HF_TOKEN|HUGGING_FACE_HUB_TOKEN|"
+        r"HUGGINGFACE_HUB_TOKEN|HUGGINGFACEHUB_API_TOKEN)"
         r"[\"']?\s*(?:=|:)\s*[\"']?\S+"
     ),
     re.compile(r"(?i)\bhttps?://[^\s/:@]+:[^\s/@]+@[^\s/]+"),
@@ -139,7 +145,6 @@ class Stage2BundleBuilder:
         bundle_name: str,
         *,
         repetition_index: int,
-        boundary: Stage2EvidenceBoundary,
         source_commit: str,
         sync_path: Callable[[Path], None] = _default_sync_path,
         replace: Callable[[Path, Path], None] = os.replace,
@@ -150,7 +155,6 @@ class Stage2BundleBuilder:
         self.final_path = parent / bundle_name
         self.staging_path = parent / f".{bundle_name}.staging"
         self.repetition_index = repetition_index
-        self.boundary = boundary
         self.source_commit = source_commit
         self._sync_path = sync_path
         self._replace = replace
@@ -372,7 +376,6 @@ class Stage2BundleBuilder:
             schema_version="0.3.0",
             measurement_protocol_version="0.3.0",
             state=BundleState.COMMITTED,
-            boundary=self.boundary,
             repetition_index=self.repetition_index,
             source_commit=self.source_commit,
             created_at_utc=datetime.now(UTC),

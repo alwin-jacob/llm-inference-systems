@@ -14,7 +14,7 @@ invariants; they are not LLM measurements.
 | Checked raw artifacts | Request, client-stream, and server records retained |
 | Checked derived summaries | Exactly reconstruct from retained raw evidence |
 | Checked semantic comparison | Compatible and passing with performance gating disabled |
-| Stage 2A protocol source and CPU fixtures | Present at package/protocol `0.3.0` |
+| Stage 2A protocol source and CPU fixtures | Present at package/protocol `0.3.0`, including strict launch/snapshot/runtime-control/attestation schemas |
 | Stage 2A real-runtime execution | Not performed; protocol requirements only |
 | Separate Linux/CUDA execution lock | Uninstalled, unexecuted, and blocked on one metadata-unavailable artifact hash |
 | CI configuration | Present and executed for repository verification |
@@ -66,9 +66,12 @@ provenance authenticity, historical authentication, or real-runtime execution. T
 evidence does not promote any unsupported runtime, model, hardware, performance, historical, or
 interview-defense claim.
 
-Stage 2A's request, SSE, Prometheus, cancellation, phase, resource, and bundle validators establish
-only that scripted CPU fixtures exercise those contracts. Future launch arguments and the
-Linux/CUDA lock are specifications, not evidence that packages were installed or that a provider
-shape, model, tokenizer, GPU, CUDA state, request result, or serving metric was observed. Stage 2B
-remains a separately authorized action. No claim status, historical-authentication status,
-interview-defense status, or public résumé wording changes.
+Stage 2A's request, SSE, Prometheus, cancellation, process-environment, phase, launch, snapshot,
+attestation, resource, and bundle validators establish only that scripted CPU fixtures exercise
+those contracts. Parsing itself assigns no evidence boundary. Fixture attestation can assign only
+`TEST_FIXTURE_ONLY`; complete synthetic future-attestation objects prove structural validation only.
+Future launch arguments, snapshot records, Linux/NVIDIA/CUDA attestations, and the Linux/CUDA lock
+are specifications, not evidence that packages were installed or that a provider shape, model,
+tokenizer, GPU, CUDA state, request result, or serving metric was observed. Stage 2B remains a
+separately authorized action. No claim status, historical-authentication status, interview-defense
+status, or public résumé wording changes.

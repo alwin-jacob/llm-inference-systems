@@ -184,3 +184,34 @@ This Stage 2A work is local source and `TEST_FIXTURE_ONLY` evidence only. It doe
 a model, tokenizer, GPU, CUDA, Kaggle, remote compute, or a paid resource; it does not alter public
 claims, résumé wording, historical authentication, interview-defense status, remotes, tags, or
 published history. Stage 2B remains separately unauthorized.
+
+## 2026-08-28 — Controller-authorized local Stage 2A source correction
+
+- Preserved the three existing Stage 2A commits and every frozen Stage 0/1 byte, then closed the
+  nine source-review gaps in one local-only descendant correction.
+- Made the five exact per-request metric fields mandatory, including explicit per-field nulls, and
+  made cancellation acceptance reconstruct only from retained raw log identity records and exact
+  same-process Prometheus snapshots through the complete pre-dispatch/drain/cooldown lifecycle.
+- Added strict process-kind pre-import environments, all 17 runtime-control phases, exact memory
+  stability/count/quiet/drain/shutdown gates, the immutable launch identity, and the pinned
+  ten-file model/tokenizer snapshot-manifest contract.
+- Bound distinct phase controls, cancellation/drain evidence, same-process Prometheus windows,
+  shutdown evidence, and manifest-byte identities to each of the three non-replaceable restarts;
+  raw Prometheus text now reconstructs every retained parsed sample and label inventory.
+- Separated fixture attestation from a future real-runtime attestation requiring all 15 typed,
+  cross-bound component identities together. Complete synthetic objects remain shape-only fixture
+  tests and establish no runtime or hardware facts.
+- Restored the exact approved GitHub vLLM release URL and retained its authorized hash while the
+  inert execution lock remains blocked, uninstalled, unexecuted, resolver-incomplete, and explicit
+  about the unresolved torchvision hash. The future-only complete lock shape requires the exact
+  four-artifact ordered inventory, exact known hashes and sources, an authorized observed
+  torchvision hash, a complete resolver-lock hash, installed-distribution inventory hash, and the
+  reviewed blocked-lock byte identity.
+- Independent source, security/public-safety, measurement/vLLM, and supply-chain reviews reported
+  no P0 findings. Their in-scope P1 findings drove the repetition cross-binding, raw-derived metric
+  reconstruction, fixture-marker exclusion, credential scanning, cancellation counter continuity,
+  exact future package inventory, and broader ordinary dependency/import checks. Residual P2
+  source-observation and evidence-format risks remain documented as future collector concerns.
+- The only external read was revision-specific Qwen API tree metadata used to define the allowlist.
+  No binary, model, tokenizer content, runtime, GPU, CUDA, Kaggle, remote Git, paid-service, public
+  claim, or claim-status action occurred.

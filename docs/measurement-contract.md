@@ -123,6 +123,12 @@ and server usage `64 + 32 = 96`. Sent IDs, returned IDs, event IDs, final IDs, t
 server usage, optional future local counts, server per-request metrics, and disagreements remain
 separate evidence sources.
 
+Every successful future-runtime usage terminal requires a strict `metrics` object containing
+exactly `time_to_first_token_ms`, `generation_time_ms`, `queue_time_ms`, `mean_itl_ms`, and
+`tokens_per_second`. Every key is present; each value is either explicit null or a finite,
+nonnegative number. Null makes only that server-reported metric unavailable and is never replaced
+with a client-derived value.
+
 Client-generation TPOT is:
 
 ```text
@@ -143,15 +149,42 @@ quiescent pre/post scrapes. Every retained delta must reconstruct exactly from i
 values and carry only the exact expected labels. KV-cache percentage is descriptive and is not
 memory utilization.
 
-The cancellation model closes one 64-to-512 request after its first generated token, requires the
-external/internal abort chain, ten consecutive zero running/waiting samples at 100-ms cadence, one
-continuous second of stable generation count, two seconds of cooldown, and a ten-second hard drain
-deadline. Any contradictory later retained sample rejects cancellation success. An observed abort
-success-counter delta of zero or one is retained; every non-abort delta must be zero.
+The cancellation model retains raw request-add and abort log records with source identity, byte
+offsets, ordinals, monotonic times, and hashes. It requires exactly ten pre-dispatch zero
+running/waiting samples at at least 100-ms spacing, a baseline for every selected counter, dispatch,
+first generated-token evidence, intentional close, and exactly ten post-close quiescent drain
+samples. It then requires one continuous second of stable generation count at 100-ms cadence, two
+seconds of cooldown at 100-ms cadence, and a ten-second hard drain deadline. Deltas are derived only
+through exact-label, same-process counter arithmetic. Any missing stage, reset, ambiguity, label
+drift, residual state, or contradictory later retained sample invalidates the probe. An observed
+abort success-counter delta of zero or one is retained; every non-abort delta must be zero.
+
+Each of the three repetition runtime-control records requires all 17 ordered, positive-duration
+phases with phase-specific evidence hashes/references retained in that repetition's committed
+bundle. It also requires exactly five memory samples at least 200 ms apart and:
+
+```text
+tolerance_bytes = max(ceil(first_sample_bytes * 0.01), 67_108_864)
+max(samples) - min(samples) <= tolerance_bytes
+```
+
+It fixes three excluded stabilization requests, four excluded shape warmups, ten steady-state
+quiescent samples, a two-second quiet interval, 16 measured requests at requested client
+concurrency two, a final scrape/drain, server-and-worker shutdown, and no residual process or
+request. Client concurrency remains distinct from server batch size.
+
+The immutable launch identity includes every fixed launch field, exact ordered argv, and normalized
+offline environment. The snapshot identity binds the exact pinned repository/revision, the
+metadata-derived ten-file regular-file allowlist, separate Hugging Face local metadata, hashes and
+sizes, tokenizer identity, read-only transition, download/offline-verification process records,
+and a public-safe absolute local root. These are future evidence requirements, not execution
+evidence.
 
 Exactly three fresh, non-replaceable repetition bundles are identified by validated manifests with
-indices one through three. Each reconstructed case record is bound to its manifest hash before
-prompt IDs, output IDs, finish reason, usage, and output-text hash are compared. Any mismatch makes
-semantic reproduction invalid and prohibits pooled performance interpretation. Stage 2A never
-calculates or displays p99. P50 and p95 are named descriptive values with exact sample counts and
-restart grouping; goodput and capacity advancement remain prohibited.
+indices one through three. Each manifest-byte identity binds its restart, phase controls,
+same-process measured Prometheus window, cancellation/drain, and shutdown evidence. Each
+reconstructed case record is bound to its manifest hash before prompt IDs, output IDs, finish
+reason, usage, and output-text hash are compared. Any mismatch makes semantic reproduction invalid
+and prohibits pooled performance interpretation. Stage 2A never calculates or displays p99. P50
+and p95 are named descriptive values with exact sample counts and restart grouping; goodput and
+capacity advancement remain prohibited.

@@ -16,7 +16,6 @@ from typing import Annotated, Final, Literal, Self
 from pydantic import AwareDatetime, Field, StringConstraints, model_validator
 
 from llm_inference_systems.contracts import (
-    FiniteFloat,
     Identifier,
     NonNegativeFloat,
     NonNegativeInt,
@@ -52,48 +51,10 @@ REQUIRED_LAUNCH_ARGUMENTS: Final = (
     "--enable-per-request-metrics",
 )
 
-REQUIRED_PREIMPORT_ENVIRONMENT: Final = {
-    "VLLM_NO_USAGE_STATS": "1",
-    "VLLM_DO_NOT_TRACK": "1",
-    "DO_NOT_TRACK": "1",
-    "HF_HUB_DISABLE_TELEMETRY": "1",
-    "HF_HUB_DISABLE_IMPLICIT_TOKEN": "1",
-    "HF_HUB_OFFLINE": "1",
-    "TRANSFORMERS_OFFLINE": "1",
-    "TOKENIZERS_PARALLELISM": "false",
-}
-
 
 class Stage2EvidenceScope(StrEnum):
     TEST_FIXTURE_ONLY = "TEST_FIXTURE_ONLY"
     FUTURE_REAL_RUNTIME = "FUTURE_REAL_RUNTIME"
-
-
-class Stage2EvidenceBoundary(StrictModel):
-    evidence_scope: Stage2EvidenceScope
-    stage2a_cpu_fixture_tested: bool
-    real_runtime_execution: bool
-    model_execution: bool
-    tokenizer_execution: bool
-    gpu_execution: bool
-    cuda_execution: bool
-    public_claim_advancement: Literal[False] = False
-    historical_authentication_effect: Literal["NONE"] = "NONE"
-
-    @model_validator(mode="after")
-    def validate_scope(self) -> Self:
-        execution = (
-            self.real_runtime_execution,
-            self.model_execution,
-            self.tokenizer_execution,
-            self.gpu_execution,
-            self.cuda_execution,
-        )
-        if self.evidence_scope is Stage2EvidenceScope.TEST_FIXTURE_ONLY and any(execution):
-            raise ValueError("fixture evidence cannot assert real-runtime execution")
-        if self.evidence_scope is Stage2EvidenceScope.FUTURE_REAL_RUNTIME and not all(execution):
-            raise ValueError("future real-runtime evidence requires every execution boundary")
-        return self
 
 
 class LoopbackEndpoint(StrictModel):
@@ -193,10 +154,106 @@ class Stage2RequestEnvelope(StrictModel):
         return self
 
 
+class RawLogRecord(StrictModel):
+    source_stream_id: Identifier
+    record_ordinal: NonNegativeInt
+    byte_start: NonNegativeInt
+    byte_end: PositiveInt
+    observation_offset_ns: NonNegativeInt
+    raw_record: str
+    raw_record_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_raw_record(self) -> Self:
+        encoded = self.raw_record.encode("utf-8")
+        if self.byte_end <= self.byte_start:
+            raise ValueError("raw log record byte interval must be positive")
+        if self.byte_end - self.byte_start != len(encoded):
+            raise ValueError("raw log record byte offsets do not match retained bytes")
+        if self.raw_record_sha256 != hashlib.sha256(encoded).hexdigest():
+            raise ValueError("raw log record SHA-256 does not match retained bytes")
+        return self
+
+
+class RequestIdentityChain(StrictModel):
+    external_base_id: ExternalRequestId
+    response_body_id: str
+    serving_item_id: str
+    internal_engine_id: str
+    request_received_log: RawLogRecord
+    request_add_log: RawLogRecord
+    external_abort_log: RawLogRecord | None
+    internal_abort_log: RawLogRecord | None
+
+    @model_validator(mode="after")
+    def validate_chain(self) -> Self:
+        expected_response = f"cmpl-{self.external_base_id}"
+        expected_item = f"{expected_response}-0"
+        if self.response_body_id != expected_response or self.serving_item_id != expected_item:
+            raise ValueError("request identity chain does not preserve the external ID")
+        prefix = f"{expected_item}-"
+        if not self.internal_engine_id.startswith(prefix):
+            raise ValueError("internal engine ID does not preserve the serving item ID")
+        suffix = self.internal_engine_id.removeprefix(prefix)
+        if len(suffix) != 8 or any(character not in "0123456789abcdef" for character in suffix):
+            raise ValueError("internal engine ID requires an eight-character lowercase hex suffix")
+        records = tuple(
+            record
+            for record in (
+                self.request_received_log,
+                self.request_add_log,
+                self.external_abort_log,
+                self.internal_abort_log,
+            )
+            if record is not None
+        )
+        if len({(record.source_stream_id, record.record_ordinal) for record in records}) != len(
+            records
+        ):
+            raise ValueError("request identity log records are duplicated")
+        if len({record.source_stream_id for record in records}) != 1:
+            raise ValueError("request identity log records do not share one source stream")
+        if (self.external_abort_log is None) != (self.internal_abort_log is None):
+            raise ValueError("external and internal abort records must be retained together")
+        if (
+            tuple(record.record_ordinal for record in records)
+            != tuple(sorted(record.record_ordinal for record in records))
+            or tuple(record.observation_offset_ns for record in records)
+            != tuple(sorted(record.observation_offset_ns for record in records))
+            or tuple(record.byte_start for record in records)
+            != tuple(sorted(record.byte_start for record in records))
+            or any(right.byte_start < left.byte_end for left, right in pairwise(records))
+        ):
+            raise ValueError("request identity log records are not monotonic and nonoverlapping")
+        required_fragments = [
+            (self.request_received_log, f"Received request {expected_item}:"),
+            (self.request_add_log, f"Added request {self.internal_engine_id}."),
+        ]
+        if self.external_abort_log is not None:
+            required_fragments.append(
+                (self.external_abort_log, f"Request {expected_item} aborted.")
+            )
+        if self.internal_abort_log is not None:
+            required_fragments.append(
+                (self.internal_abort_log, f"Aborted request(s) {self.internal_engine_id}.")
+            )
+        if any(fragment not in record.raw_record for record, fragment in required_fragments):
+            raise ValueError("raw log record does not match the request identity chain")
+        return self
+
+
 class Stage2Usage(StrictModel):
     prompt_tokens: Literal[64]
     completion_tokens: Literal[32]
     total_tokens: Literal[96]
+
+
+class Stage2PerRequestMetrics(StrictModel):
+    time_to_first_token_ms: NonNegativeFloat | None
+    generation_time_ms: NonNegativeFloat | None
+    queue_time_ms: NonNegativeFloat | None
+    mean_itl_ms: NonNegativeFloat | None
+    tokens_per_second: NonNegativeFloat | None
 
 
 class Stage2TokenEvent(StrictModel):
@@ -253,7 +310,8 @@ class MetricAvailability(StrictModel):
 
 
 class Stage2RequestEvidence(StrictModel):
-    boundary: Stage2EvidenceBoundary
+    fixture_identity_sha256: Sha256 | None
+    request_identity_chain_sha256: Sha256
     external_request_id: ExternalRequestId
     response_request_id: str
     serving_item_request_id: str
@@ -267,7 +325,7 @@ class Stage2RequestEvidence(StrictModel):
     usage: Stage2Usage
     local_prompt_token_count: NonNegativeInt | None
     local_output_token_count: NonNegativeInt | None
-    server_per_request_metrics: dict[str, FiniteFloat | None]
+    server_per_request_metrics: Stage2PerRequestMetrics
     disagreements: tuple[str, ...]
     output_text: str
     output_text_sha256: Sha256
@@ -385,13 +443,16 @@ class RuntimePhaseRecord(StrictModel):
     phase: RuntimePhase
     started_offset_ns: NonNegativeInt
     ended_offset_ns: NonNegativeInt
-    passed: bool
+    passed: Literal[True]
     post_warmup_jit_observed: bool = False
+    evidence_kind: Identifier
+    evidence_identity_sha256: Sha256
+    evidence_references: tuple[Identifier, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_interval(self) -> Self:
-        if self.ended_offset_ns < self.started_offset_ns:
-            raise ValueError("runtime phase end precedes its start")
+        if self.ended_offset_ns <= self.started_offset_ns:
+            raise ValueError("runtime phase end must be strictly after its start")
         return self
 
 
@@ -405,76 +466,6 @@ class RuntimeImplementationRecord(StrictModel):
         unavailable = self.resolved_implementation_source == "UNAVAILABLE"
         if unavailable != (self.resolved_model_implementation is None):
             raise ValueError("resolved implementation and its source must be retained together")
-        return self
-
-
-class ProcessClass(StrEnum):
-    ONLINE_SNAPSHOT_DOWNLOAD = "PROCESS_A_ONLINE_SNAPSHOT_DOWNLOAD"
-    OFFLINE_TOKENIZER_VERIFICATION = "PROCESS_B_OFFLINE_TOKENIZER_VERIFICATION"
-    OFFLINE_RUNTIME_RESTART_1 = "PROCESS_C1_OFFLINE_RUNTIME_RESTART"
-    OFFLINE_RUNTIME_RESTART_2 = "PROCESS_C2_OFFLINE_RUNTIME_RESTART"
-    OFFLINE_RUNTIME_RESTART_3 = "PROCESS_C3_OFFLINE_RUNTIME_RESTART"
-
-
-class ProcessOperation(StrEnum):
-    SNAPSHOT_DOWNLOADED_AND_MANIFESTED = "SNAPSHOT_DOWNLOADED_AND_MANIFESTED"
-    TOKENIZER_IMPORTED_AND_VERIFIED_OFFLINE = "TOKENIZER_IMPORTED_AND_VERIFIED_OFFLINE"
-    RUNTIME_IMPORTED_AND_STARTED_OFFLINE = "RUNTIME_IMPORTED_AND_STARTED_OFFLINE"
-
-
-class OfflineProcessRecord(StrictModel):
-    process_class: ProcessClass
-    process_nonce: Identifier
-    completed_operation: ProcessOperation
-    environment_set_before_import: bool
-    offline_environment: dict[str, str]
-    token_variables_unset_without_reading: bool
-    verified_local_snapshot_relative_path: str | None
-    imported_runtime_or_tokenizer: bool
-
-    @model_validator(mode="after")
-    def validate_environment(self) -> Self:
-        offline = self.process_class is not ProcessClass.ONLINE_SNAPSHOT_DOWNLOAD
-        expected_operation = {
-            ProcessClass.ONLINE_SNAPSHOT_DOWNLOAD: (
-                ProcessOperation.SNAPSHOT_DOWNLOADED_AND_MANIFESTED
-            ),
-            ProcessClass.OFFLINE_TOKENIZER_VERIFICATION: (
-                ProcessOperation.TOKENIZER_IMPORTED_AND_VERIFIED_OFFLINE
-            ),
-            ProcessClass.OFFLINE_RUNTIME_RESTART_1: (
-                ProcessOperation.RUNTIME_IMPORTED_AND_STARTED_OFFLINE
-            ),
-            ProcessClass.OFFLINE_RUNTIME_RESTART_2: (
-                ProcessOperation.RUNTIME_IMPORTED_AND_STARTED_OFFLINE
-            ),
-            ProcessClass.OFFLINE_RUNTIME_RESTART_3: (
-                ProcessOperation.RUNTIME_IMPORTED_AND_STARTED_OFFLINE
-            ),
-        }[self.process_class]
-        if self.completed_operation is not expected_operation:
-            raise ValueError("completed process operation differs from the process class")
-        if offline and self.offline_environment != REQUIRED_PREIMPORT_ENVIRONMENT:
-            raise ValueError("offline process environment differs from the frozen contract")
-        if offline and not self.verified_local_snapshot_relative_path:
-            raise ValueError("offline processes require a verified relative snapshot path")
-        if self.verified_local_snapshot_relative_path is not None:
-            path = PurePosixPath(self.verified_local_snapshot_relative_path)
-            if (
-                self.verified_local_snapshot_relative_path != path.as_posix()
-                or path.is_absolute()
-                or not path.parts
-                or any(part in {"", ".", ".."} for part in path.parts)
-            ):
-                raise ValueError("snapshot path must be sanitized and relative")
-        if offline and not self.environment_set_before_import:
-            raise ValueError("offline controls must be established before import")
-        if offline and not self.imported_runtime_or_tokenizer:
-            raise ValueError("offline process must complete its declared import and verification")
-        if not offline and (
-            self.environment_set_before_import or self.imported_runtime_or_tokenizer
-        ):
-            raise ValueError("online snapshot process cannot import runtime or tokenizer code")
         return self
 
 
@@ -532,7 +523,6 @@ class Stage2BundleManifest(StrictModel):
     schema_version: Literal["0.3.0"]
     measurement_protocol_version: Literal["0.3.0"]
     state: Literal[BundleState.COMMITTED]
-    boundary: Stage2EvidenceBoundary
     repetition_index: Annotated[int, Field(ge=1, le=3)]
     source_commit: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")]
     created_at_utc: AwareDatetime
@@ -564,7 +554,7 @@ class VllmExecutionLockArtifact(StrictModel):
     version: Literal["0.28.0"]
     filename: Literal["vllm-0.28.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl"]
     source_url: Literal[
-        "https://wheels.vllm.ai/2cf0a6915ce544dc493a0990f2ea38d81601128a/"
+        "https://github.com/vllm-project/vllm/releases/download/v0.28.0/"
         "vllm-0.28.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl"
     ]
     sha256: Literal["8ec943b66a0c6b4351d0778e99d7bacfca5788dd8eedd49425092bacb61c4397"]
@@ -609,7 +599,7 @@ class TorchvisionExecutionLockArtifact(StrictModel):
 
 class Stage2ExecutionLock(StrictModel):
     schema_version: Literal["0.3.0"]
-    status: ExecutionLockStatus
+    status: Literal[ExecutionLockStatus.BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED]
     python_version: Literal["3.13.15"]
     uv_version: Literal["0.12.5"]
     vllm_version: Literal["0.28.0"]
@@ -631,7 +621,13 @@ class Stage2ExecutionLock(StrictModel):
     preimport_distribution_version_command: tuple[str, ...]
     installed: Literal[False]
     executed: Literal[False]
-    unresolved: tuple[str, ...]
+    resolver_lock_claimed_complete: Literal[False]
+    unresolved: tuple[
+        Literal[
+            "The selected torchvision wheel SHA-256 is not exposed by official index metadata; "
+            "computing it would require downloading the 9,290,444-byte binary."
+        ]
+    ]
 
     @model_validator(mode="after")
     def validate_lock(self) -> Self:
@@ -647,7 +643,7 @@ class Stage2ExecutionLock(StrictModel):
         expected_artifacts = {
             "vllm": (
                 "vllm-0.28.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl",
-                "https://wheels.vllm.ai/2cf0a6915ce544dc493a0990f2ea38d81601128a/"
+                "https://github.com/vllm-project/vllm/releases/download/v0.28.0/"
                 "vllm-0.28.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl",
             ),
             "torch": (
@@ -694,11 +690,7 @@ class Stage2ExecutionLock(StrictModel):
             ):
                 raise ValueError("execution-lock artifact hash or provenance differs")
         missing_hash = any(item.sha256 is None for item in self.artifacts)
-        if self.status is ExecutionLockStatus.COMPLETE and (self.unresolved or missing_hash):
-            raise ValueError("a complete execution lock requires every hash and no unresolved item")
-        if self.status is ExecutionLockStatus.BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED and (
-            not self.unresolved or not missing_hash
-        ):
+        if not missing_hash:
             raise ValueError("a binary-retrieval block requires a missing hash and unresolved item")
         if self.preimport_distribution_version_command != (
             "python",

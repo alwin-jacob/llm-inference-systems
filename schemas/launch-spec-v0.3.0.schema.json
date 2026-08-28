@@ -1,0 +1,282 @@
+{
+  "$defs": {
+    "Stage2LaunchEnvironment": {
+      "additionalProperties": false,
+      "properties": {
+        "absent_variables": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Absent Variables",
+          "type": "array"
+        },
+        "cuda_visible_devices": {
+          "const": "0",
+          "title": "Cuda Visible Devices",
+          "type": "string"
+        },
+        "do_not_track": {
+          "const": "1",
+          "title": "Do Not Track",
+          "type": "string"
+        },
+        "hf_home": {
+          "title": "Hf Home",
+          "type": "string"
+        },
+        "hf_hub_disable_implicit_token": {
+          "const": "1",
+          "title": "Hf Hub Disable Implicit Token",
+          "type": "string"
+        },
+        "hf_hub_disable_telemetry": {
+          "const": "1",
+          "title": "Hf Hub Disable Telemetry",
+          "type": "string"
+        },
+        "hf_hub_offline": {
+          "const": "1",
+          "title": "Hf Hub Offline",
+          "type": "string"
+        },
+        "no_proxy": {
+          "const": "127.0.0.1,localhost",
+          "title": "No Proxy",
+          "type": "string"
+        },
+        "tokenizers_parallelism": {
+          "const": "false",
+          "title": "Tokenizers Parallelism",
+          "type": "string"
+        },
+        "transformers_offline": {
+          "const": "1",
+          "title": "Transformers Offline",
+          "type": "string"
+        },
+        "vllm_config_root": {
+          "title": "Vllm Config Root",
+          "type": "string"
+        },
+        "vllm_do_not_track": {
+          "const": "1",
+          "title": "Vllm Do Not Track",
+          "type": "string"
+        },
+        "vllm_logging_level": {
+          "const": "INFO",
+          "title": "Vllm Logging Level",
+          "type": "string"
+        },
+        "vllm_no_usage_stats": {
+          "const": "1",
+          "title": "Vllm No Usage Stats",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cuda_visible_devices",
+        "vllm_logging_level",
+        "hf_hub_offline",
+        "transformers_offline",
+        "hf_hub_disable_telemetry",
+        "hf_hub_disable_implicit_token",
+        "do_not_track",
+        "vllm_do_not_track",
+        "vllm_no_usage_stats",
+        "tokenizers_parallelism",
+        "no_proxy",
+        "hf_home",
+        "vllm_config_root",
+        "absent_variables"
+      ],
+      "title": "Stage2LaunchEnvironment",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "argv": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Argv",
+      "type": "array"
+    },
+    "dtype": {
+      "const": "half",
+      "title": "Dtype",
+      "type": "string"
+    },
+    "enforce_eager": {
+      "const": true,
+      "title": "Enforce Eager",
+      "type": "boolean"
+    },
+    "environment": {
+      "$ref": "#/$defs/Stage2LaunchEnvironment"
+    },
+    "executable": {
+      "const": "vllm",
+      "title": "Executable",
+      "type": "string"
+    },
+    "generation_config": {
+      "const": "vllm",
+      "title": "Generation Config",
+      "type": "string"
+    },
+    "gpu_memory_utilization": {
+      "minimum": 0,
+      "title": "Gpu Memory Utilization",
+      "type": "number"
+    },
+    "host": {
+      "const": "127.0.0.1",
+      "title": "Host",
+      "type": "string"
+    },
+    "jit_monitor_mode": {
+      "const": "error",
+      "title": "Jit Monitor Mode",
+      "type": "string"
+    },
+    "lora": {
+      "const": "disabled",
+      "title": "Lora",
+      "type": "string"
+    },
+    "max_model_len": {
+      "const": 2048,
+      "title": "Max Model Len",
+      "type": "integer"
+    },
+    "max_num_seqs": {
+      "const": 8,
+      "title": "Max Num Seqs",
+      "type": "integer"
+    },
+    "model_path": {
+      "title": "Model Path",
+      "type": "string"
+    },
+    "optimization_level": {
+      "const": 0,
+      "title": "Optimization Level",
+      "type": "integer"
+    },
+    "per_request_metrics_enabled": {
+      "const": true,
+      "title": "Per Request Metrics Enabled",
+      "type": "boolean"
+    },
+    "port": {
+      "const": 8000,
+      "title": "Port",
+      "type": "integer"
+    },
+    "prefix_caching_enabled": {
+      "const": false,
+      "title": "Prefix Caching Enabled",
+      "type": "boolean"
+    },
+    "profiler": {
+      "const": "disabled",
+      "title": "Profiler",
+      "type": "string"
+    },
+    "quantization": {
+      "const": "none",
+      "title": "Quantization",
+      "type": "string"
+    },
+    "request_id_headers_enabled": {
+      "const": true,
+      "title": "Request Id Headers Enabled",
+      "type": "boolean"
+    },
+    "request_logging_enabled": {
+      "const": true,
+      "title": "Request Logging Enabled",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "0.3.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "seed": {
+      "const": 0,
+      "title": "Seed",
+      "type": "integer"
+    },
+    "served_model_name": {
+      "const": "qwen2.5-0.5b-instruct-stage2",
+      "title": "Served Model Name",
+      "type": "string"
+    },
+    "speculative_decoding": {
+      "const": "none",
+      "title": "Speculative Decoding",
+      "type": "string"
+    },
+    "stream_interval": {
+      "const": 1,
+      "title": "Stream Interval",
+      "type": "integer"
+    },
+    "subcommand": {
+      "const": "serve",
+      "title": "Subcommand",
+      "type": "string"
+    },
+    "tensor_parallel_size": {
+      "const": 1,
+      "title": "Tensor Parallel Size",
+      "type": "integer"
+    },
+    "tokenizer_path": {
+      "title": "Tokenizer Path",
+      "type": "string"
+    },
+    "trust_remote_code": {
+      "const": false,
+      "title": "Trust Remote Code",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "executable",
+    "subcommand",
+    "model_path",
+    "tokenizer_path",
+    "served_model_name",
+    "host",
+    "port",
+    "dtype",
+    "seed",
+    "max_model_len",
+    "gpu_memory_utilization",
+    "max_num_seqs",
+    "tensor_parallel_size",
+    "enforce_eager",
+    "optimization_level",
+    "jit_monitor_mode",
+    "prefix_caching_enabled",
+    "generation_config",
+    "stream_interval",
+    "request_id_headers_enabled",
+    "request_logging_enabled",
+    "per_request_metrics_enabled",
+    "trust_remote_code",
+    "quantization",
+    "speculative_decoding",
+    "lora",
+    "profiler",
+    "environment",
+    "argv"
+  ],
+  "title": "Stage2LaunchSpec",
+  "type": "object"
+}

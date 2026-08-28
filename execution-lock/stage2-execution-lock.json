@@ -5,7 +5,7 @@
       "hash_source": "CONTROLLER_AUTHORIZED_SPEC",
       "package": "vllm",
       "sha256": "8ec943b66a0c6b4351d0778e99d7bacfca5788dd8eedd49425092bacb61c4397",
-      "source_url": "https://wheels.vllm.ai/2cf0a6915ce544dc493a0990f2ea38d81601128a/vllm-0.28.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl",
+      "source_url": "https://github.com/vllm-project/vllm/releases/download/v0.28.0/vllm-0.28.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl",
       "version": "0.28.0"
     },
     {
@@ -41,6 +41,7 @@
     "-c",
     "import importlib.metadata; print(importlib.metadata.version('vllm'))"
   ],
+  "resolver_lock_claimed_complete": false,
   "python_version": "3.13.15",
   "pytorch_index": "https://download.pytorch.org/whl/cu129",
   "qwen_model_repository": "Qwen/Qwen2.5-0.5B-Instruct",

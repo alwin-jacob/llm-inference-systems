@@ -25,76 +25,10 @@
       ],
       "title": "BundleFileEntry",
       "type": "object"
-    },
-    "Stage2EvidenceBoundary": {
-      "additionalProperties": false,
-      "properties": {
-        "cuda_execution": {
-          "title": "Cuda Execution",
-          "type": "boolean"
-        },
-        "evidence_scope": {
-          "$ref": "#/$defs/Stage2EvidenceScope"
-        },
-        "gpu_execution": {
-          "title": "Gpu Execution",
-          "type": "boolean"
-        },
-        "historical_authentication_effect": {
-          "const": "NONE",
-          "default": "NONE",
-          "title": "Historical Authentication Effect",
-          "type": "string"
-        },
-        "model_execution": {
-          "title": "Model Execution",
-          "type": "boolean"
-        },
-        "public_claim_advancement": {
-          "const": false,
-          "default": false,
-          "title": "Public Claim Advancement",
-          "type": "boolean"
-        },
-        "real_runtime_execution": {
-          "title": "Real Runtime Execution",
-          "type": "boolean"
-        },
-        "stage2a_cpu_fixture_tested": {
-          "title": "Stage2A Cpu Fixture Tested",
-          "type": "boolean"
-        },
-        "tokenizer_execution": {
-          "title": "Tokenizer Execution",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "evidence_scope",
-        "stage2a_cpu_fixture_tested",
-        "real_runtime_execution",
-        "model_execution",
-        "tokenizer_execution",
-        "gpu_execution",
-        "cuda_execution"
-      ],
-      "title": "Stage2EvidenceBoundary",
-      "type": "object"
-    },
-    "Stage2EvidenceScope": {
-      "enum": [
-        "TEST_FIXTURE_ONLY",
-        "FUTURE_REAL_RUNTIME"
-      ],
-      "title": "Stage2EvidenceScope",
-      "type": "string"
     }
   },
   "additionalProperties": false,
   "properties": {
-    "boundary": {
-      "$ref": "#/$defs/Stage2EvidenceBoundary"
-    },
     "created_at_utc": {
       "format": "date-time",
       "title": "Created At Utc",
@@ -144,7 +78,6 @@
     "schema_version",
     "measurement_protocol_version",
     "state",
-    "boundary",
     "repetition_index",
     "source_commit",
     "created_at_utc",

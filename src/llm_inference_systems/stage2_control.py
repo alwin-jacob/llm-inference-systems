@@ -5,27 +5,49 @@ from __future__ import annotations
 import hashlib
 from enum import StrEnum
 from itertools import pairwise
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
-from llm_inference_systems.canonical import canonical_json_bytes
-from llm_inference_systems.contracts import NonNegativeFloat, NonNegativeInt, Sha256, StrictModel
+from llm_inference_systems.canonical import canonical_json_bytes, sha256_identity
+from llm_inference_systems.contracts import (
+    Identifier,
+    NonNegativeFloat,
+    NonNegativeInt,
+    Sha256,
+    StrictModel,
+)
 from llm_inference_systems.metrics import percentile_type7
 from llm_inference_systems.stage2_contracts import (
     RUNTIME_PHASE_ORDER,
     BundleState,
-    OfflineProcessRecord,
-    ProcessClass,
-    ProcessOperation,
     ProviderShape,
+    RequestIdentityChain,
     ResourceBudgetInputs,
     ResourceBudgetResult,
     RuntimePhaseRecord,
     Stage2BundleManifest,
 )
+from llm_inference_systems.stage2_prometheus import (
+    CounterDelta,
+    PrometheusProtocolError,
+    PrometheusSnapshot,
+    derive_counter_delta,
+    require_quiescent,
+    select_exact_series,
+)
+from llm_inference_systems.stage2_runtime import (
+    GpuMemorySample,
+    Stage2ProcessRecord,
+    validate_gpu_memory_stability,
+    validate_process_sequence,
+)
 
 MAX_SIGNED_64 = 2**63 - 1
+
+PHASE_EVIDENCE_KINDS: Final = {
+    phase: phase.value.casefold() + "-evidence-v0.3.0" for phase in RUNTIME_PHASE_ORDER
+}
 
 
 class Stage2ControlError(ValueError):
@@ -37,6 +59,12 @@ def validate_runtime_phases(records: tuple[RuntimePhaseRecord, ...]) -> None:
         raise Stage2ControlError("runtime phases are missing, duplicated, or reordered")
     if any(not record.passed for record in records):
         raise Stage2ControlError("a runtime phase did not pass")
+    if any(
+        record.evidence_kind != PHASE_EVIDENCE_KINDS[record.phase]
+        or record.evidence_references != (f"raw/phases/{record.phase.value.casefold()}.json",)
+        for record in records
+    ):
+        raise Stage2ControlError("runtime phase lacks its exact phase-specific evidence")
     for left, right in pairwise(records):
         if right.started_offset_ns < left.ended_offset_ns:
             raise Stage2ControlError("runtime phases overlap or regress")
@@ -44,28 +72,11 @@ def validate_runtime_phases(records: tuple[RuntimePhaseRecord, ...]) -> None:
         raise Stage2ControlError("post-warmup monitored JIT invalidates the repetition")
 
 
-def validate_offline_process_separation(records: tuple[OfflineProcessRecord, ...]) -> None:
-    expected = tuple(ProcessClass)
-    if tuple(record.process_class for record in records) != expected:
-        raise Stage2ControlError("online, tokenizer, and three runtime processes must be separate")
-    nonces = tuple(record.process_nonce for record in records)
-    if len(nonces) != len(set(nonces)):
-        raise Stage2ControlError("online or offline process reuse is prohibited")
-    downloader = records[0]
-    if (
-        downloader.completed_operation is not ProcessOperation.SNAPSHOT_DOWNLOADED_AND_MANIFESTED
-        or downloader.imported_runtime_or_tokenizer
-    ):
-        raise Stage2ControlError("online downloader process cannot become an offline runtime")
-    offline = records[1:]
-    if not all(
-        record.token_variables_unset_without_reading
-        and record.environment_set_before_import
-        and record.imported_runtime_or_tokenizer
-        and bool(record.verified_local_snapshot_relative_path)
-        for record in offline
-    ):
-        raise Stage2ControlError("offline processes must unset token variables without reading")
+def validate_offline_process_separation(records: tuple[Stage2ProcessRecord, ...]) -> None:
+    try:
+        validate_process_sequence(records)
+    except ValueError as error:
+        raise Stage2ControlError(str(error)) from error
 
 
 def calculate_resource_budget(inputs: ResourceBudgetInputs | None) -> ResourceBudgetResult:
@@ -104,130 +115,553 @@ class CancellationClassification(StrEnum):
     ID_CORRELATION_FAILURE = "ID_CORRELATION_FAILURE"
 
 
-class DrainSample(StrictModel):
+class FirstGenerationTokenEvidence(StrictModel):
+    external_request_id: Literal["E_cancel"]
+    response_body_id: Literal["cmpl-E_cancel"]
     observation_offset_ns: NonNegativeInt
-    running_requests: NonNegativeInt
-    waiting_requests: NonNegativeInt
-    generation_tokens_total: NonNegativeFloat
+    output_token_ids: tuple[NonNegativeInt, ...] = Field(min_length=1)
 
 
-class FinishedReasonDelta(StrictModel):
-    finished_reason: str
-    delta: NonNegativeFloat
+class ResidualStateEvidence(StrictModel):
+    observation_offset_ns: NonNegativeInt
+    raw_process_inventory: str
+    raw_process_inventory_sha256: Sha256
+    active_request_ids: tuple[str, ...]
+    project_process_ids: tuple[NonNegativeInt, ...]
+
+    def hashes_reconstruct(self) -> bool:
+        return (
+            self.raw_process_inventory_sha256
+            == hashlib.sha256(self.raw_process_inventory.encode("utf-8")).hexdigest()
+        )
 
 
 class CancellationProbe(StrictModel):
+    identity_chain: RequestIdentityChain
+    raw_log_start_byte_offset: NonNegativeInt
+    dispatch_offset_ns: NonNegativeInt
+    first_generation_token: FirstGenerationTokenEvidence
     client_close_offset_ns: NonNegativeInt
-    first_generation_token_observed: bool
-    external_abort_log_observed: bool
-    internal_abort_log_observed: bool
-    identity_chain_valid: bool
-    later_terminal_reason: str | None
-    samples: tuple[DrainSample, ...]
-    finished_reason_deltas: tuple[FinishedReasonDelta, ...]
-    residual_process_or_request_state: bool
+    pre_dispatch_snapshots: tuple[PrometheusSnapshot, ...] = Field(min_length=10, max_length=10)
+    drain_snapshots: tuple[PrometheusSnapshot, ...] = Field(min_length=10, max_length=10)
+    stable_generation_snapshots: tuple[PrometheusSnapshot, ...] = Field(min_length=2)
+    cooldown_snapshots: tuple[PrometheusSnapshot, ...] = Field(min_length=2)
+    later_retained_snapshots: tuple[PrometheusSnapshot, ...]
+    residual_state: ResidualStateEvidence
 
 
-def _success_counter_valid(deltas: tuple[FinishedReasonDelta, ...]) -> bool:
-    values: dict[str, float] = {}
-    for item in deltas:
-        if item.finished_reason in values:
-            return False
-        values[item.finished_reason] = item.delta
-    if set(values) != {"abort", "length", "stop", "error", "repetition"}:
-        return False
-    abort_delta = values.pop("abort", 0.0)
-    return abort_delta in (0.0, 1.0) and all(delta == 0 for delta in values.values())
+class CancellationResult(StrictModel):
+    classification: CancellationClassification
+    accepted: bool
+    evidence_identity_sha256: Sha256
+    prompt_token_delta: CounterDelta | None
+    generation_token_delta: CounterDelta | None
+    finished_reason_deltas: tuple[CounterDelta, ...]
+    auxiliary_counter_deltas: tuple[CounterDelta, ...]
+    observed_abort_delta: NonNegativeFloat | None
 
-
-def evaluate_cancellation(probe: CancellationProbe) -> CancellationClassification:
-    if not probe.identity_chain_valid:
-        return CancellationClassification.ID_CORRELATION_FAILURE
-    if not probe.first_generation_token_observed:
-        return CancellationClassification.TERMINAL_UNKNOWN
-    if not (probe.external_abort_log_observed and probe.internal_abort_log_observed):
-        return CancellationClassification.UNKNOWN_ACKNOWLEDGEMENT
-    if probe.later_terminal_reason in {"length", "stop", "error", "repetition"}:
-        return CancellationClassification.LATER_COMPLETION
-    if probe.later_terminal_reason is not None:
-        return CancellationClassification.TERMINAL_UNKNOWN
-    if not _success_counter_valid(probe.finished_reason_deltas):
-        return CancellationClassification.LATER_COMPLETION
-    samples = probe.samples
-    if not samples or any(
-        right.observation_offset_ns <= left.observation_offset_ns
-        for left, right in pairwise(samples)
-    ):
-        return CancellationClassification.RESIDUAL_WORK_TIMEOUT
-    if samples[0].observation_offset_ns < probe.client_close_offset_ns:
-        return CancellationClassification.RESIDUAL_WORK_TIMEOUT
-
-    quiescent_end_index: int | None = None
-    for start in range(max(0, len(samples) - 9)):
-        window = samples[start : start + 10]
-        if len(window) != 10:
-            continue
-        zero = all(item.running_requests == 0 and item.waiting_requests == 0 for item in window)
-        cadence = all(
-            right.observation_offset_ns - left.observation_offset_ns == 100_000_000
-            for left, right in pairwise(window)
+    @model_validator(mode="after")
+    def validate_result(self) -> Self:
+        success = (
+            self.classification is CancellationClassification.SERVER_ABORT_ACKNOWLEDGED_AND_DRAINED
         )
-        if zero and cadence:
-            quiescent_end_index = start + 9
-            break
-    if quiescent_end_index is None:
-        return CancellationClassification.RESIDUAL_WORK_TIMEOUT
-    quiescent_end = samples[quiescent_end_index]
-    stable_end_ns = quiescent_end.observation_offset_ns + 1_000_000_000
-    stable = tuple(
-        item
-        for item in samples[quiescent_end_index:]
-        if item.observation_offset_ns <= stable_end_ns
+        if self.accepted != success:
+            raise ValueError("cancellation acceptance must match its classification")
+        if success and (
+            self.prompt_token_delta is None
+            or self.generation_token_delta is None
+            or len(self.finished_reason_deltas) != 5
+            or len(self.auxiliary_counter_deltas) != 3
+            or self.observed_abort_delta is None
+        ):
+            raise ValueError("accepted cancellation result lacks derived counter evidence")
+        if self.observed_abort_delta is not None and self.observed_abort_delta not in (0.0, 1.0):
+            raise ValueError("observed abort delta must remain exactly zero or one")
+        if success:
+            assert self.prompt_token_delta is not None
+            assert self.generation_token_delta is not None
+            reason_values = {
+                dict(delta.labels).get("finished_reason"): delta.delta
+                for delta in self.finished_reason_deltas
+            }
+            if (
+                self.prompt_token_delta.metric != "vllm:prompt_tokens_total"
+                or self.prompt_token_delta.delta != 64.0
+                or self.generation_token_delta.metric != "vllm:generation_tokens_total"
+                or self.generation_token_delta.delta < 1.0
+                or reason_values.get("abort") != self.observed_abort_delta
+                or any(
+                    reason_values.get(reason) != 0.0
+                    for reason in ("length", "stop", "error", "repetition")
+                )
+                or tuple(delta.metric for delta in self.auxiliary_counter_deltas)
+                != (
+                    "vllm:num_preemptions_total",
+                    "vllm:prefix_cache_queries_total",
+                    "vllm:prefix_cache_hits_total",
+                )
+                or any(delta.delta != 0.0 for delta in self.auxiliary_counter_deltas)
+            ):
+                raise ValueError("accepted cancellation counter evidence differs from the contract")
+        if not success and any(
+            value is not None
+            for value in (
+                self.prompt_token_delta,
+                self.generation_token_delta,
+                self.observed_abort_delta,
+            )
+        ):
+            raise ValueError("invalid cancellation cannot retain accepted derived deltas")
+        if not success and (self.finished_reason_deltas or self.auxiliary_counter_deltas):
+            raise ValueError("invalid cancellation cannot retain derived counter sequences")
+        return self
+
+
+def _invalid_cancellation(
+    probe: CancellationProbe,
+    classification: CancellationClassification,
+) -> CancellationResult:
+    return CancellationResult(
+        classification=classification,
+        accepted=False,
+        evidence_identity_sha256=sha256_identity(probe),
+        prompt_token_delta=None,
+        generation_token_delta=None,
+        finished_reason_deltas=(),
+        auxiliary_counter_deltas=(),
+        observed_abort_delta=None,
     )
-    if not stable or stable[-1].observation_offset_ns != stable_end_ns:
-        return CancellationClassification.RESIDUAL_WORK_TIMEOUT
-    if any(
-        right.observation_offset_ns - left.observation_offset_ns != 100_000_000
-        for left, right in pairwise(stable)
+
+
+def _snapshot_offsets(snapshots: tuple[PrometheusSnapshot, ...]) -> tuple[int, ...]:
+    return tuple(snapshot.scrape_monotonic_offset_ns for snapshot in snapshots)
+
+
+def _spaced_at_least(snapshots: tuple[PrometheusSnapshot, ...], spacing_ns: int) -> bool:
+    return all(right - left >= spacing_ns for left, right in pairwise(_snapshot_offsets(snapshots)))
+
+
+def _exact_cadence(snapshots: tuple[PrometheusSnapshot, ...], spacing_ns: int) -> bool:
+    return all(right - left == spacing_ns for left, right in pairwise(_snapshot_offsets(snapshots)))
+
+
+def _same_process(snapshots: tuple[PrometheusSnapshot, ...]) -> bool:
+    return len({snapshot.process_start_id for snapshot in snapshots}) == 1
+
+
+def _generation_value(snapshot: PrometheusSnapshot) -> float:
+    return select_exact_series(snapshot, "vllm:generation_tokens_total").value
+
+
+_CANCELLATION_COUNTER_SELECTORS: Final = (
+    ("vllm:prompt_tokens_total", None),
+    ("vllm:generation_tokens_total", None),
+    ("vllm:num_preemptions_total", None),
+    ("vllm:prefix_cache_queries_total", None),
+    ("vllm:prefix_cache_hits_total", None),
+    ("vllm:request_success_total", "abort"),
+    ("vllm:request_success_total", "length"),
+    ("vllm:request_success_total", "stop"),
+    ("vllm:request_success_total", "error"),
+    ("vllm:request_success_total", "repetition"),
+)
+
+
+def _validate_counter_progression(snapshots: tuple[PrometheusSnapshot, ...]) -> bool:
+    try:
+        for left, right in pairwise(snapshots):
+            for metric, reason in _CANCELLATION_COUNTER_SELECTORS:
+                derive_counter_delta(left, right, metric, finished_reason=reason)
+    except PrometheusProtocolError:
+        return False
+    return True
+
+
+def _all_selected_counters_stable(snapshots: tuple[PrometheusSnapshot, ...]) -> bool:
+    try:
+        return all(
+            derive_counter_delta(left, right, metric, finished_reason=reason).delta == 0
+            for left, right in pairwise(snapshots)
+            for metric, reason in _CANCELLATION_COUNTER_SELECTORS
+        )
+    except PrometheusProtocolError:
+        return False
+
+
+def evaluate_cancellation(probe: CancellationProbe) -> CancellationResult:
+    chain = probe.identity_chain
+    if (
+        chain.external_base_id != "E_cancel"
+        or chain.response_body_id != "cmpl-E_cancel"
+        or chain.serving_item_id != "cmpl-E_cancel-0"
     ):
-        return CancellationClassification.RESIDUAL_WORK_TIMEOUT
-    if any(
-        item.generation_tokens_total != quiescent_end.generation_tokens_total for item in stable
+        return _invalid_cancellation(probe, CancellationClassification.ID_CORRELATION_FAILURE)
+    if chain.external_abort_log is None or chain.internal_abort_log is None:
+        return _invalid_cancellation(probe, CancellationClassification.UNKNOWN_ACKNOWLEDGEMENT)
+    if (
+        chain.request_received_log.byte_start < probe.raw_log_start_byte_offset
+        or probe.first_generation_token.external_request_id != chain.external_base_id
+        or probe.first_generation_token.response_body_id != chain.response_body_id
     ):
-        return CancellationClassification.RESIDUAL_WORK_TIMEOUT
-    cooldown_end_ns = stable_end_ns + 2_000_000_000
-    cooldown = tuple(
-        item
-        for item in samples[quiescent_end_index:]
-        if item.observation_offset_ns <= cooldown_end_ns
+        return _invalid_cancellation(probe, CancellationClassification.ID_CORRELATION_FAILURE)
+    if not (
+        probe.dispatch_offset_ns
+        < probe.first_generation_token.observation_offset_ns
+        < probe.client_close_offset_ns
+    ):
+        return _invalid_cancellation(probe, CancellationClassification.TERMINAL_UNKNOWN)
+    if not (
+        probe.dispatch_offset_ns
+        <= chain.request_received_log.observation_offset_ns
+        <= chain.request_add_log.observation_offset_ns
+        <= probe.first_generation_token.observation_offset_ns
+        < probe.client_close_offset_ns
+        <= chain.external_abort_log.observation_offset_ns
+        <= chain.internal_abort_log.observation_offset_ns
+    ):
+        return _invalid_cancellation(probe, CancellationClassification.TERMINAL_UNKNOWN)
+
+    pre = probe.pre_dispatch_snapshots
+    drain = probe.drain_snapshots
+    stable = probe.stable_generation_snapshots
+    cooldown = probe.cooldown_snapshots
+    all_snapshots = (*pre, *drain, *stable, *cooldown, *probe.later_retained_snapshots)
+    if len(pre) != 10 or len(drain) != 10:
+        return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
+    if not _same_process(all_snapshots):
+        return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
+    if (
+        not _spaced_at_least(pre, 100_000_000)
+        or pre[-1].scrape_monotonic_offset_ns >= probe.dispatch_offset_ns
+    ):
+        return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
+    try:
+        for snapshot in (*pre, *drain, *stable, *cooldown, *probe.later_retained_snapshots):
+            require_quiescent(snapshot)
+    except PrometheusProtocolError:
+        return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
+    if (
+        drain[0].scrape_monotonic_offset_ns < probe.client_close_offset_ns
+        or chain.internal_abort_log.observation_offset_ns > drain[0].scrape_monotonic_offset_ns
+        or not _spaced_at_least(drain, 100_000_000)
+        or stable[0].scrape_monotonic_offset_ns != drain[-1].scrape_monotonic_offset_ns
+        or stable[0] != drain[-1]
+        or stable[-1].scrape_monotonic_offset_ns - stable[0].scrape_monotonic_offset_ns
+        < 1_000_000_000
+        or not _exact_cadence(stable, 100_000_000)
+        or cooldown[0].scrape_monotonic_offset_ns != stable[-1].scrape_monotonic_offset_ns
+        or cooldown[-1].scrape_monotonic_offset_ns - cooldown[0].scrape_monotonic_offset_ns
+        < 2_000_000_000
+        or not _exact_cadence(cooldown, 100_000_000)
+        or cooldown[-1].scrape_monotonic_offset_ns - probe.client_close_offset_ns > 10_000_000_000
+        or chain.internal_abort_log.observation_offset_ns > cooldown[-1].scrape_monotonic_offset_ns
+        or any(
+            snapshot.scrape_monotonic_offset_ns <= cooldown[-1].scrape_monotonic_offset_ns
+            for snapshot in probe.later_retained_snapshots
+        )
+        or tuple(snapshot.scrape_monotonic_offset_ns for snapshot in probe.later_retained_snapshots)
+        != tuple(
+            sorted(
+                snapshot.scrape_monotonic_offset_ns for snapshot in probe.later_retained_snapshots
+            )
+        )
+    ):
+        return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
+    chronological = (*pre, *drain, *stable[1:], *cooldown[1:], *probe.later_retained_snapshots)
+    stable_and_later = (*stable, *cooldown[1:], *probe.later_retained_snapshots)
+    if not _validate_counter_progression(chronological) or not _all_selected_counters_stable(pre):
+        return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
+    last_retained_snapshot = (
+        probe.later_retained_snapshots[-1] if probe.later_retained_snapshots else cooldown[-1]
     )
-    if not cooldown or cooldown[-1].observation_offset_ns != cooldown_end_ns:
-        return CancellationClassification.RESIDUAL_WORK_TIMEOUT
-    if any(
-        right.observation_offset_ns - left.observation_offset_ns != 100_000_000
-        for left, right in pairwise(cooldown)
+    try:
+        retained_reason_deltas = {
+            reason: derive_counter_delta(
+                pre[-1],
+                last_retained_snapshot,
+                "vllm:request_success_total",
+                finished_reason=reason,
+            ).delta
+            for reason in ("abort", "length", "stop", "error", "repetition")
+        }
+    except PrometheusProtocolError:
+        return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
+    if retained_reason_deltas["abort"] not in (0.0, 1.0) or any(
+        retained_reason_deltas[reason] != 0.0
+        for reason in ("length", "stop", "error", "repetition")
     ):
-        return CancellationClassification.RESIDUAL_WORK_TIMEOUT
-    if cooldown_end_ns - probe.client_close_offset_ns > 10_000_000_000:
-        return CancellationClassification.RESIDUAL_WORK_TIMEOUT
-    if any(
-        item.running_requests != 0
-        or item.waiting_requests != 0
-        or item.generation_tokens_total != quiescent_end.generation_tokens_total
-        for item in cooldown
+        return _invalid_cancellation(probe, CancellationClassification.LATER_COMPLETION)
+    if not _all_selected_counters_stable(stable_and_later):
+        return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
+    try:
+        stable_value = _generation_value(stable[0])
+        if any(
+            _generation_value(snapshot) != stable_value
+            for snapshot in (*stable, *cooldown, *probe.later_retained_snapshots)
+        ):
+            return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
+        baseline = pre[-1]
+        final = cooldown[-1]
+        prompt_delta = derive_counter_delta(baseline, final, "vllm:prompt_tokens_total")
+        generation_delta = derive_counter_delta(baseline, final, "vllm:generation_tokens_total")
+        reasons = ("abort", "length", "stop", "error", "repetition")
+        reason_deltas = tuple(
+            derive_counter_delta(
+                baseline,
+                final,
+                "vllm:request_success_total",
+                finished_reason=reason,
+            )
+            for reason in reasons
+        )
+        auxiliary_deltas = tuple(
+            derive_counter_delta(baseline, final, metric)
+            for metric in (
+                "vllm:num_preemptions_total",
+                "vllm:prefix_cache_queries_total",
+                "vllm:prefix_cache_hits_total",
+            )
+        )
+    except PrometheusProtocolError:
+        return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
+    observed = {dict(delta.labels)["finished_reason"]: delta.delta for delta in reason_deltas}
+    if observed["abort"] not in (0.0, 1.0) or any(
+        observed[reason] != 0.0 for reason in ("length", "stop", "error", "repetition")
     ):
-        return CancellationClassification.RESIDUAL_WORK_TIMEOUT
-    later_retained = tuple(item for item in samples if item.observation_offset_ns > cooldown_end_ns)
-    if any(
-        item.running_requests != 0
-        or item.waiting_requests != 0
-        or item.generation_tokens_total != quiescent_end.generation_tokens_total
-        for item in later_retained
+        return _invalid_cancellation(probe, CancellationClassification.LATER_COMPLETION)
+    if (
+        prompt_delta.delta != 64.0
+        or generation_delta.delta < 1.0
+        or any(delta.delta != 0.0 for delta in auxiliary_deltas)
     ):
-        return CancellationClassification.RESIDUAL_WORK_TIMEOUT
-    if probe.residual_process_or_request_state:
-        return CancellationClassification.RESIDUAL_WORK_TIMEOUT
-    return CancellationClassification.SERVER_ABORT_ACKNOWLEDGED_AND_DRAINED
+        return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
+    last_retained_offset = (
+        probe.later_retained_snapshots[-1].scrape_monotonic_offset_ns
+        if probe.later_retained_snapshots
+        else cooldown[-1].scrape_monotonic_offset_ns
+    )
+    if (
+        not probe.residual_state.hashes_reconstruct()
+        or probe.residual_state.observation_offset_ns < last_retained_offset
+        or probe.residual_state.active_request_ids
+        or probe.residual_state.project_process_ids
+    ):
+        return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
+    return CancellationResult(
+        classification=CancellationClassification.SERVER_ABORT_ACKNOWLEDGED_AND_DRAINED,
+        accepted=True,
+        evidence_identity_sha256=sha256_identity(probe),
+        prompt_token_delta=prompt_delta,
+        generation_token_delta=generation_delta,
+        finished_reason_deltas=reason_deltas,
+        auxiliary_counter_deltas=auxiliary_deltas,
+        observed_abort_delta=observed["abort"],
+    )
+
+
+class ProcessExitEvidence(StrictModel):
+    process_identity: Identifier
+    exit_code: Literal[0]
+    observed_offset_ns: NonNegativeInt
+    raw_evidence_sha256: Sha256
+
+
+class Stage2RuntimeControlEvidence(StrictModel):
+    repetition_index: Annotated[int, Field(ge=1, le=3)]
+    phases: tuple[RuntimePhaseRecord, ...]
+    process_records: tuple[Stage2ProcessRecord, ...]
+    gpu_memory_samples: tuple[GpuMemorySample, ...] = Field(min_length=5, max_length=5)
+    gpu_memory_tolerance_bytes: NonNegativeInt
+    stabilization_request_count: Literal[3]
+    stabilization_request_ids: tuple[Identifier, ...] = Field(min_length=3, max_length=3)
+    workload_shape_warmup_count: Literal[4]
+    workload_shape_warmup_request_ids: tuple[Identifier, ...] = Field(min_length=4, max_length=4)
+    cancellation_probe: CancellationProbe
+    cancellation_result: CancellationResult
+    steady_state_snapshots: tuple[PrometheusSnapshot, ...] = Field(min_length=10, max_length=10)
+    prefix_cache_query_delta: CounterDelta
+    prefix_cache_hit_delta: CounterDelta
+    post_warmup_jit_event_hashes: tuple[Sha256, ...]
+    quiet_interval_start_offset_ns: NonNegativeInt
+    quiet_interval_end_offset_ns: NonNegativeInt
+    measured_request_count: Literal[16]
+    measured_request_ids: tuple[Identifier, ...] = Field(min_length=16, max_length=16)
+    requested_client_concurrency: Literal[2]
+    measured_client_slot_assignments: tuple[Literal[0, 1], ...] = Field(
+        min_length=16, max_length=16
+    )
+    final_metric_scrape: PrometheusSnapshot
+    shutdown_processes: tuple[ProcessExitEvidence, ...] = Field(min_length=1)
+    residual_process_ids: tuple[NonNegativeInt, ...]
+    residual_active_request_ids: tuple[str, ...]
+    residual_verification_offset_ns: NonNegativeInt
+    residual_verification_evidence_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_runtime_control(self) -> Self:
+        validate_runtime_phases(self.phases)
+        validate_offline_process_separation(self.process_records)
+        tolerance = validate_gpu_memory_stability(self.gpu_memory_samples)
+        if self.gpu_memory_tolerance_bytes != tolerance:
+            raise ValueError("GPU-memory tolerance does not reconstruct from the first sample")
+        identity_groups = (
+            self.stabilization_request_ids,
+            self.workload_shape_warmup_request_ids,
+            self.measured_request_ids,
+        )
+        if any(len(values) != len(set(values)) for values in identity_groups):
+            raise ValueError("excluded and measured request identities must be unique")
+        if set(self.measured_client_slot_assignments) != {0, 1}:
+            raise ValueError("measured request identities must exercise both requested clients")
+        if evaluate_cancellation(self.cancellation_probe) != self.cancellation_result:
+            raise ValueError("cancellation result does not reconstruct from raw probe evidence")
+        if not self.cancellation_result.accepted:
+            raise ValueError("runtime control requires an accepted isolated cancellation probe")
+        steady = self.steady_state_snapshots
+        if not _same_process(steady) or not _spaced_at_least(steady, 100_000_000):
+            raise ValueError("steady-state samples lack exact process identity or spacing")
+        try:
+            for snapshot in steady:
+                require_quiescent(snapshot)
+            expected_queries = derive_counter_delta(
+                steady[0], steady[-1], "vllm:prefix_cache_queries_total"
+            )
+            expected_hits = derive_counter_delta(
+                steady[0], steady[-1], "vllm:prefix_cache_hits_total"
+            )
+        except PrometheusProtocolError as error:
+            raise ValueError("steady-state exact-series evidence is invalid") from error
+        if (
+            self.prefix_cache_query_delta != expected_queries
+            or self.prefix_cache_hit_delta != expected_hits
+            or expected_queries.delta != 0
+            or expected_hits.delta != 0
+        ):
+            raise ValueError("prefix-cache query and hit deltas must reconstruct as zero")
+        if self.post_warmup_jit_event_hashes:
+            raise ValueError("post-warmup monitored JIT evidence invalidates runtime control")
+        memory_phase = self.phases[RUNTIME_PHASE_ORDER.index("ALLOCATOR_KV_STABILIZATION")]
+        if not (
+            memory_phase.started_offset_ns <= self.gpu_memory_samples[0].observation_offset_ns
+            and self.gpu_memory_samples[-1].observation_offset_ns <= memory_phase.ended_offset_ns
+        ):
+            raise ValueError("GPU-memory samples fall outside allocator/KV stabilization")
+        steady_phase = self.phases[RUNTIME_PHASE_ORDER.index("STEADY_STATE_GATE")]
+        if (
+            steady_phase.started_offset_ns > steady[0].scrape_monotonic_offset_ns
+            or self.quiet_interval_start_offset_ns < steady[-1].scrape_monotonic_offset_ns
+            or self.quiet_interval_end_offset_ns - self.quiet_interval_start_offset_ns
+            < 2_000_000_000
+            or self.quiet_interval_end_offset_ns > steady_phase.ended_offset_ns
+        ):
+            raise ValueError("steady-state samples or quiet interval fall outside their phase")
+        measured_phase = self.phases[RUNTIME_PHASE_ORDER.index("MEASURED_WINDOW")]
+        cancellation_phase = self.phases[RUNTIME_PHASE_ORDER.index("CANCELLATION_PROBE_DRAIN")]
+        if cancellation_phase.ended_offset_ns > measured_phase.started_offset_ns:
+            raise ValueError("cancellation gate must complete before measurement")
+        if self.quiet_interval_end_offset_ns > measured_phase.started_offset_ns:
+            raise ValueError("steady-state quiet interval must complete before measurement")
+        if not (
+            cancellation_phase.started_offset_ns
+            <= self.cancellation_probe.pre_dispatch_snapshots[0].scrape_monotonic_offset_ns
+            and self.cancellation_probe.residual_state.observation_offset_ns
+            <= cancellation_phase.ended_offset_ns
+        ):
+            raise ValueError("cancellation evidence falls outside the cancellation phase")
+        final_drain_phase = self.phases[RUNTIME_PHASE_ORDER.index("FINAL_METRICS_DRAIN")]
+        if not (
+            final_drain_phase.started_offset_ns
+            <= self.final_metric_scrape.scrape_monotonic_offset_ns
+            <= final_drain_phase.ended_offset_ns
+        ):
+            raise ValueError("final metric scrape is outside the final-drain phase")
+        try:
+            require_quiescent(self.final_metric_scrape)
+        except PrometheusProtocolError as error:
+            raise ValueError("final metric scrape is not drained and quiescent") from error
+        expected_server = self.process_records[self.repetition_index + 1].process_identity
+        if (
+            self.final_metric_scrape.process_start_id != steady[0].process_start_id
+            or self.final_metric_scrape.process_start_id != expected_server
+            or self.cancellation_probe.pre_dispatch_snapshots[0].process_start_id != expected_server
+        ):
+            raise ValueError("runtime metric evidence is not bound to its repetition server")
+        shutdown_phase = self.phases[RUNTIME_PHASE_ORDER.index("SHUTDOWN")]
+        if any(
+            not (
+                shutdown_phase.started_offset_ns
+                <= item.observed_offset_ns
+                <= shutdown_phase.ended_offset_ns
+            )
+            for item in self.shutdown_processes
+        ):
+            raise ValueError("server or worker shutdown evidence is outside the shutdown phase")
+        residual_phase = self.phases[RUNTIME_PHASE_ORDER.index("NO_RESIDUAL_PROCESS_VERIFICATION")]
+        if not (
+            residual_phase.started_offset_ns
+            <= self.residual_verification_offset_ns
+            <= residual_phase.ended_offset_ns
+        ):
+            raise ValueError("residual-process evidence is outside its verification phase")
+        if self.residual_process_ids or self.residual_active_request_ids:
+            raise ValueError("runtime control retains a residual process or active request")
+        if len({item.process_identity for item in self.shutdown_processes}) != len(
+            self.shutdown_processes
+        ) or (
+            len(self.shutdown_processes) != 2
+            or expected_server not in {item.process_identity for item in self.shutdown_processes}
+        ):
+            raise ValueError("shutdown evidence must identify one repetition server and worker")
+        expected_phase_identities = {
+            "OFFLINE_SNAPSHOT_VERIFICATION": sha256_identity(self.process_records[:2]),
+            "RUNTIME_PROCESS_START": sha256_identity(self.process_records[2:]),
+            "JIT_COMPILATION_STATE": sha256_identity(self.post_warmup_jit_event_hashes),
+            "ALLOCATOR_KV_STABILIZATION": sha256_identity(
+                {
+                    "gpu_memory_samples": self.gpu_memory_samples,
+                    "gpu_memory_tolerance_bytes": self.gpu_memory_tolerance_bytes,
+                }
+            ),
+            "EXCLUDED_STABILIZATION_REQUESTS": sha256_identity(self.stabilization_request_ids),
+            "EXCLUDED_SHAPE_WARMUPS": sha256_identity(self.workload_shape_warmup_request_ids),
+            "CANCELLATION_PROBE_DRAIN": sha256_identity(
+                {"probe": self.cancellation_probe, "result": self.cancellation_result}
+            ),
+            "STEADY_STATE_GATE": sha256_identity(
+                {
+                    "prefix_cache_hit_delta": self.prefix_cache_hit_delta,
+                    "prefix_cache_query_delta": self.prefix_cache_query_delta,
+                    "quiet_interval_end_offset_ns": self.quiet_interval_end_offset_ns,
+                    "quiet_interval_start_offset_ns": self.quiet_interval_start_offset_ns,
+                    "steady_state_snapshots": self.steady_state_snapshots,
+                }
+            ),
+            "MEASURED_WINDOW": sha256_identity(
+                {
+                    "measured_client_slot_assignments": self.measured_client_slot_assignments,
+                    "measured_request_ids": self.measured_request_ids,
+                    "requested_client_concurrency": self.requested_client_concurrency,
+                }
+            ),
+            "FINAL_METRICS_DRAIN": sha256_identity(self.final_metric_scrape),
+            "SHUTDOWN": sha256_identity(self.shutdown_processes),
+            "NO_RESIDUAL_PROCESS_VERIFICATION": sha256_identity(
+                {
+                    "residual_active_request_ids": self.residual_active_request_ids,
+                    "residual_process_ids": self.residual_process_ids,
+                    "residual_verification_evidence_sha256": (
+                        self.residual_verification_evidence_sha256
+                    ),
+                    "residual_verification_offset_ns": self.residual_verification_offset_ns,
+                }
+            ),
+        }
+        if any(
+            self.phases[RUNTIME_PHASE_ORDER.index(phase)].evidence_identity_sha256 != identity
+            for phase, identity in expected_phase_identities.items()
+        ):
+            raise ValueError("phase-specific evidence identity does not reconstruct")
+        return self
 
 
 class RestartSemanticRecord(StrictModel):

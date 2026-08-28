@@ -6,28 +6,19 @@ import pytest
 from pydantic import ValidationError
 
 from llm_inference_systems.stage2_contracts import (
-    REQUIRED_PREIMPORT_ENVIRONMENT,
-    RUNTIME_PHASE_ORDER,
     BundleFileEntry,
     BundleState,
-    OfflineProcessRecord,
-    ProcessClass,
-    ProcessOperation,
     ProviderShape,
     ResourceBudgetInputs,
     ResourceEstimate,
     RuntimeImplementationRecord,
     RuntimePhaseRecord,
     Stage2BundleManifest,
-    Stage2EvidenceBoundary,
-    Stage2EvidenceScope,
 )
 from llm_inference_systems.stage2_control import (
     AggregateComparisonState,
     CancellationClassification,
     CancellationProbe,
-    DrainSample,
-    FinishedReasonDelta,
     RestartSemanticRecord,
     Stage2ControlError,
     bundle_manifest_sha256,
@@ -50,6 +41,13 @@ from llm_inference_systems.stage2_prometheus import (
     require_quiescent,
     select_exact_series,
     validate_measured_window_deltas,
+)
+from llm_inference_systems.stage2_runtime import Stage2ProcessRecord
+from tests.stage2_factories import (
+    make_cancellation_probe,
+    make_process_records,
+    make_runtime_phases,
+    make_snapshot,
 )
 
 
@@ -102,6 +100,13 @@ def test_exact_prometheus_series_and_full_inventory_are_retained() -> None:
         ),
     )
     require_quiescent(snapshot)
+
+
+def test_prometheus_parsed_samples_must_reconstruct_from_retained_raw_text() -> None:
+    value = _snapshot(_exposition(prompt=5), 100).model_dump(mode="python")
+    value["samples"][3]["value"] = 6.0
+    with pytest.raises(ValidationError, match="reconstruct from raw exposition"):
+        PrometheusSnapshot.model_validate(value)
 
 
 @pytest.mark.parametrize(
@@ -214,15 +219,7 @@ def test_measured_window_delta_rejects_false_arithmetic_or_labels() -> None:
 
 
 def _phases() -> tuple[RuntimePhaseRecord, ...]:
-    return tuple(
-        RuntimePhaseRecord(
-            phase=phase,
-            started_offset_ns=index * 10,
-            ended_offset_ns=index * 10 + 5,
-            passed=True,
-        )
-        for index, phase in enumerate(RUNTIME_PHASE_ORDER)
-    )
+    return make_runtime_phases()
 
 
 def test_runtime_phases_are_strictly_ordered_and_jit_monitored() -> None:
@@ -250,67 +247,37 @@ def test_resolved_model_implementation_requires_independent_provenance() -> None
         )
 
 
-def _offline_records() -> tuple[OfflineProcessRecord, ...]:
-    records: list[OfflineProcessRecord] = []
-    for index, process_class in enumerate(ProcessClass):
-        offline = process_class is not ProcessClass.ONLINE_SNAPSHOT_DOWNLOAD
-        records.append(
-            OfflineProcessRecord(
-                process_class=process_class,
-                process_nonce=f"process-{index}",
-                completed_operation=(
-                    ProcessOperation.SNAPSHOT_DOWNLOADED_AND_MANIFESTED
-                    if not offline
-                    else (
-                        ProcessOperation.TOKENIZER_IMPORTED_AND_VERIFIED_OFFLINE
-                        if process_class is ProcessClass.OFFLINE_TOKENIZER_VERIFICATION
-                        else ProcessOperation.RUNTIME_IMPORTED_AND_STARTED_OFFLINE
-                    )
-                ),
-                environment_set_before_import=offline,
-                offline_environment=dict(REQUIRED_PREIMPORT_ENVIRONMENT) if offline else {},
-                token_variables_unset_without_reading=True,
-                verified_local_snapshot_relative_path=(
-                    "snapshots/qwen-fixture" if offline else None
-                ),
-                imported_runtime_or_tokenizer=offline,
-            )
-        )
-    return tuple(records)
+def _offline_records() -> tuple[Stage2ProcessRecord, ...]:
+    return make_process_records()
 
 
 def test_offline_processes_are_fresh_and_environment_is_preimport() -> None:
     validate_offline_process_separation(_offline_records())
     records = list(_offline_records())
-    records[1] = records[1].model_copy(update={"process_nonce": records[0].process_nonce})
-    with pytest.raises(Stage2ControlError, match="reuse"):
+    records[1] = records[1].model_copy(update={"process_identity": records[0].process_identity})
+    with pytest.raises(Stage2ControlError, match="fresh and distinct"):
         validate_offline_process_separation(tuple(records))
-    with pytest.raises(ValidationError, match="before import"):
-        OfflineProcessRecord.model_validate(
+    with pytest.raises(ValidationError, match="before every relevant import"):
+        Stage2ProcessRecord.model_validate(
             {
                 **_offline_records()[1].model_dump(mode="python"),
-                "environment_set_before_import": False,
+                "environment_capture_offset_ns": 100,
             }
         )
-    with pytest.raises(ValidationError, match="verified relative snapshot path"):
-        OfflineProcessRecord.model_validate(
+    with pytest.raises(ValidationError, match="public-safe absolute"):
+        Stage2ProcessRecord.model_validate(
             {
                 **_offline_records()[1].model_dump(mode="python"),
-                "verified_local_snapshot_relative_path": "",
+                "operation": _offline_records()[1].operation.model_copy(
+                    update={"verified_local_snapshot_path": "relative/snapshot"}
+                ),
             }
         )
-    with pytest.raises(ValidationError, match="declared import and verification"):
-        OfflineProcessRecord.model_validate(
+    with pytest.raises(ValidationError, match="process-specific contract"):
+        Stage2ProcessRecord.model_validate(
             {
                 **_offline_records()[2].model_dump(mode="python"),
-                "imported_runtime_or_tokenizer": False,
-            }
-        )
-    with pytest.raises(ValidationError, match="process operation"):
-        OfflineProcessRecord.model_validate(
-            {
-                **_offline_records()[2].model_dump(mode="python"),
-                "completed_operation": ProcessOperation.TOKENIZER_IMPORTED_AND_VERIFIED_OFFLINE,
+                "environment": {},
             }
         )
 
@@ -364,92 +331,126 @@ def test_fixed_and_dynamic_resource_gate() -> None:
 
 
 def _cancellation(abort_delta: int = 0) -> CancellationProbe:
-    samples = tuple(
-        DrainSample(
-            observation_offset_ns=index * 100_000_000,
-            running_requests=0,
-            waiting_requests=0,
-            generation_tokens_total=10,
-        )
-        for index in range(40)
-    )
-    return CancellationProbe(
-        client_close_offset_ns=0,
-        first_generation_token_observed=True,
-        external_abort_log_observed=True,
-        internal_abort_log_observed=True,
-        identity_chain_valid=True,
-        later_terminal_reason=None,
-        samples=samples,
-        finished_reason_deltas=tuple(
-            FinishedReasonDelta(
-                finished_reason=reason,
-                delta=abort_delta if reason == "abort" else 0,
-            )
-            for reason in ("abort", "length", "stop", "error", "repetition")
-        ),
-        residual_process_or_request_state=False,
-    )
+    return make_cancellation_probe(abort_delta=abort_delta)
 
 
 @pytest.mark.parametrize("abort_delta", [0, 1])
 def test_cancellation_accepts_abort_counter_zero_or_one(abort_delta: int) -> None:
     assert (
-        evaluate_cancellation(_cancellation(abort_delta))
+        evaluate_cancellation(_cancellation(abort_delta)).classification
         is CancellationClassification.SERVER_ABORT_ACKNOWLEDGED_AND_DRAINED
     )
 
 
 def test_cancellation_rejects_nonabort_finish_or_residual_work() -> None:
-    deltas = list(_cancellation().finished_reason_deltas)
-    deltas[1] = deltas[1].model_copy(update={"delta": 1})
-    probe = _cancellation().model_copy(update={"finished_reason_deltas": tuple(deltas)})
-    assert evaluate_cancellation(probe) is CancellationClassification.LATER_COMPLETION
-    samples = list(_cancellation().samples)
-    samples[5] = samples[5].model_copy(update={"running_requests": 1})
-    residual = _cancellation().model_copy(update={"samples": tuple(samples[:15])})
-    assert evaluate_cancellation(residual) is CancellationClassification.RESIDUAL_WORK_TIMEOUT
+    final = _cancellation().cooldown_snapshots[-1]
+    changed_raw = final.raw_exposition.replace(
+        'finished_reason="length",model_name="qwen2.5-0.5b-instruct-stage2"} 0.0',
+        'finished_reason="length",model_name="qwen2.5-0.5b-instruct-stage2"} 1.0',
+    )
+    changed = parse_prometheus_snapshot(
+        changed_raw,
+        process_start_id=final.process_start_id,
+        scrape_wall_clock_utc=final.scrape_wall_clock_utc,
+        scrape_monotonic_offset_ns=final.scrape_monotonic_offset_ns,
+    )
+    cooldown = (*_cancellation().cooldown_snapshots[:-1], changed)
+    probe = _cancellation().model_copy(update={"cooldown_snapshots": cooldown})
+    assert (
+        evaluate_cancellation(probe).classification is CancellationClassification.LATER_COMPLETION
+    )
+    residual = _cancellation().model_copy(
+        update={
+            "residual_state": _cancellation().residual_state.model_copy(
+                update={"active_request_ids": ("cmpl-E_cancel-0",)}
+            )
+        }
+    )
+    assert (
+        evaluate_cancellation(residual).classification
+        is CancellationClassification.RESIDUAL_WORK_TIMEOUT
+    )
+
+
+def test_cancellation_rejects_stable_boundary_splice_and_later_completion() -> None:
+    probe = _cancellation(abort_delta=1)
+    spliced = make_snapshot(
+        probe.stable_generation_snapshots[0].scrape_monotonic_offset_ns,
+        prompt=65,
+        generation=1,
+        abort=1,
+    )
+    boundary_splice = probe.model_copy(
+        update={
+            "stable_generation_snapshots": (
+                spliced,
+                *probe.stable_generation_snapshots[1:],
+            )
+        }
+    )
+    assert (
+        evaluate_cancellation(boundary_splice).classification
+        is CancellationClassification.RESIDUAL_WORK_TIMEOUT
+    )
+
+    later = make_snapshot(
+        5_400_000_000,
+        prompt=64,
+        generation=1,
+        abort=1,
+        length=1,
+    )
+    later_completion = probe.model_copy(update={"later_retained_snapshots": (later,)})
+    assert (
+        evaluate_cancellation(later_completion).classification
+        is CancellationClassification.LATER_COMPLETION
+    )
 
 
 def test_cancellation_rejected_classifications_and_continuous_cadence() -> None:
+    wrong_chain = _cancellation().identity_chain.model_copy(
+        update={"external_base_id": "different"}
+    )
     assert (
-        evaluate_cancellation(_cancellation().model_copy(update={"identity_chain_valid": False}))
+        evaluate_cancellation(
+            _cancellation().model_copy(update={"identity_chain": wrong_chain})
+        ).classification
         is CancellationClassification.ID_CORRELATION_FAILURE
     )
+    missing_abort = _cancellation().identity_chain.model_copy(update={"external_abort_log": None})
     assert (
         evaluate_cancellation(
-            _cancellation().model_copy(update={"external_abort_log_observed": False})
-        )
+            _cancellation().model_copy(update={"identity_chain": missing_abort})
+        ).classification
         is CancellationClassification.UNKNOWN_ACKNOWLEDGEMENT
     )
+    missing_first = _cancellation().first_generation_token.model_copy(
+        update={"observation_offset_ns": _cancellation().client_close_offset_ns}
+    )
     assert (
         evaluate_cancellation(
-            _cancellation().model_copy(update={"later_terminal_reason": "unrecognized"})
-        )
+            _cancellation().model_copy(update={"first_generation_token": missing_first})
+        ).classification
         is CancellationClassification.TERMINAL_UNKNOWN
     )
-    samples = list(_cancellation().samples)
-    samples.pop(20)
-    cadence_gap = _cancellation().model_copy(update={"samples": tuple(samples)})
-    assert evaluate_cancellation(cadence_gap) is CancellationClassification.RESIDUAL_WORK_TIMEOUT
-    samples = list(_cancellation().samples)
-    samples[30] = samples[30].model_copy(update={"generation_tokens_total": 11})
-    late_generation = _cancellation().model_copy(update={"samples": tuple(samples)})
+    pre = list(_cancellation().pre_dispatch_snapshots)
+    pre[1] = pre[1].model_copy(update={"scrape_monotonic_offset_ns": 50_000_000})
+    cadence_gap = _cancellation().model_copy(update={"pre_dispatch_snapshots": tuple(pre)})
     assert (
-        evaluate_cancellation(late_generation) is CancellationClassification.RESIDUAL_WORK_TIMEOUT
+        evaluate_cancellation(cadence_gap).classification
+        is CancellationClassification.RESIDUAL_WORK_TIMEOUT
     )
-    samples = list(_cancellation().samples)
-    samples.append(
-        DrainSample(
-            observation_offset_ns=4_000_000_000,
-            running_requests=1,
-            waiting_requests=0,
-            generation_tokens_total=11,
-        )
+    late = make_snapshot(
+        5_400_000_000,
+        prompt=64,
+        generation=2,
+        abort=1,
     )
-    contradictory_later_sample = _cancellation().model_copy(update={"samples": tuple(samples)})
+    contradictory_later_sample = _cancellation().model_copy(
+        update={"later_retained_snapshots": (late,)}
+    )
     assert (
-        evaluate_cancellation(contradictory_later_sample)
+        evaluate_cancellation(contradictory_later_sample).classification
         is CancellationClassification.RESIDUAL_WORK_TIMEOUT
     )
 
@@ -459,24 +460,11 @@ def _manifest(index: int) -> Stage2BundleManifest:
         schema_version="0.3.0",
         measurement_protocol_version="0.3.0",
         state=BundleState.COMMITTED,
-        boundary=_fixture_boundary(),
         repetition_index=index,
         source_commit="a" * 40,
         created_at_utc=datetime(2026, 8, 28, tzinfo=UTC),
         files=(BundleFileEntry(path="raw/evidence.json", sha256="b" * 64, size=1),),
         reconstruction_sha256="c" * 64,
-    )
-
-
-def _fixture_boundary() -> Stage2EvidenceBoundary:
-    return Stage2EvidenceBoundary(
-        evidence_scope=Stage2EvidenceScope.TEST_FIXTURE_ONLY,
-        stage2a_cpu_fixture_tested=True,
-        real_runtime_execution=False,
-        model_execution=False,
-        tokenizer_execution=False,
-        gpu_execution=False,
-        cuda_execution=False,
     )
 
 

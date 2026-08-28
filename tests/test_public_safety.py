@@ -243,6 +243,8 @@ def test_sufficiently_specific_private_hostname_is_detected(
         ("AKIA" + "0123456789ABCDEF", "aws-access-key"),
         ("ghp_" + "A" * 30, "github-token"),
         ("sk-" + "synthetic_fixture_token_12345", "generic-api-token"),
+        ("hf_" + "A" * 30, "hugging-face-token"),
+        ('{"HF_' + 'TOKEN":"fixture-secret"}', "credential-file-content"),
         ("client_" + "secret=fixture-only", "credential-file-content"),
     ],
 )

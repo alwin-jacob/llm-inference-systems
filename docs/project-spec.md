@@ -21,9 +21,10 @@ authorized future real-runtime evidence run, while executing none of that runtim
 - exact fixture-marker accounting, canonical Stage 1 TPOT, conditional ITL, failure/timeout rates,
   lifecycle-derived concurrency, raw JSONL retention, atomic writes, exact reconstruction, and
   semantic-only repeat comparison.
-- strict Stage 2A request/identity/SSE/usage, exact Prometheus-series, cancellation/drain,
-  experiment-phase, offline-process, dynamic-resource, manifest-last bundle, three-restart, and
-  tiny-sample reporting contracts;
+- strict Stage 2A request/identity/SSE/typed-five-metric usage, exact Prometheus-series,
+  raw-derived cancellation/drain, 17-phase runtime control, process-specific pre-import
+  environment, immutable launch, snapshot-manifest, fixture/future-attestation, dynamic-resource,
+  manifest-last bundle, three-restart, and tiny-sample reporting contracts;
 - CPU-only Stage 2A response/log/metric fixtures, separate uninstalled execution-lock metadata,
   historical Stage 0/1 byte-preservation verification, and generated `0.3.0` schemas.
 
