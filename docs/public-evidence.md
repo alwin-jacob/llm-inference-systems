@@ -71,7 +71,9 @@ Stage 2A's request, SSE, Prometheus, cancellation, process-environment, phase, l
 attestation, resource, and bundle validators establish only that scripted CPU fixtures exercise
 those contracts. Parsing itself assigns no evidence boundary. Request/component attestation can
 assign only `TEST_FIXTURE_ONLY`; the full 16 × 3 synthetic experiment and reconstructed aggregate
-root remain `SYNTHETIC_PROTOCOL_SHAPE_ONLY` and prove structural validation only.
+root remain `SYNTHETIC_PROTOCOL_SHAPE_ONLY` and prove structural validation only. Its retained
+exact-wire records and three measured-window Prometheus records are synthetic CPU fixture captures,
+not observations of vLLM, a model, tokenizer, GPU, CUDA, Kaggle, or performance.
 Future launch arguments, snapshot records, Linux/NVIDIA/CUDA attestations, and the Linux/CUDA lock
 are specifications, not evidence that packages were installed or that a provider shape, model,
 tokenizer, GPU, CUDA state, request result, or serving metric was observed. Stage 2B remains a

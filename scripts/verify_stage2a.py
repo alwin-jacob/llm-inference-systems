@@ -21,6 +21,7 @@ from llm_inference_systems.stage2_contracts import (
 )
 from llm_inference_systems.stage2_experiment import (
     STAGE2_EXPERIMENT_CASE_IDS,
+    FixtureWireCaptureProvenance,
     reconstruct_experiment_attestation,
 )
 
@@ -230,6 +231,18 @@ def main() -> int:
         or sum(len(item.measured_requests) for item in experiment.repetitions) != 48
         or len(experiment.comparisons) != 16
         or any(len(item.cuda_execution.raw_evidence_files) < 1 for item in experiment.repetitions)
+        or any(
+            item.prometheus_measurement.repetition_index != item.repetition_index
+            or item.prometheus_measurement.server_process_identity
+            != item.server_restart.server_process_identity
+            for item in experiment.repetitions
+        )
+        or any(
+            not isinstance(request.wire_capture.provenance, FixtureWireCaptureProvenance)
+            or not request.wire_capture.response_body_chunks
+            for repetition in experiment.repetitions
+            for request in repetition.measured_requests
+        )
         or experiment.summary.runtime_claim_advancement_allowed
         or experiment.summary.performance_claim_advancement_allowed
     ):
@@ -255,7 +268,9 @@ def main() -> int:
                 "resolver_lock_claimed_complete": False,
                 "schema_count": len(SCHEMA_MODELS),
                 "synthetic_cuda_attestation_shape_count": 3,
+                "synthetic_prometheus_measurement_attestation_count": 3,
                 "synthetic_measured_request_attestation_count": 48,
+                "synthetic_exact_wire_capture_count": 48,
                 "synthetic_repetition_manifest_count": 3,
                 "synthetic_semantic_comparison_count": 16,
                 "synthetic_experiment_classification": experiment.classification,

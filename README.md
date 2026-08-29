@@ -56,10 +56,14 @@ status or public résumé wording advances.
   three-restart semantic comparison, and aggregate-commit gating.
 - A cardinality-complete experiment boundary requiring exactly three committed repetitions,
   16 measured-request attestations per repetition, three accepted cancellation probes, three
-  restart-specific CUDA attestation shapes, lifecycle-derived concurrency, 16 cross-restart
-  comparisons, derived metric eligibility, raw-to-summary reconstruction, and one manifest-last
-  terminal aggregate root. Semantic mismatch is retained only as an `INVALID` root and can never
-  become `COMMITTED`.
+  manifest-bound measured-window Prometheus attestations, three restart-specific CUDA attestation
+  shapes, lifecycle-derived concurrency, 16 cross-restart comparisons, derived metric eligibility,
+  raw-to-summary reconstruction, and one manifest-last terminal aggregate root. Each measured
+  request starts with exact request bytes, ordered transmitted/received header bytes, ordered raw
+  response chunks with completed-frame observation clocks, and transport close; parsed SSE and
+  typed evidence are replay-derived. Public evidence accepts only an explicit safe HTTP-header
+  name allowlist. Semantic
+  mismatch is retained only as an `INVALID` root and can never become `COMMITTED`.
 - A CPU-only Stage 2A fixture server fixed to `127.0.0.1:0`, plus generated `0.3.0` schemas and a
   verifier that proves historical Stage 0/1 bytes and ordinary dependency boundaries remain
   unchanged.

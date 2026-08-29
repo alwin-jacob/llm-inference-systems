@@ -1,0 +1,322 @@
+{
+  "$defs": {
+    "CounterDelta": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "minimum": 0,
+          "title": "After",
+          "type": "number"
+        },
+        "before": {
+          "minimum": 0,
+          "title": "Before",
+          "type": "number"
+        },
+        "delta": {
+          "minimum": 0,
+          "title": "Delta",
+          "type": "number"
+        },
+        "labels": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Labels",
+          "type": "array"
+        },
+        "metric": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Metric",
+          "type": "string"
+        }
+      },
+      "required": [
+        "metric",
+        "labels",
+        "before",
+        "after",
+        "delta"
+      ],
+      "title": "CounterDelta",
+      "type": "object"
+    },
+    "PrometheusSample": {
+      "additionalProperties": false,
+      "properties": {
+        "labels": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Labels",
+          "type": "array"
+        },
+        "name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "minimum": 0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "labels",
+        "value"
+      ],
+      "title": "PrometheusSample",
+      "type": "object"
+    },
+    "PrometheusSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "label_inventory": {
+          "additionalProperties": {
+            "items": {
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "title": "Label Inventory",
+          "type": "object"
+        },
+        "process_start_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Process Start Id",
+          "type": "string"
+        },
+        "raw_exposition": {
+          "title": "Raw Exposition",
+          "type": "string"
+        },
+        "raw_exposition_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Raw Exposition Sha256",
+          "type": "string"
+        },
+        "samples": {
+          "items": {
+            "$ref": "#/$defs/PrometheusSample"
+          },
+          "title": "Samples",
+          "type": "array"
+        },
+        "scrape_monotonic_offset_ns": {
+          "minimum": 0,
+          "title": "Scrape Monotonic Offset Ns",
+          "type": "integer"
+        },
+        "scrape_wall_clock_utc": {
+          "format": "date-time",
+          "title": "Scrape Wall Clock Utc",
+          "type": "string"
+        }
+      },
+      "required": [
+        "process_start_id",
+        "scrape_wall_clock_utc",
+        "scrape_monotonic_offset_ns",
+        "raw_exposition",
+        "raw_exposition_sha256",
+        "samples",
+        "label_inventory"
+      ],
+      "title": "PrometheusSnapshot",
+      "type": "object"
+    },
+    "Stage2ManifestBoundFile": {
+      "additionalProperties": false,
+      "description": "Path/size/digest identity for evidence retained by a committed manifest.",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "size"
+      ],
+      "title": "Stage2ManifestBoundFile",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "baseline_parsed_snapshot_file": {
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
+    },
+    "baseline_raw_exposition_file": {
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
+    },
+    "baseline_snapshot": {
+      "$ref": "#/$defs/PrometheusSnapshot"
+    },
+    "counter_deltas": {
+      "items": {
+        "$ref": "#/$defs/CounterDelta"
+      },
+      "maxItems": 6,
+      "minItems": 6,
+      "title": "Counter Deltas",
+      "type": "array"
+    },
+    "engine_label": {
+      "const": "0",
+      "title": "Engine Label",
+      "type": "string"
+    },
+    "evidence_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Evidence Sha256",
+      "type": "string"
+    },
+    "final_drain_boundary_offset_ns": {
+      "minimum": 0,
+      "title": "Final Drain Boundary Offset Ns",
+      "type": "integer"
+    },
+    "final_parsed_snapshot_file": {
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
+    },
+    "final_raw_exposition_file": {
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
+    },
+    "final_snapshot": {
+      "$ref": "#/$defs/PrometheusSnapshot"
+    },
+    "first_measured_request_dispatch_offset_ns": {
+      "minimum": 0,
+      "title": "First Measured Request Dispatch Offset Ns",
+      "type": "integer"
+    },
+    "last_measured_request_terminal_offset_ns": {
+      "minimum": 0,
+      "title": "Last Measured Request Terminal Offset Ns",
+      "type": "integer"
+    },
+    "measured_phase_end_offset_ns": {
+      "minimum": 0,
+      "title": "Measured Phase End Offset Ns",
+      "type": "integer"
+    },
+    "measured_phase_identity_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Measured Phase Identity Sha256",
+      "type": "string"
+    },
+    "measured_phase_start_offset_ns": {
+      "minimum": 0,
+      "title": "Measured Phase Start Offset Ns",
+      "type": "integer"
+    },
+    "repetition_index": {
+      "enum": [
+        1,
+        2,
+        3
+      ],
+      "title": "Repetition Index",
+      "type": "integer"
+    },
+    "repetition_manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Repetition Manifest Sha256",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.3.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "served_model_label": {
+      "const": "qwen2.5-0.5b-instruct-stage2",
+      "title": "Served Model Label",
+      "type": "string"
+    },
+    "server_process_identity": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Server Process Identity",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "repetition_index",
+    "repetition_manifest_sha256",
+    "server_process_identity",
+    "served_model_label",
+    "engine_label",
+    "baseline_raw_exposition_file",
+    "baseline_parsed_snapshot_file",
+    "final_raw_exposition_file",
+    "final_parsed_snapshot_file",
+    "baseline_snapshot",
+    "final_snapshot",
+    "measured_phase_identity_sha256",
+    "measured_phase_start_offset_ns",
+    "measured_phase_end_offset_ns",
+    "first_measured_request_dispatch_offset_ns",
+    "last_measured_request_terminal_offset_ns",
+    "final_drain_boundary_offset_ns",
+    "counter_deltas",
+    "evidence_sha256"
+  ],
+  "title": "PrometheusMeasurementAttestation",
+  "type": "object"
+}

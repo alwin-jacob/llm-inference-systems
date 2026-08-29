@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 
 from pydantic import BaseModel
 
-from llm_inference_systems.canonical import sha256_identity
+from llm_inference_systems.canonical import canonical_json_bytes, sha256_identity
 from llm_inference_systems.stage2_attestation import (
     COMPONENT_ORDER,
     AttestedComponentIdentity,
@@ -31,6 +31,7 @@ from llm_inference_systems.stage2_contracts import (
     RuntimePhaseRecord,
     Stage2BundleManifest,
     Stage2EvidenceScope,
+    Stage2ManifestBoundFile,
     Stage2RequestEvidence,
 )
 from llm_inference_systems.stage2_control import (
@@ -44,6 +45,7 @@ from llm_inference_systems.stage2_control import (
     evaluate_cancellation,
 )
 from llm_inference_systems.stage2_prometheus import (
+    CounterDelta,
     PrometheusSnapshot,
     derive_counter_delta,
     parse_prometheus_snapshot,
@@ -242,6 +244,7 @@ def make_snapshot(
     waiting: int = 0,
     prefix_queries: int = 0,
     prefix_hits: int = 0,
+    scrape_wall_clock_utc: datetime = datetime(2026, 8, 28, tzinfo=UTC),
 ) -> PrometheusSnapshot:
     return parse_prometheus_snapshot(
         prometheus_exposition(
@@ -258,7 +261,7 @@ def make_snapshot(
             prefix_hits=prefix_hits,
         ),
         process_start_id=process_start_id,
-        scrape_wall_clock_utc=datetime(2026, 8, 28, tzinfo=UTC),
+        scrape_wall_clock_utc=scrape_wall_clock_utc,
         scrape_monotonic_offset_ns=offset_ns,
     )
 
@@ -456,7 +459,9 @@ def make_runtime_control(
         prompt=1024,
         generation=512,
         length=16,
+        scrape_wall_clock_utc=datetime(2026, 8, 28, tzinfo=UTC) + timedelta(seconds=1),
     )
+    final_drain_completed_offset_ns = 140_050_000_000
     shutdown_processes = tuple(
         ProcessExitEvidence(
             process_identity=process_identity,
@@ -503,7 +508,12 @@ def make_runtime_control(
                 "requested_client_concurrency": 2,
             }
         ),
-        "FINAL_METRICS_DRAIN": sha256_identity(final_scrape),
+        "FINAL_METRICS_DRAIN": sha256_identity(
+            {
+                "final_drain_completed_offset_ns": final_drain_completed_offset_ns,
+                "final_metric_scrape": final_scrape,
+            }
+        ),
         "SHUTDOWN": sha256_identity(shutdown_processes),
         "NO_RESIDUAL_PROCESS_VERIFICATION": sha256_identity(
             {
@@ -536,6 +546,7 @@ def make_runtime_control(
         measured_request_ids=measured_request_ids,
         requested_client_concurrency=2,
         measured_client_slot_assignments=measured_client_slots,
+        final_drain_completed_offset_ns=final_drain_completed_offset_ns,
         final_metric_scrape=final_scrape,
         shutdown_processes=shutdown_processes,
         residual_process_ids=(),
@@ -708,6 +719,61 @@ def _identity_model[ModelT: BaseModel](
     return model_type.model_validate(values)
 
 
+def _prometheus_measurement_shape(
+    *,
+    control: Stage2RuntimeControlEvidence,
+    baseline: PrometheusSnapshot,
+    final: PrometheusSnapshot,
+    deltas: tuple[CounterDelta, ...],
+) -> PrometheusMeasurementAttestation:
+    measured_phase = next(
+        phase for phase in control.phases if phase.phase.value == "MEASURED_WINDOW"
+    )
+
+    def reference(path: str, data: bytes) -> Stage2ManifestBoundFile:
+        return Stage2ManifestBoundFile(
+            path=path,
+            sha256=hashlib.sha256(data).hexdigest(),
+            size=len(data),
+        )
+
+    baseline_raw = baseline.raw_exposition.encode("utf-8")
+    final_raw = final.raw_exposition.encode("utf-8")
+    baseline_parsed = canonical_json_bytes(baseline) + b"\n"
+    final_parsed = canonical_json_bytes(final) + b"\n"
+    values: dict[str, object] = {
+        "schema_version": "0.3.0",
+        "repetition_index": control.repetition_index,
+        "repetition_manifest_sha256": "a" * 64,
+        "server_process_identity": baseline.process_start_id,
+        "served_model_label": "qwen2.5-0.5b-instruct-stage2",
+        "engine_label": "0",
+        "baseline_raw_exposition_file": reference(
+            "raw/prometheus/measured-window-baseline.json", baseline_raw
+        ),
+        "baseline_parsed_snapshot_file": reference(
+            "derived/prometheus/measured-window-baseline-snapshot.json", baseline_parsed
+        ),
+        "final_raw_exposition_file": reference(
+            "raw/prometheus/measured-window-final.json", final_raw
+        ),
+        "final_parsed_snapshot_file": reference(
+            "derived/prometheus/measured-window-final-snapshot.json", final_parsed
+        ),
+        "baseline_snapshot": baseline,
+        "final_snapshot": final,
+        "measured_phase_identity_sha256": measured_phase.evidence_identity_sha256,
+        "measured_phase_start_offset_ns": measured_phase.started_offset_ns,
+        "measured_phase_end_offset_ns": measured_phase.ended_offset_ns,
+        "first_measured_request_dispatch_offset_ns": 130_100_000_000,
+        "last_measured_request_terminal_offset_ns": 130_200_000_000,
+        "final_drain_boundary_offset_ns": control.final_drain_completed_offset_ns,
+        "counter_deltas": deltas,
+    }
+    values["evidence_sha256"] = sha256_identity(values)
+    return PrometheusMeasurementAttestation.model_validate(values)
+
+
 def make_real_runtime_attestation() -> FutureRealRuntimeAttestation:
     parsed = make_request_evidence(
         fixture_identity_sha256=None,
@@ -756,17 +822,11 @@ def make_real_runtime_attestation() -> FutureRealRuntimeAttestation:
             derive_counter_delta(baseline, final, "vllm:prefix_cache_hits_total"),
         )
         prometheus_measurements.append(
-            PrometheusMeasurementAttestation(
-                baseline_snapshot=baseline,
-                final_snapshot=final,
-                counter_deltas=deltas,
-                evidence_sha256=sha256_identity(
-                    {
-                        "baseline_snapshot": baseline,
-                        "counter_deltas": deltas,
-                        "final_snapshot": final,
-                    }
-                ),
+            _prometheus_measurement_shape(
+                control=control,
+                baseline=baseline,
+                final=final,
+                deltas=deltas,
             )
         )
     prometheus_measurements_tuple = cast(

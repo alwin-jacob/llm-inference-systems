@@ -6,6 +6,8 @@ contains no runtime launcher, downloader, model/tokenizer loader, or GPU code.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -29,6 +31,8 @@ from llm_inference_systems.stage2_attestation import (
     CudaBackedExecutionAttestation,
     LinuxEnvironmentManifest,
     NvidiaT4ResourceAttestation,
+    PrometheusMeasurementAttestation,
+    PrometheusRawScrapeCapture,
     PublicSafetyAttestation,
     RequestIdentityAttestation,
     RuntimePackageExecutionLockAttestation,
@@ -38,14 +42,12 @@ from llm_inference_systems.stage2_bundle import Stage2BundleError, validate_comm
 from llm_inference_systems.stage2_contracts import (
     BundleFileEntry,
     BundleState,
-    MetricAvailability,
     Stage2BundleManifest,
+    Stage2CompletionRequest,
     Stage2EvidenceScope,
+    Stage2ManifestBoundFile,
     Stage2PerRequestMetrics,
     Stage2RequestEvidence,
-    Stage2TimingRecord,
-    Stage2TokenEvent,
-    Stage2Usage,
 )
 from llm_inference_systems.stage2_control import (
     AggregateComparisonState,
@@ -58,6 +60,11 @@ from llm_inference_systems.stage2_control import (
     compare_three_restarts,
     validate_aggregate_commit,
 )
+from llm_inference_systems.stage2_prometheus import (
+    PrometheusSnapshot,
+    parse_prometheus_snapshot,
+)
+from llm_inference_systems.stage2_protocol import Stage2ProtocolError, Stage2StreamValidator
 from llm_inference_systems.stage2_runtime import (
     LAUNCH_ABSENT_ENVIRONMENT_VARIABLES,
     OFFLINE_RUNTIME_ENVIRONMENT,
@@ -100,6 +107,23 @@ _FIXTURE_VALUE_MARKERS: Final = (
     "synthetic-shape",
     "<fixture-",
     "stage2-fixture",
+)
+
+_PUBLIC_CAPTURED_HEADER_NAMES: Final = frozenset(
+    {
+        "accept",
+        "accept-encoding",
+        "cache-control",
+        "connection",
+        "content-length",
+        "content-type",
+        "date",
+        "host",
+        "server",
+        "transfer-encoding",
+        "user-agent",
+        "x-request-id",
+    }
 )
 
 REQUEST_EVIDENCE_FIELDS: Final = (
@@ -156,15 +180,420 @@ def _safe_relative_path(value: str) -> PurePosixPath:
     return path
 
 
-class ManifestBoundFile(StrictModel):
-    path: str
-    sha256: Sha256
-    size: NonNegativeInt
+ManifestBoundFile = Stage2ManifestBoundFile
+
+
+def _decode_canonical_base64(value: str, *, label: str) -> bytes:
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise ValueError(f"{label} Base64 is invalid") from error
+    if base64.b64encode(decoded).decode("ascii") != value:
+        raise ValueError(f"{label} Base64 is not canonical")
+    return decoded
+
+
+def _json_without_duplicate_keys(data: bytes) -> object:
+    def pairs_hook(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise Stage2ExperimentError("request JSON contains a duplicate field")
+            result[key] = value
+        return result
+
+    try:
+        return json.loads(data, object_pairs_hook=pairs_hook)
+    except UnicodeDecodeError as error:
+        raise Stage2ExperimentError("request body is not UTF-8 JSON") from error
+    except json.JSONDecodeError as error:
+        raise Stage2ExperimentError("request body is not valid JSON") from error
+
+
+class FixtureWireCaptureProvenance(StrictModel):
+    capture_kind: Literal["FIXTURE_CONSTRUCTOR"]
+    evidence_scope: Literal[Stage2EvidenceScope.TEST_FIXTURE_ONLY]
+    classification: Literal["SYNTHETIC_PROTOCOL_SHAPE_ONLY"]
+    fixture_marker: Literal["TEST_FIXTURE_ONLY"]
+    fixture_identity_sha256: Sha256
+    identity_sha256: Sha256
 
     @model_validator(mode="after")
-    def validate_path(self) -> Self:
-        _safe_relative_path(self.path)
+    def validate_identity(self) -> Self:
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("fixture wire-capture provenance identity does not reconstruct")
         return self
+
+
+class CollectorWireCaptureProvenance(StrictModel):
+    capture_kind: Literal["COLLECTOR_CAPTURE"]
+    evidence_scope: Literal[Stage2EvidenceScope.FUTURE_REAL_RUNTIME]
+    classification: Literal["FUTURE_REAL_RUNTIME"]
+    collector_identity_sha256: Sha256
+    server_process_identity: Identifier
+    model_snapshot_identity_sha256: Sha256
+    environment_identity_sha256: Sha256
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("collector wire-capture provenance identity does not reconstruct")
+        return self
+
+
+Stage2WireCaptureProvenance = Annotated[
+    FixtureWireCaptureProvenance | CollectorWireCaptureProvenance,
+    Field(discriminator="capture_kind"),
+]
+
+
+class Stage2ExactRequestBodyCapture(StrictModel):
+    exact_bytes_base64: str
+    byte_count: NonNegativeInt
+    sha256: Sha256
+    canonical_request: Stage2CompletionRequest
+    canonical_request_sha256: Sha256
+    request_identity_sha256: Sha256
+    transmission_offset_ns: NonNegativeInt
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_body(self) -> Self:
+        data = _decode_canonical_base64(self.exact_bytes_base64, label="request body")
+        if len(data) != self.byte_count or hashlib.sha256(data).hexdigest() != self.sha256:
+            raise ValueError("request body byte count or SHA-256 differs")
+        try:
+            _json_without_duplicate_keys(data)
+            parsed = Stage2CompletionRequest.model_validate_json(data)
+        except (Stage2ExperimentError, ValueError) as error:
+            raise ValueError("exact request bytes do not parse as the frozen request") from error
+        if parsed != self.canonical_request:
+            raise ValueError("canonical request differs from exact transmitted bytes")
+        if self.canonical_request_sha256 != sha256_identity(parsed):
+            raise ValueError("canonical request identity does not reconstruct")
+        if self.request_identity_sha256 != sha256_identity(
+            {"request": parsed, "request_id": parsed.request_id}
+        ):
+            raise ValueError("request-body identity does not reconstruct")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("exact request-body capture identity does not reconstruct")
+        return self
+
+
+class Stage2LosslessHeaderField(StrictModel):
+    ordinal: NonNegativeInt
+    name_base64: str
+    value_base64: str
+    name_byte_count: NonNegativeInt
+    value_byte_count: NonNegativeInt
+    name_sha256: Sha256
+    value_sha256: Sha256
+    normalized_name: str
+    normalized_value: str
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_field(self) -> Self:
+        name_bytes = _decode_canonical_base64(self.name_base64, label="header name")
+        value_bytes = _decode_canonical_base64(self.value_base64, label="header value")
+        if (
+            len(name_bytes) != self.name_byte_count
+            or len(value_bytes) != self.value_byte_count
+            or hashlib.sha256(name_bytes).hexdigest() != self.name_sha256
+            or hashlib.sha256(value_bytes).hexdigest() != self.value_sha256
+        ):
+            raise ValueError("header byte count or SHA-256 differs")
+        try:
+            name = name_bytes.decode("ascii")
+            value = value_bytes.decode("ascii")
+        except UnicodeDecodeError as error:
+            raise ValueError("HTTP header field encoding is malformed") from error
+        if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name):
+            raise ValueError("HTTP header name is malformed")
+        if any((byte < 0x20 and byte != 0x09) or byte == 0x7F for byte in value_bytes):
+            raise ValueError("HTTP header value is malformed")
+        if self.normalized_name != name.casefold() or self.normalized_value != value.strip(" \t"):
+            raise ValueError("normalized header view differs from retained bytes")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("lossless header-field identity does not reconstruct")
+        return self
+
+
+class Stage2OrderedHeadersCapture(StrictModel):
+    direction: Literal["TRANSMITTED_REQUEST", "RECEIVED_RESPONSE"]
+    observation_offset_ns: NonNegativeInt
+    fields: tuple[Stage2LosslessHeaderField, ...] = Field(min_length=1)
+    normalized_view: tuple[tuple[str, str], ...]
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_headers(self) -> Self:
+        if tuple(item.ordinal for item in self.fields) != tuple(range(len(self.fields))):
+            raise ValueError("HTTP header ordinals are missing, duplicated, or reordered")
+        expected_view = tuple((item.normalized_name, item.normalized_value) for item in self.fields)
+        if self.normalized_view != expected_view:
+            raise ValueError("deterministic normalized header view does not reconstruct")
+        by_name: dict[str, list[str]] = {}
+        for name, value in expected_view:
+            by_name.setdefault(name, []).append(value)
+        if not set(by_name) <= _PUBLIC_CAPTURED_HEADER_NAMES:
+            raise ValueError("HTTP header is outside the public evidence allowlist")
+        request_ids = by_name.get("x-request-id", [])
+        if len(request_ids) != 1 or not request_ids[0]:
+            raise ValueError("X-Request-Id header is missing, duplicated, or ambiguous")
+        if self.direction == "TRANSMITTED_REQUEST":
+            content_types = by_name.get("content-type", [])
+            if content_types != ["application/json"]:
+                raise ValueError("Content-Type application/json is missing or ambiguous")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("ordered HTTP-header capture identity does not reconstruct")
+        return self
+
+    def effective(self, name: str) -> str:
+        values = tuple(value for field, value in self.normalized_view if field == name.casefold())
+        if len(values) != 1:
+            raise ValueError(f"effective {name} header is missing or ambiguous")
+        return values[0]
+
+
+class Stage2RawResponseBodyChunk(StrictModel):
+    repetition_index: Literal[1, 2, 3]
+    case_id: Identifier
+    external_request_id: Identifier
+    ordinal: NonNegativeInt
+    observation_offset_ns: NonNegativeInt
+    completed_sse_frame_observation_offsets_ns: tuple[NonNegativeInt, ...]
+    exact_bytes_base64: str
+    decoded_byte_count: NonNegativeInt
+    sha256: Sha256
+    source_capture_provenance: Literal[
+        "TEST_FIXTURE_ONLY_CPU_SCRIPTED_HTTP",
+        "FUTURE_RUNTIME_COLLECTOR_HTTP_BODY",
+    ]
+    inventory_manifest_path: Literal["raw_response_body.json"]
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_chunk(self) -> Self:
+        data = _decode_canonical_base64(self.exact_bytes_base64, label="response-body chunk")
+        if not data:
+            raise ValueError("retained response-body chunk cannot be empty")
+        if len(data) != self.decoded_byte_count or hashlib.sha256(data).hexdigest() != self.sha256:
+            raise ValueError("response-body chunk byte count or SHA-256 differs")
+        frame_offsets = self.completed_sse_frame_observation_offsets_ns
+        if frame_offsets and (
+            frame_offsets[0] != self.observation_offset_ns
+            or frame_offsets != tuple(sorted(frame_offsets))
+        ):
+            raise ValueError("completed SSE-frame observations differ from the chunk clock")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("response-body chunk identity does not reconstruct")
+        return self
+
+    def exact_bytes(self) -> bytes:
+        return _decode_canonical_base64(self.exact_bytes_base64, label="response-body chunk")
+
+
+class Stage2TransportCloseCapture(StrictModel):
+    external_request_id: Identifier
+    close_classification: Literal["CLEAN_EOF", "CLEAN_RESPONSE_CLOSE"]
+    close_observation_offset_ns: NonNegativeInt
+    response_close_completed: Literal[True]
+    post_close_byte_count: Literal[0]
+    post_close_event_count: Literal[0]
+    raw_response_body_inventory_sha256: Sha256
+    request_identity_chain_sha256: Sha256
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_close(self) -> Self:
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("transport-close identity does not reconstruct")
+        return self
+
+
+class Stage2RequestWireCapture(StrictModel):
+    schema_version: Literal["0.3.0"]
+    repetition_index: Literal[1, 2, 3]
+    case_id: Identifier
+    external_request_id: Identifier
+    provenance: Stage2WireCaptureProvenance
+    request_body: Stage2ExactRequestBodyCapture
+    request_headers: Stage2OrderedHeadersCapture
+    response_headers: Stage2OrderedHeadersCapture
+    response_body_chunks: tuple[Stage2RawResponseBodyChunk, ...] = Field(min_length=1)
+    transport_close: Stage2TransportCloseCapture
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_capture(self) -> Self:
+        if self.request_headers.direction != "TRANSMITTED_REQUEST":
+            raise ValueError("request headers use the wrong capture direction")
+        if self.response_headers.direction != "RECEIVED_RESPONSE":
+            raise ValueError("response headers use the wrong capture direction")
+        body_id = self.request_body.canonical_request.request_id
+        if not (
+            self.external_request_id
+            == body_id
+            == self.request_headers.effective("x-request-id")
+            == self.response_headers.effective("x-request-id")
+            == self.transport_close.external_request_id
+        ):
+            raise ValueError("wire request/header/response/transport identities differ")
+        if self.request_body.transmission_offset_ns != self.request_headers.observation_offset_ns:
+            raise ValueError("request body and transmitted headers have different dispatch times")
+        chunks = self.response_body_chunks
+        if tuple(chunk.ordinal for chunk in chunks) != tuple(range(len(chunks))):
+            raise ValueError("raw response chunks are missing, duplicated, or reordered")
+        if tuple(chunk.observation_offset_ns for chunk in chunks) != tuple(
+            sorted(chunk.observation_offset_ns for chunk in chunks)
+        ):
+            raise ValueError("raw response chunk observation offsets are reordered")
+        previous_frame_offset: int | None = None
+        for chunk in chunks:
+            if (
+                previous_frame_offset is not None
+                and chunk.observation_offset_ns < previous_frame_offset
+            ):
+                raise ValueError("raw response chunks overlap prior SSE-frame observations")
+            if chunk.completed_sse_frame_observation_offsets_ns:
+                previous_frame_offset = chunk.completed_sse_frame_observation_offsets_ns[-1]
+        if any(
+            (chunk.repetition_index, chunk.case_id, chunk.external_request_id)
+            != (self.repetition_index, self.case_id, self.external_request_id)
+            for chunk in chunks
+        ):
+            raise ValueError("raw response chunk identity differs from its request")
+        fixture = isinstance(self.provenance, FixtureWireCaptureProvenance)
+        expected_chunk_source = (
+            "TEST_FIXTURE_ONLY_CPU_SCRIPTED_HTTP"
+            if fixture
+            else "FUTURE_RUNTIME_COLLECTOR_HTTP_BODY"
+        )
+        if any(chunk.source_capture_provenance != expected_chunk_source for chunk in chunks):
+            raise ValueError("raw response chunk provenance differs from wire provenance")
+        inventory_sha = sha256_identity(chunks)
+        close = self.transport_close
+        if (
+            close.raw_response_body_inventory_sha256 != inventory_sha
+            or close.close_observation_offset_ns <= chunks[-1].observation_offset_ns
+        ):
+            raise ValueError("transport close is detached from the raw body inventory")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("request wire-capture identity does not reconstruct")
+        return self
+
+
+class Stage2ReplayedSSEEvent(StrictModel):
+    ordinal: NonNegativeInt
+    observation_offset_ns: NonNegativeInt
+    kind: Literal["comment", "data", "done"]
+    data: str | None
+    comments: tuple[str, ...]
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_event(self) -> Self:
+        if self.kind == "done" and self.data != "[DONE]":
+            raise ValueError("replayed done event differs from [DONE]")
+        if self.kind == "data" and self.data is None:
+            raise ValueError("replayed data event is empty")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("replayed SSE-event identity does not reconstruct")
+        return self
+
+
+def replay_stage2_wire_capture(
+    capture: Stage2RequestWireCapture,
+    identity_chain: object,
+) -> tuple[Stage2RequestEvidence, tuple[Stage2ReplayedSSEEvent, ...]]:
+    """Replay exact retained chunks through the runtime adapter's incremental SSE parser."""
+
+    from llm_inference_systems.stage2_contracts import RequestIdentityChain
+
+    chain = RequestIdentityChain.model_validate(identity_chain)
+    fixture_identity = (
+        capture.provenance.fixture_identity_sha256
+        if isinstance(capture.provenance, FixtureWireCaptureProvenance)
+        else None
+    )
+    current_frame_offsets: tuple[int, ...] = ()
+    current_frame_index = 0
+
+    def frame_clock() -> int:
+        nonlocal current_frame_index
+        if current_frame_index >= len(current_frame_offsets):
+            raise Stage2ProtocolError("raw wire capture lacks a completed SSE-frame observation")
+        value = current_frame_offsets[current_frame_index]
+        current_frame_index += 1
+        return value
+
+    validator = Stage2StreamValidator(
+        external_base_id=capture.external_request_id,
+        sent_prompt_token_ids=capture.request_body.canonical_request.prompt,
+        dispatch_offset_ns=capture.request_body.transmission_offset_ns,
+        fixture_identity_sha256=fixture_identity,
+        frame_clock=frame_clock,
+    )
+    try:
+        validator.accept_response_headers(
+            capture.response_headers.effective("x-request-id"),
+            capture.response_headers.observation_offset_ns,
+        )
+        for chunk in capture.response_body_chunks:
+            expected_offsets = chunk.completed_sse_frame_observation_offsets_ns
+            current_frame_offsets = expected_offsets[1:]
+            current_frame_index = 0
+            event_start = len(validator.parsed_sse_events)
+            validator.feed(chunk.exact_bytes(), chunk.observation_offset_ns)
+            observed_offsets = tuple(
+                event.observation_offset_ns for event in validator.parsed_sse_events[event_start:]
+            )
+            if observed_offsets != expected_offsets or current_frame_index != len(
+                current_frame_offsets
+            ):
+                raise Stage2ProtocolError(
+                    "completed SSE-frame observations do not match parser replay"
+                )
+        evidence = validator.close_transport(
+            capture.transport_close.close_observation_offset_ns,
+            identity_chain=chain,
+        )
+    except (Stage2ProtocolError, ValueError) as error:
+        raise Stage2ExperimentError("retained HTTP wire evidence failed parser replay") from error
+    if capture.transport_close.request_identity_chain_sha256 != sha256_identity(chain):
+        raise Stage2ExperimentError("transport close differs from the request identity chain")
+    parsed_events: list[Stage2ReplayedSSEEvent] = []
+    for event in validator.parsed_sse_events:
+        values: dict[str, object] = {
+            "ordinal": event.ordinal,
+            "observation_offset_ns": event.observation_offset_ns,
+            "kind": event.kind,
+            "data": event.data,
+            "comments": event.comments,
+        }
+        values["identity_sha256"] = sha256_identity(values)
+        parsed_events.append(Stage2ReplayedSSEEvent.model_validate(values))
+    return evidence, tuple(parsed_events)
 
 
 class Stage2RequestRawEvidence(StrictModel):
@@ -375,6 +804,7 @@ class Stage2MeasuredRequestAttestation(StrictModel):
     external_request_id: Identifier
     request_evidence: Stage2RequestEvidence
     request_identity: RequestIdentityAttestation
+    wire_capture: Stage2RequestWireCapture
     lifecycle: Stage2RequestLifecycle
     raw_evidence: Stage2RequestRawEvidence
     metric_availability: Stage2MetricAvailability
@@ -396,6 +826,15 @@ class Stage2MeasuredRequestAttestation(StrictModel):
             or self.request_identity.identity_sha256 != evidence.request_identity_chain_sha256
         ):
             raise ValueError("measured request identity chain does not reconcile")
+        replayed, _ = replay_stage2_wire_capture(self.wire_capture, chain)
+        if replayed != evidence:
+            raise ValueError("typed request evidence differs from exact wire replay")
+        if (
+            self.wire_capture.repetition_index != self.repetition_index
+            or self.wire_capture.case_id != self.case_id
+            or self.wire_capture.external_request_id != self.external_request_id
+        ):
+            raise ValueError("wire capture is detached from the measured request")
         if (
             self.lifecycle.dispatch_offset_ns != evidence.timing.dispatch_offset_ns
             or self.lifecycle.terminal_offset_ns != evidence.timing.transport_terminal_offset_ns
@@ -416,76 +855,59 @@ class Stage2MeasuredRequestAttestation(StrictModel):
 
 def build_request_raw_evidence_payloads(
     *,
-    repetition_index: Literal[1, 2, 3],
-    case_id: str,
-    external_request_id: str,
-    request_evidence: Stage2RequestEvidence,
+    wire_capture: Stage2RequestWireCapture,
     request_identity: RequestIdentityAttestation,
     lifecycle: Stage2RequestLifecycle,
-    evidence_scope: Stage2EvidenceScope,
 ) -> dict[str, bytes]:
-    """Derive exact canonical raw-record bytes from one measured request.
+    """Serialize collector/fixture wire captures and replay-derived evidence.
 
-    The fixture writer and the filesystem reconstructor share this function so a
-    retained raw reference cannot be swapped between requests or detached from
-    the parsed request evidence that it supports.
+    This helper accepts lossless wire records, never a caller-supplied parsed request
+    object.  ``Stage2RequestEvidence`` is produced only by replay below.
     """
 
-    evidence = request_evidence
+    evidence, replayed_events = replay_stage2_wire_capture(
+        wire_capture, request_identity.identity_chain
+    )
+    repetition_index = wire_capture.repetition_index
+    case_id = wire_capture.case_id
+    external_request_id = wire_capture.external_request_id
+    evidence_scope = wire_capture.provenance.evidence_scope
+    if (
+        lifecycle.dispatch_offset_ns != evidence.timing.dispatch_offset_ns
+        or lifecycle.terminal_offset_ns != evidence.timing.transport_terminal_offset_ns
+    ):
+        raise Stage2ExperimentError("lifecycle differs from wire-replayed terminal evidence")
     common = {
         "schema_version": "0.3.0",
         "evidence_scope": evidence_scope,
+        "wire_provenance": wire_capture.provenance,
+        "wire_capture_identity_sha256": wire_capture.identity_sha256,
         "repetition_index": repetition_index,
         "case_id": case_id,
         "external_request_id": external_request_id,
+        "measurement_phase": {
+            "started_offset_ns": lifecycle.measurement_phase_start_ns,
+            "ended_offset_ns": lifecycle.measurement_phase_end_ns,
+            "identity_sha256": lifecycle.measurement_phase_identity_sha256,
+        },
     }
     content: dict[str, object] = {
-        "request_body": {
-            "external_request_id": external_request_id,
-            "fixture_identity_sha256": evidence.fixture_identity_sha256,
-            "sent_prompt_token_ids": evidence.sent_prompt_token_ids,
-        },
-        "request_headers": {
-            "x_request_id": external_request_id,
-            "request_identity_chain_sha256": evidence.request_identity_chain_sha256,
-        },
-        "response_headers": {
-            "internal_engine_request_id": evidence.internal_engine_request_id,
-            "response_request_id": evidence.response_request_id,
-            "serving_item_request_id": evidence.serving_item_request_id,
-        },
+        "request_body": wire_capture.request_body,
+        "request_headers": wire_capture.request_headers,
+        "response_headers": wire_capture.response_headers,
         "raw_response_body": {
-            "done_terminal": "[DONE]",
-            "stream_events": evidence.token_events,
-            "usage_terminal": {
-                "server_per_request_metrics": evidence.server_per_request_metrics,
-                "usage": evidence.usage,
-            },
+            "response_body_chunks": wire_capture.response_body_chunks,
+            "transport_close": wire_capture.transport_close,
         },
-        "parsed_sse_events": {"token_events": evidence.token_events},
+        "parsed_sse_events": {"events": replayed_events},
         "terminal_boundary": {
-            "finish_reason": evidence.finish_reason,
-            "terminal_event_carried_token_ids": evidence.terminal_event_carried_token_ids,
             "timing": evidence.timing,
+            "transport_close": wire_capture.transport_close,
         },
         "server_logs": request_identity,
         "server_metrics": evidence.server_per_request_metrics,
         "lifecycle": lifecycle,
-        "token_usage_reconciliation": {
-            "client_generation_tpot": evidence.client_generation_tpot,
-            "disagreements": evidence.disagreements,
-            "final_output_token_ids": evidence.final_output_token_ids,
-            "finish_reason": evidence.finish_reason,
-            "local_output_token_count": evidence.local_output_token_count,
-            "local_prompt_token_count": evidence.local_prompt_token_count,
-            "output_text": evidence.output_text,
-            "output_text_sha256": evidence.output_text_sha256,
-            "returned_prompt_token_ids": evidence.returned_prompt_token_ids,
-            "sent_prompt_token_ids": evidence.sent_prompt_token_ids,
-            "stream_output_gap_ns": evidence.stream_output_gap_ns,
-            "token_observation_itl": evidence.token_observation_itl,
-            "usage": evidence.usage,
-        },
+        "token_usage_reconciliation": {"typed_request_evidence": evidence},
     }
     return {
         field: canonical_json_bytes({**common, "evidence_kind": field, "content": content[field]})
@@ -498,14 +920,161 @@ def request_raw_evidence_payloads(
     request: Stage2MeasuredRequestAttestation,
     evidence_scope: Stage2EvidenceScope,
 ) -> dict[str, bytes]:
+    if evidence_scope is not Stage2EvidenceScope.TEST_FIXTURE_ONLY or not isinstance(
+        request.wire_capture.provenance, FixtureWireCaptureProvenance
+    ):
+        raise Stage2ExperimentError(
+            "typed fixture helper is structurally prohibited from producing live wire evidence"
+        )
     return build_request_raw_evidence_payloads(
-        repetition_index=request.repetition_index,
-        case_id=request.case_id,
-        external_request_id=request.external_request_id,
-        request_evidence=request.request_evidence,
+        wire_capture=request.wire_capture,
         request_identity=request.request_identity,
         lifecycle=request.lifecycle,
-        evidence_scope=evidence_scope,
+    )
+
+
+_RAW_REQUEST_EVIDENCE_FIELDS: Final = (
+    "request_body",
+    "request_headers",
+    "response_headers",
+    "raw_response_body",
+    "server_logs",
+)
+
+
+def _derive_request_from_raw_wire(
+    raw_payloads: dict[str, bytes],
+) -> tuple[
+    Literal[1, 2, 3],
+    str,
+    str,
+    Stage2RequestEvidence,
+    RequestIdentityAttestation,
+    Stage2RequestLifecycle,
+    Stage2RequestWireCapture,
+    dict[str, bytes],
+]:
+    if set(raw_payloads) != set(_RAW_REQUEST_EVIDENCE_FIELDS):
+        raise Stage2ExperimentError("measured request raw wire set is incomplete")
+    parsed: dict[str, dict[str, object]] = {}
+    for field, data in raw_payloads.items():
+        try:
+            value = json.loads(data)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise Stage2ExperimentError("measured request wire evidence is not JSON") from error
+        if not isinstance(value, dict) or data != canonical_json_bytes(value) + b"\n":
+            raise Stage2ExperimentError("measured request wire evidence is not canonical JSON")
+        if (
+            value.get("schema_version") != "0.3.0"
+            or value.get("evidence_kind") != field
+            or not isinstance(value.get("content"), dict)
+            or not isinstance(value.get("measurement_phase"), dict)
+        ):
+            raise Stage2ExperimentError("measured request wire envelope differs")
+        parsed[field] = value
+    metadata = tuple(
+        (
+            value.get("evidence_scope"),
+            value.get("wire_provenance"),
+            value.get("wire_capture_identity_sha256"),
+            value.get("repetition_index"),
+            value.get("case_id"),
+            value.get("external_request_id"),
+            value.get("measurement_phase"),
+        )
+        for value in parsed.values()
+    )
+    if any(item != metadata[0] for item in metadata[1:]):
+        raise Stage2ExperimentError("measured request wire envelope identities differ")
+    (
+        evidence_scope,
+        provenance_raw,
+        wire_identity,
+        repetition_index,
+        case_id,
+        external_request_id,
+        phase_raw,
+    ) = metadata[0]
+    if (
+        evidence_scope not in set(Stage2EvidenceScope)
+        or repetition_index not in {1, 2, 3}
+        or not isinstance(case_id, str)
+        or not isinstance(external_request_id, str)
+        or not isinstance(wire_identity, str)
+        or not isinstance(phase_raw, dict)
+    ):
+        raise Stage2ExperimentError("measured request wire envelope identity is invalid")
+
+    def content(field: str) -> dict[str, object]:
+        return cast(dict[str, object], parsed[field]["content"])
+
+    try:
+        provenance = (
+            FixtureWireCaptureProvenance.model_validate(provenance_raw)
+            if isinstance(provenance_raw, dict)
+            and provenance_raw.get("capture_kind") == "FIXTURE_CONSTRUCTOR"
+            else CollectorWireCaptureProvenance.model_validate(provenance_raw)
+        )
+        request_body = Stage2ExactRequestBodyCapture.model_validate_json(
+            canonical_json_bytes(content("request_body"))
+        )
+        request_headers = Stage2OrderedHeadersCapture.model_validate_json(
+            canonical_json_bytes(content("request_headers"))
+        )
+        response_headers = Stage2OrderedHeadersCapture.model_validate_json(
+            canonical_json_bytes(content("response_headers"))
+        )
+        body_content = content("raw_response_body")
+        chunks = tuple(
+            Stage2RawResponseBodyChunk.model_validate_json(canonical_json_bytes(item))
+            for item in cast(list[object], body_content["response_body_chunks"])
+        )
+        transport_close = Stage2TransportCloseCapture.model_validate_json(
+            canonical_json_bytes(body_content["transport_close"])
+        )
+        request_identity = RequestIdentityAttestation.model_validate_json(
+            canonical_json_bytes(content("server_logs"))
+        )
+        capture = Stage2RequestWireCapture(
+            schema_version="0.3.0",
+            repetition_index=repetition_index,
+            case_id=case_id,
+            external_request_id=external_request_id,
+            provenance=provenance,
+            request_body=request_body,
+            request_headers=request_headers,
+            response_headers=response_headers,
+            response_body_chunks=chunks,
+            transport_close=transport_close,
+            identity_sha256=wire_identity,
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise Stage2ExperimentError("measured request raw wire capture is invalid") from error
+    evidence, _ = replay_stage2_wire_capture(capture, request_identity.identity_chain)
+    try:
+        lifecycle = Stage2RequestLifecycle(
+            dispatch_offset_ns=evidence.timing.dispatch_offset_ns,
+            terminal_offset_ns=evidence.timing.transport_terminal_offset_ns,
+            measurement_phase_start_ns=phase_raw["started_offset_ns"],
+            measurement_phase_end_ns=phase_raw["ended_offset_ns"],
+            measurement_phase_identity_sha256=phase_raw["identity_sha256"],
+        )
+    except (KeyError, ValueError) as error:
+        raise Stage2ExperimentError("measured request phase provenance is invalid") from error
+    expected = build_request_raw_evidence_payloads(
+        wire_capture=capture,
+        request_identity=request_identity,
+        lifecycle=lifecycle,
+    )
+    return (
+        repetition_index,
+        case_id,
+        external_request_id,
+        evidence,
+        request_identity,
+        lifecycle,
+        capture,
+        expected,
     )
 
 
@@ -519,124 +1088,30 @@ def reconstruct_request_from_raw_evidence(
     Stage2RequestEvidence,
     RequestIdentityAttestation,
     Stage2RequestLifecycle,
+    Stage2RequestWireCapture,
 ]:
-    """Parse ten retained request records into the typed request boundary."""
+    """Rebuild typed evidence from five raw wire records and verify five derived records."""
 
     if set(raw_payloads) != set(REQUEST_EVIDENCE_FIELDS):
-        raise Stage2ExperimentError("measured request raw evidence set is incomplete")
-    parsed: dict[str, dict[str, object]] = {}
-    for field, data in raw_payloads.items():
-        try:
-            value = json.loads(data)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise Stage2ExperimentError("measured request raw evidence is not JSON") from error
-        if not isinstance(value, dict) or data != canonical_json_bytes(value) + b"\n":
-            raise Stage2ExperimentError("measured request raw evidence is not canonical JSON")
-        if (
-            value.get("schema_version") != "0.3.0"
-            or value.get("evidence_scope") != evidence_scope
-            or value.get("evidence_kind") != field
-            or not isinstance(value.get("content"), dict)
-        ):
-            raise Stage2ExperimentError("measured request raw evidence envelope differs")
-        parsed[field] = value
-    metadata = tuple(
-        (
-            value.get("repetition_index"),
-            value.get("case_id"),
-            value.get("external_request_id"),
-        )
-        for value in parsed.values()
-    )
-    if len(set(metadata)) != 1:
-        raise Stage2ExperimentError("measured request raw evidence identities differ")
-    repetition_index, case_id, external_request_id = metadata[0]
-    if (
-        repetition_index not in {1, 2, 3}
-        or not isinstance(case_id, str)
-        or not isinstance(external_request_id, str)
-    ):
-        raise Stage2ExperimentError("measured request raw evidence identity is invalid")
-
-    def content(field: str) -> dict[str, object]:
-        return cast(dict[str, object], parsed[field]["content"])
-
-    body = content("request_body")
-    request_headers = content("request_headers")
-    response_headers = content("response_headers")
-    raw_response = content("raw_response_body")
-    parsed_events = cast(list[object], content("parsed_sse_events")["token_events"])
-    terminal = content("terminal_boundary")
-    reconciliation = content("token_usage_reconciliation")
-    identity = RequestIdentityAttestation.model_validate_json(
-        canonical_json_bytes(content("server_logs"))
-    )
-    lifecycle = Stage2RequestLifecycle.model_validate_json(
-        canonical_json_bytes(content("lifecycle"))
-    )
-    metrics = Stage2PerRequestMetrics.model_validate_json(
-        canonical_json_bytes(content("server_metrics"))
-    )
-    timing = Stage2TimingRecord.model_validate_json(canonical_json_bytes(terminal["timing"]))
-    token_events = tuple(
-        Stage2TokenEvent.model_validate_json(canonical_json_bytes(item)) for item in parsed_events
-    )
-    usage = Stage2Usage.model_validate_json(canonical_json_bytes(reconciliation["usage"]))
-    client_tpot = MetricAvailability.model_validate_json(
-        canonical_json_bytes(reconciliation["client_generation_tpot"])
-    )
-    observation_itl = MetricAvailability.model_validate_json(
-        canonical_json_bytes(reconciliation["token_observation_itl"])
-    )
-    if (
-        body.get("external_request_id") != external_request_id
-        or request_headers.get("x_request_id") != external_request_id
-        or request_headers.get("request_identity_chain_sha256") != identity.identity_sha256
-        or terminal.get("finish_reason") != reconciliation.get("finish_reason")
-        or reconciliation.get("sent_prompt_token_ids") != body.get("sent_prompt_token_ids")
-    ):
-        raise Stage2ExperimentError(
-            "request identity, terminal, or token raw records contradict one another"
-        )
-    if (
-        raw_response.get("done_terminal") != "[DONE]"
-        or raw_response.get("stream_events") != parsed_events
-        or raw_response.get("usage_terminal")
-        != {
-            "server_per_request_metrics": content("server_metrics"),
-            "usage": reconciliation["usage"],
-        }
-    ):
-        raise Stage2ExperimentError("raw response body does not reconstruct parsed stream records")
-    evidence = Stage2RequestEvidence.model_validate_json(
-        canonical_json_bytes(
-            {
-                "fixture_identity_sha256": body["fixture_identity_sha256"],
-                "request_identity_chain_sha256": request_headers["request_identity_chain_sha256"],
-                "external_request_id": body["external_request_id"],
-                "response_request_id": response_headers["response_request_id"],
-                "serving_item_request_id": response_headers["serving_item_request_id"],
-                "internal_engine_request_id": response_headers["internal_engine_request_id"],
-                "sent_prompt_token_ids": body["sent_prompt_token_ids"],
-                "returned_prompt_token_ids": reconciliation["returned_prompt_token_ids"],
-                "token_events": token_events,
-                "final_output_token_ids": reconciliation["final_output_token_ids"],
-                "finish_reason": reconciliation["finish_reason"],
-                "terminal_event_carried_token_ids": terminal["terminal_event_carried_token_ids"],
-                "usage": usage,
-                "local_prompt_token_count": reconciliation["local_prompt_token_count"],
-                "local_output_token_count": reconciliation["local_output_token_count"],
-                "server_per_request_metrics": metrics,
-                "disagreements": reconciliation["disagreements"],
-                "output_text": reconciliation["output_text"],
-                "output_text_sha256": reconciliation["output_text_sha256"],
-                "timing": timing,
-                "client_generation_tpot": client_tpot,
-                "token_observation_itl": observation_itl,
-                "stream_output_gap_ns": reconciliation["stream_output_gap_ns"],
-            }
-        )
-    )
+        raise Stage2ExperimentError("measured request evidence set is incomplete")
+    raw_only = {field: raw_payloads[field] for field in _RAW_REQUEST_EVIDENCE_FIELDS}
+    (
+        repetition_index,
+        case_id,
+        external_request_id,
+        evidence,
+        identity,
+        lifecycle,
+        capture,
+        expected,
+    ) = _derive_request_from_raw_wire(raw_only)
+    if expected["request_body"] != raw_payloads["request_body"]:
+        raise Stage2ExperimentError("exact request-body capture does not reconstruct")
+    for field in REQUEST_EVIDENCE_FIELDS:
+        if raw_payloads[field] != expected[field]:
+            raise Stage2ExperimentError(f"stored {field} differs from exact raw-chunk replay")
+    if evidence_scope is not capture.provenance.evidence_scope:
+        raise Stage2ExperimentError("request evidence scope differs from wire provenance")
     return (
         repetition_index,
         case_id,
@@ -644,6 +1119,7 @@ def reconstruct_request_from_raw_evidence(
         evidence,
         identity,
         lifecycle,
+        capture,
     )
 
 
@@ -752,6 +1228,57 @@ def public_safety_raw_evidence_bytes(
             "scan_inventory_sha256": public_safety.scan_inventory_sha256,
         },
     )
+
+
+def prometheus_raw_scrape_capture_bytes(capture: PrometheusRawScrapeCapture) -> bytes:
+    return canonical_json_bytes(capture) + b"\n"
+
+
+def prometheus_capture_and_snapshot_from_raw(
+    data: bytes,
+) -> tuple[PrometheusRawScrapeCapture, PrometheusSnapshot]:
+    """Reparse a lossless scrape capture while retaining its collector metadata."""
+
+    try:
+        capture = PrometheusRawScrapeCapture.model_validate_json(data)
+    except ValueError as error:
+        raise Stage2ExperimentError("raw Prometheus scrape capture is invalid") from error
+    if data != prometheus_raw_scrape_capture_bytes(capture):
+        raise Stage2ExperimentError("raw Prometheus scrape capture is not canonical JSON")
+    snapshot = parse_prometheus_snapshot(
+        capture.raw_exposition(),
+        process_start_id=capture.process_start_id,
+        scrape_wall_clock_utc=capture.scrape_wall_clock_utc,
+        scrape_monotonic_offset_ns=capture.scrape_monotonic_offset_ns,
+    )
+    return capture, snapshot
+
+
+def prometheus_snapshot_from_raw_capture(data: bytes) -> PrometheusSnapshot:
+    return prometheus_capture_and_snapshot_from_raw(data)[1]
+
+
+def validate_prometheus_raw_capture_binding(
+    data: bytes,
+    *,
+    measurement: PrometheusMeasurementAttestation,
+    evidence_scope: Stage2EvidenceScope,
+    repetition_index: int,
+    boundary: Literal["baseline", "final"],
+) -> None:
+    capture, snapshot = prometheus_capture_and_snapshot_from_raw(data)
+    expected_snapshot = (
+        measurement.baseline_snapshot if boundary == "baseline" else measurement.final_snapshot
+    )
+    if (
+        capture.evidence_scope is not evidence_scope
+        or capture.repetition_index != repetition_index
+        or capture.process_start_id != measurement.server_process_identity
+        or snapshot != expected_snapshot
+    ):
+        raise Stage2ExperimentError(
+            "raw Prometheus capture metadata is detached from its repetition attestation"
+        )
 
 
 def build_cancellation_client_stream_raw_evidence_bytes(
@@ -876,20 +1403,77 @@ def reconstruct_experiment_repetition(raw: dict[str, bytes]) -> dict[str, bytes]
             raise Stage2ExperimentError("request raw path does not match the fixed layout")
         request_groups.setdefault(parts[2], set()).add(parts[3].removesuffix(".json"))
     if len(request_groups) != 16 or any(
-        fields != set(REQUEST_EVIDENCE_FIELDS) for fields in request_groups.values()
+        fields != set(_RAW_REQUEST_EVIDENCE_FIELDS) for fields in request_groups.values()
     ):
-        raise Stage2ExperimentError("repetition raw inventory lacks the exact 16-by-10 request set")
+        raise Stage2ExperimentError("repetition raw inventory lacks the exact 16-by-5 wire set")
+    derived: dict[str, bytes] = {}
+    repetition_indexes: set[int] = set()
+    evidence_scopes: set[Stage2EvidenceScope] = set()
+    for external_id in sorted(request_groups):
+        raw_group = {
+            field: raw[f"raw/requests/{external_id}/{field}.json"]
+            for field in _RAW_REQUEST_EVIDENCE_FIELDS
+        }
+        (
+            repetition_index,
+            _,
+            reconstructed_external_id,
+            _,
+            _,
+            _,
+            capture,
+            expected,
+        ) = _derive_request_from_raw_wire(raw_group)
+        repetition_indexes.add(repetition_index)
+        evidence_scopes.add(capture.provenance.evidence_scope)
+        if reconstructed_external_id != external_id:
+            raise Stage2ExperimentError("request raw path differs from its wire identity")
+        for field in set(REQUEST_EVIDENCE_FIELDS) - set(_RAW_REQUEST_EVIDENCE_FIELDS):
+            derived[f"derived/requests/{external_id}/{field}.json"] = expected[field]
+    if len(repetition_indexes) != 1 or len(evidence_scopes) != 1:
+        raise Stage2ExperimentError("request wire captures cross a repetition or evidence scope")
+    prometheus_paths = (
+        "raw/prometheus/measured-window-baseline.json",
+        "raw/prometheus/measured-window-final.json",
+    )
+    if any(path not in raw for path in prometheus_paths):
+        raise Stage2ExperimentError("repetition raw inventory lacks measured-window scrapes")
+    baseline_capture, baseline = prometheus_capture_and_snapshot_from_raw(raw[prometheus_paths[0]])
+    final_capture, final = prometheus_capture_and_snapshot_from_raw(raw[prometheus_paths[1]])
+    expected_repetition_index = next(iter(repetition_indexes))
+    expected_scope = next(iter(evidence_scopes))
+    if (
+        baseline_capture.repetition_index != expected_repetition_index
+        or final_capture.repetition_index != expected_repetition_index
+        or baseline_capture.evidence_scope is not expected_scope
+        or final_capture.evidence_scope is not expected_scope
+        or baseline_capture.process_start_id != final_capture.process_start_id
+    ):
+        raise Stage2ExperimentError(
+            "raw Prometheus captures cross a repetition, evidence scope, or process"
+        )
+    derived["derived/prometheus/measured-window-baseline-snapshot.json"] = (
+        canonical_json_bytes(baseline) + b"\n"
+    )
+    derived["derived/prometheus/measured-window-final-snapshot.json"] = (
+        canonical_json_bytes(final) + b"\n"
+    )
     summary = {
         "schema_version": "0.3.0",
         "evidence_kind": "repetition_raw_reconstruction",
         "raw_file_count": len(paths),
         "measured_request_count": len(request_groups),
         "request_raw_file_count": len(request_paths),
+        "request_derived_file_count": 16
+        * (len(REQUEST_EVIDENCE_FIELDS) - len(_RAW_REQUEST_EVIDENCE_FIELDS)),
+        "prometheus_raw_scrape_count": 2,
+        "prometheus_parsed_snapshot_count": 2,
         "raw_inventory_sha256": sha256_identity(
             {path: hashlib.sha256(raw[path]).hexdigest() for path in paths}
         ),
     }
-    return {"derived/repetition-raw-summary.json": canonical_json_bytes(summary) + b"\n"}
+    derived["derived/repetition-raw-summary.json"] = canonical_json_bytes(summary) + b"\n"
+    return derived
 
 
 def _reference_is_in_manifest(
@@ -937,6 +1521,7 @@ class Stage2RepetitionAttestation(StrictModel):
     repetition_manifest_sha256: Sha256
     cancellation_result_file: ManifestBoundFile
     cancellation_client_stream_file: ManifestBoundFile
+    prometheus_measurement: PrometheusMeasurementAttestation
     cuda_execution: Stage2RepetitionCudaAttestation
     measured_requests: tuple[Stage2MeasuredRequestAttestation, ...] = Field(
         min_length=16, max_length=16
@@ -956,6 +1541,7 @@ class Stage2RepetitionAttestation(StrictModel):
             or self.server_restart.repetition_index != self.repetition_index
             or manifest.repetition_index != self.repetition_index
             or self.cuda_execution.repetition_index != self.repetition_index
+            or self.prometheus_measurement.repetition_index != self.repetition_index
         ):
             raise ValueError("repetition component indexes differ")
         if self.runtime_control_sha256 != sha256_identity(self.runtime_control):
@@ -1004,6 +1590,22 @@ class Stage2RepetitionAttestation(StrictModel):
                 != measured_phase.evidence_identity_sha256
             ):
                 raise ValueError("measured request is detached from repetition or measured phase")
+        measurement = self.prometheus_measurement
+        if (
+            measurement.repetition_manifest_sha256 != expected_manifest_sha
+            or measurement.server_process_identity != expected_server
+            or measurement.measured_phase_identity_sha256 != measured_phase.evidence_identity_sha256
+            or measurement.measured_phase_start_offset_ns != measured_phase.started_offset_ns
+            or measurement.measured_phase_end_offset_ns != measured_phase.ended_offset_ns
+            or measurement.first_measured_request_dispatch_offset_ns
+            != min(request.lifecycle.dispatch_offset_ns for request in requests)
+            or measurement.last_measured_request_terminal_offset_ns
+            != max(request.lifecycle.terminal_offset_ns for request in requests)
+            or measurement.final_drain_boundary_offset_ns
+            != self.runtime_control.final_drain_completed_offset_ns
+            or measurement.final_snapshot != self.runtime_control.final_metric_scrape
+        ):
+            raise ValueError("Prometheus measured-window evidence is detached from repetition")
         maximum, overlap = _derive_observed_concurrency(requests)
         if maximum != 2 or not overlap:
             raise ValueError("lifecycle evidence must derive exact positive concurrency two")
@@ -1013,6 +1615,10 @@ class Stage2RepetitionAttestation(StrictModel):
         references = [
             self.cancellation_result_file,
             self.cancellation_client_stream_file,
+            measurement.baseline_raw_exposition_file,
+            measurement.baseline_parsed_snapshot_file,
+            measurement.final_raw_exposition_file,
+            measurement.final_parsed_snapshot_file,
             *self.cuda_execution.raw_evidence_files,
             *(reference for request in requests for reference in request.raw_evidence.files()),
         ]
@@ -1231,6 +1837,7 @@ class Stage2ExperimentSummary(StrictModel):
     repetition_count: Literal[3]
     measured_request_count: Literal[48]
     cancellation_probe_count: Literal[3]
+    prometheus_measurement_count: Literal[3]
     cuda_attestation_count: Literal[3]
     semantic_comparison_count: Literal[16]
     requested_client_concurrency: Literal[2]
@@ -1297,6 +1904,11 @@ class Stage2ExperimentAttestation(StrictModel):
         )
         if len(all_requests) != 48:
             raise ValueError("experiment requires exactly 48 measured-request attestations")
+        if any(
+            request.wire_capture.provenance.evidence_scope is not self.evidence_scope
+            for request in all_requests
+        ):
+            raise ValueError("request wire provenance differs from experiment scope")
         all_external_ids = tuple(
             request_id
             for repetition in self.repetitions
@@ -1395,6 +2007,7 @@ class Stage2ExperimentAttestation(StrictModel):
             "repetition_count": 3,
             "measured_request_count": 48,
             "cancellation_probe_count": 3,
+            "prometheus_measurement_count": 3,
             "cuda_attestation_count": 3,
             "semantic_comparison_count": 16,
             "requested_client_concurrency": 2,
@@ -1414,6 +2027,23 @@ class Stage2ExperimentAttestation(StrictModel):
         else:
             if _contains_fixture_value(self):
                 raise ValueError("synthetic or fixture evidence cannot receive a live boundary")
+            environment_identity = sha256_identity(
+                {"linux": self.linux_environment, "nvidia": self.nvidia_resources}
+            )
+            snapshot_identity = sha256_identity(self.snapshot_manifest)
+            if any(
+                not isinstance(request.wire_capture.provenance, CollectorWireCaptureProvenance)
+                or request.wire_capture.provenance.server_process_identity
+                != self.repetitions[
+                    request.repetition_index - 1
+                ].server_restart.server_process_identity
+                or request.wire_capture.provenance.model_snapshot_identity_sha256
+                != snapshot_identity
+                or request.wire_capture.provenance.environment_identity_sha256
+                != environment_identity
+                for request in all_requests
+            ):
+                raise ValueError("live wire capture lacks collector/runtime/environment bindings")
             chains = (
                 *(request.request_identity.identity_chain for request in all_requests),
                 *(
@@ -1494,6 +2124,11 @@ class Stage2AggregateExperimentManifest(StrictModel):
         ManifestBoundFile,
         ManifestBoundFile,
     ]
+    prometheus_measurement_attestation_files: tuple[
+        ManifestBoundFile,
+        ManifestBoundFile,
+        ManifestBoundFile,
+    ]
     semantic_comparison_files: tuple[ManifestBoundFile, ...] = Field(min_length=16, max_length=16)
     metric_availability_summary: ManifestBoundFile
     experiment_summary: ManifestBoundFile
@@ -1536,6 +2171,7 @@ class Stage2AggregateExperimentManifest(StrictModel):
                 *(f"repetition-{index:02d}/evidence-manifest.json" for index in (1, 2, 3)),
                 *(f"attestations/cuda-repetition-{index:02d}.json" for index in (1, 2, 3)),
                 *(f"repetition-{index:02d}/cancellation-result.json" for index in (1, 2, 3)),
+                *(f"attestations/prometheus-repetition-{index:02d}.json" for index in (1, 2, 3)),
                 *(f"comparisons/{case_id}.json" for case_id in STAGE2_EXPERIMENT_CASE_IDS),
                 "derived/metric-availability-summary.json",
                 "derived/experiment-summary.json",
@@ -1560,6 +2196,7 @@ class Stage2AggregateExperimentManifest(StrictModel):
                 *self.repetition_manifest_files,
                 *self.cuda_execution_attestation_files,
                 *self.cancellation_result_files,
+                *self.prometheus_measurement_attestation_files,
                 *self.semantic_comparison_files,
                 self.metric_availability_summary,
                 self.experiment_summary,
@@ -1619,6 +2256,23 @@ def _path_has_symlink_component(root: Path, relative: PurePosixPath) -> bool:
     return False
 
 
+def _path_has_symlink_ancestor(path: Path) -> bool:
+    absolute = path.absolute()
+    current = Path(absolute.anchor)
+    for index, part in enumerate(absolute.parts[1:], start=1):
+        current /= part
+        if current.is_symlink():
+            resolved = current.resolve()
+            macos_platform_alias = index == 1 and (
+                (current == Path("/var") and resolved == Path("/private/var"))
+                or (current == Path("/tmp") and resolved == Path("/private/tmp"))
+            )
+            if not macos_platform_alias:
+                return True
+            current = resolved
+    return False
+
+
 def _validate_file(root: Path, entry: BundleFileEntry | ManifestBoundFile) -> bytes:
     relative = _safe_relative_path(entry.path)
     if _path_has_symlink_component(root, relative):
@@ -1642,7 +2296,7 @@ def _validate_aggregate_inventory(
     root: Path,
     manifest: Stage2AggregateExperimentManifest,
 ) -> dict[str, bytes]:
-    if not root.is_dir() or root.is_symlink():
+    if not root.is_dir() or root.is_symlink() or _path_has_symlink_ancestor(root):
         raise Stage2ExperimentError("aggregate directory is missing or unsafe")
     all_paths = tuple(root.rglob("*"))
     if any(path.is_symlink() for path in all_paths):
@@ -1669,7 +2323,7 @@ def _validate_repetition_bundle_directory(
     manifest: Stage2BundleManifest,
 ) -> None:
     directory = root / f"repetition-{repetition_index:02d}"
-    if not directory.is_dir() or directory.is_symlink():
+    if not directory.is_dir() or directory.is_symlink() or _path_has_symlink_ancestor(directory):
         raise Stage2ExperimentError("repetition bundle directory is missing or unsafe")
     paths = tuple(directory.rglob("*"))
     if any(path.is_symlink() for path in paths):
@@ -1702,7 +2356,7 @@ def write_aggregate_manifest_last(
 ) -> Path:
     if manifest.state is AggregateRootState.INCOMPLETE:
         raise Stage2ExperimentError("an incomplete aggregate manifest cannot be finalized")
-    if not root.is_dir() or root.is_symlink():
+    if not root.is_dir() or root.is_symlink() or _path_has_symlink_ancestor(root):
         raise Stage2ExperimentError("aggregate directory is missing or unsafe")
     manifest_path = root / AGGREGATE_MANIFEST_PATH
     if manifest_path.exists() or manifest_path.is_symlink():
@@ -1925,6 +2579,21 @@ def _validate_terminal_graph(
     ):
         raise Stage2ExperimentError("public-safety pass is detached from repetition inventories")
     for index, repetition in enumerate(attestation.repetitions):
+        prefix = f"repetition-{repetition.repetition_index:02d}/"
+        validate_prometheus_raw_capture_binding(
+            files[prefix + repetition.prometheus_measurement.baseline_raw_exposition_file.path],
+            measurement=repetition.prometheus_measurement,
+            evidence_scope=attestation.evidence_scope,
+            repetition_index=repetition.repetition_index,
+            boundary="baseline",
+        )
+        validate_prometheus_raw_capture_binding(
+            files[prefix + repetition.prometheus_measurement.final_raw_exposition_file.path],
+            measurement=repetition.prometheus_measurement,
+            evidence_scope=attestation.evidence_scope,
+            repetition_index=repetition.repetition_index,
+            boundary="final",
+        )
         if (
             _parse_model(
                 files[manifest.repetition_manifest_files[index].path],
@@ -1946,6 +2615,17 @@ def _validate_terminal_graph(
             raise Stage2ExperimentError("CUDA execution attestation differs from final attestation")
         if (
             _parse_model(
+                files[manifest.prometheus_measurement_attestation_files[index].path],
+                PrometheusMeasurementAttestation,
+                label="Prometheus measurement attestation",
+            )
+            != repetition.prometheus_measurement
+        ):
+            raise Stage2ExperimentError(
+                "Prometheus measurement attestation differs from final attestation"
+            )
+        if (
+            _parse_model(
                 files[manifest.cancellation_result_files[index].path],
                 CancellationResult,
                 label="cancellation result",
@@ -1953,7 +2633,6 @@ def _validate_terminal_graph(
             != repetition.runtime_control.cancellation_result
         ):
             raise Stage2ExperimentError("cancellation result differs from final attestation")
-        prefix = f"repetition-{repetition.repetition_index:02d}/"
         for request in repetition.measured_requests:
             reconstructed_request = reconstruct_request_from_raw_evidence(
                 {
@@ -1969,6 +2648,7 @@ def _validate_terminal_graph(
                 request.request_evidence,
                 request.request_identity,
                 request.lifecycle,
+                request.wire_capture,
             ):
                 raise Stage2ExperimentError(
                     f"measured request {request.external_request_id} does not reconstruct from raw"
@@ -2002,6 +2682,8 @@ def _validate_terminal_graph(
 
 
 def reconstruct_experiment_attestation(root: Path) -> Stage2ReconstructedExperiment:
+    if _path_has_symlink_ancestor(root):
+        raise Stage2ExperimentError("aggregate directory cannot have symlink ancestors")
     manifest_path = root / AGGREGATE_MANIFEST_PATH
     if not manifest_path.is_file() or manifest_path.is_symlink():
         raise Stage2ExperimentError("aggregate manifest is missing or unsafe")

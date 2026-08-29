@@ -243,3 +243,23 @@ published history. Stage 2B remains separately unauthorized.
 - Kept the complete CPU-generated 16 × 3 graph at `TEST_FIXTURE_ONLY` with classification
   `SYNTHETIC_PROTOCOL_SHAPE_ONLY`. No runtime, model, tokenizer, CUDA, GPU, Kaggle, remote compute,
   spend, claim, public wording, remote Git, or Stage 2B action occurred.
+
+## 2026-08-28 — Controller-authorized wire and measured-window correction
+
+- Required exactly one manifest-bound measured-window Prometheus attestation in each repetition,
+  with lossless baseline/final scrape captures, replay-parsed snapshots, same-process identity,
+  phase and request boundaries, a separately evidenced drain-completion boundary, one-second scrape
+  freshness gates, quiescent gauges, exact selected labels, and exact fixed-workload counter
+  reconciliation.
+- Replaced parsed-evidence-to-"raw" construction with exact transmitted request bytes, ordered
+  lossless request and response header fields, ordered Base64 response chunks, raw server log
+  records, public-safe header-name allowlisting, completed-frame observation clocks, and a
+  transport-close inventory. The runtime adapter's incremental SSE parser now owns replay; stored
+  events, terminals, metrics, lifecycle, token/usage values, and typed evidence must equal its
+  output, including split and coalesced terminal reads.
+- Added discriminated fixture-versus-collector provenance. Fixture helpers can emit only
+  `TEST_FIXTURE_ONLY / SYNTHETIC_PROTOCOL_SHAPE_ONLY`, while a future collector shape requires
+  runtime-process, snapshot, and environment identities.
+- Extended the aggregate root with three Prometheus attestation files and added standalone wire and
+  Prometheus `0.3.0` schemas. The complete 3 × 16 example remains CPU-fixture-only and does not
+  establish runtime, model, tokenizer, GPU, CUDA, Kaggle, or performance evidence.

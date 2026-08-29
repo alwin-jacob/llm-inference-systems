@@ -35,8 +35,17 @@
       "title": "BundleFileEntry",
       "type": "object"
     },
-    "ManifestBoundFile": {
+    "Stage2EvidenceScope": {
+      "enum": [
+        "TEST_FIXTURE_ONLY",
+        "FUTURE_REAL_RUNTIME"
+      ],
+      "title": "Stage2EvidenceScope",
+      "type": "string"
+    },
+    "Stage2ManifestBoundFile": {
       "additionalProperties": false,
+      "description": "Path/size/digest identity for evidence retained by a committed manifest.",
       "properties": {
         "path": {
           "title": "Path",
@@ -58,35 +67,27 @@
         "sha256",
         "size"
       ],
-      "title": "ManifestBoundFile",
+      "title": "Stage2ManifestBoundFile",
       "type": "object"
-    },
-    "Stage2EvidenceScope": {
-      "enum": [
-        "TEST_FIXTURE_ONLY",
-        "FUTURE_REAL_RUNTIME"
-      ],
-      "title": "Stage2EvidenceScope",
-      "type": "string"
     }
   },
   "additionalProperties": false,
   "properties": {
     "aggregate_validation_result": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "cancellation_result_files": {
       "maxItems": 3,
       "minItems": 3,
       "prefixItems": [
         {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         }
       ],
       "title": "Cancellation Result Files",
@@ -102,13 +103,13 @@
       "minItems": 3,
       "prefixItems": [
         {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         }
       ],
       "title": "Cuda Execution Attestation Files",
@@ -118,7 +119,7 @@
       "$ref": "#/$defs/Stage2EvidenceScope"
     },
     "execution_lock_snapshot": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "experiment_id": {
       "maxLength": 160,
@@ -127,7 +128,7 @@
       "type": "string"
     },
     "experiment_summary": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "failure_reason": {
       "anyOf": [
@@ -151,10 +152,10 @@
       "type": "array"
     },
     "final_attestation": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "launch_specification": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "measurement_protocol_version": {
       "const": "0.3.0",
@@ -162,54 +163,71 @@
       "type": "string"
     },
     "metric_availability_summary": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "model_tokenizer_snapshot_manifest": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "nvidia_isolation_evidence": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "nvidia_isolation_raw_evidence": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
+    },
+    "prometheus_measurement_attestation_files": {
+      "maxItems": 3,
+      "minItems": 3,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
+        },
+        {
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
+        },
+        {
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
+        }
+      ],
+      "title": "Prometheus Measurement Attestation Files",
+      "type": "array"
     },
     "public_safety_raw_scan_evidence": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "public_safety_result": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "repetition_manifest_files": {
       "maxItems": 3,
       "minItems": 3,
       "prefixItems": [
         {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         }
       ],
       "title": "Repetition Manifest Files",
       "type": "array"
     },
     "resource_environment_manifest": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "resource_environment_raw_evidence": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "reviewed_execution_lock": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "runtime_installed_distribution_inventory": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "runtime_resolver_lock_evidence": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "schema_version": {
       "const": "0.3.0",
@@ -218,7 +236,7 @@
     },
     "semantic_comparison_files": {
       "items": {
-        "$ref": "#/$defs/ManifestBoundFile"
+        "$ref": "#/$defs/Stage2ManifestBoundFile"
       },
       "maxItems": 16,
       "minItems": 16,
@@ -226,10 +244,10 @@
       "type": "array"
     },
     "shared_workload_definition": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "snapshot_read_only_verification_evidence": {
-      "$ref": "#/$defs/ManifestBoundFile"
+      "$ref": "#/$defs/Stage2ManifestBoundFile"
     },
     "state": {
       "$ref": "#/$defs/AggregateRootState"
@@ -261,6 +279,7 @@
     "repetition_manifest_files",
     "cuda_execution_attestation_files",
     "cancellation_result_files",
+    "prometheus_measurement_attestation_files",
     "semantic_comparison_files",
     "metric_availability_summary",
     "experiment_summary",

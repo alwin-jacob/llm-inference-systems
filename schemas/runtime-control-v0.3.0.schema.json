@@ -815,6 +815,11 @@
     "cancellation_result": {
       "$ref": "#/$defs/CancellationResult"
     },
+    "final_drain_completed_offset_ns": {
+      "minimum": 0,
+      "title": "Final Drain Completed Offset Ns",
+      "type": "integer"
+    },
     "final_metric_scrape": {
       "$ref": "#/$defs/PrometheusSnapshot"
     },
@@ -1007,6 +1012,7 @@
     "measured_request_ids",
     "requested_client_concurrency",
     "measured_client_slot_assignments",
+    "final_drain_completed_offset_ns",
     "final_metric_scrape",
     "shutdown_processes",
     "residual_process_ids",

@@ -44,6 +44,7 @@ def _sha256(path: Path) -> str:
 def _immutable_snapshot(root: Path) -> dict[str, str]:
     paths = [
         root / "uv.lock",
+        root / "execution-lock/stage2-execution-lock.json",
         *(path for directory in IMMUTABLE_DIRECTORIES for path in (root / directory).rglob("*")),
     ]
     snapshot: dict[str, str] = {}
@@ -53,6 +54,10 @@ def _immutable_snapshot(root: Path) -> dict[str, str]:
         if path.is_file():
             snapshot[path.relative_to(root).as_posix()] = _sha256(path)
     _require("uv.lock" in snapshot, "uv.lock is missing")
+    _require(
+        "execution-lock/stage2-execution-lock.json" in snapshot,
+        "Stage 2 execution lock is missing",
+    )
     _require(
         f"{EVIDENCE_DIRECTORY.as_posix()}/evidence-manifest.json" in snapshot,
         "checked evidence manifest is missing",
