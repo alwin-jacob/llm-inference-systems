@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from llm_inference_systems.canonical import sha256_identity
 from llm_inference_systems.stage2_contracts import (
     BundleFileEntry,
     BundleState,
@@ -19,6 +20,7 @@ from llm_inference_systems.stage2_control import (
     AggregateComparisonState,
     CancellationClassification,
     CancellationProbe,
+    CancellationScrapeObservationEvidence,
     RestartSemanticRecord,
     Stage2ControlError,
     bundle_manifest_sha256,
@@ -344,7 +346,16 @@ def test_cancellation_rejects_nonabort_finish_or_residual_work() -> None:
         scrape_monotonic_offset_ns=final.scrape_monotonic_offset_ns,
     )
     cooldown = (*_cancellation().cooldown_snapshots[:-1], changed)
-    probe = _cancellation().model_copy(update={"cooldown_snapshots": cooldown})
+    observations = list(_cancellation().scrape_observations)
+    observations[-1] = observations[-1].model_copy(
+        update={"snapshot_identity_sha256": sha256_identity(changed)}
+    )
+    probe = _cancellation().model_copy(
+        update={
+            "cooldown_snapshots": cooldown,
+            "scrape_observations": tuple(observations),
+        }
+    )
     assert (
         evaluate_cancellation(probe).classification is CancellationClassification.LATER_COMPLETION
     )
@@ -389,7 +400,20 @@ def test_cancellation_rejects_stable_boundary_splice_and_later_completion() -> N
         abort=1,
         length=1,
     )
-    later_completion = probe.model_copy(update={"later_retained_snapshots": (later,)})
+    later_observation = CancellationScrapeObservationEvidence(
+        phase="LATER",
+        phase_ordinal=0,
+        scheduled_offset_ns=later.scrape_monotonic_offset_ns,
+        request_dispatch_offset_ns=later.scrape_monotonic_offset_ns,
+        response_completion_offset_ns=later.scrape_monotonic_offset_ns,
+        snapshot_identity_sha256=sha256_identity(later),
+    )
+    later_completion = probe.model_copy(
+        update={
+            "later_retained_snapshots": (later,),
+            "scrape_observations": (*probe.scrape_observations, later_observation),
+        }
+    )
     assert (
         evaluate_cancellation(later_completion).classification
         is CancellationClassification.LATER_COMPLETION
@@ -413,12 +437,12 @@ def test_cancellation_rejected_classifications_and_continuous_cadence() -> None:
         ).classification
         is CancellationClassification.UNKNOWN_ACKNOWLEDGEMENT
     )
-    missing_first = _cancellation().first_generation_token.model_copy(
-        update={"observation_offset_ns": _cancellation().client_close_offset_ns}
+    missing_first = _cancellation().first_generation_delivery.model_copy(
+        update={"observation_offset_ns": _cancellation().client_close_offset_ns + 1}
     )
     assert (
         evaluate_cancellation(
-            _cancellation().model_copy(update={"first_generation_token": missing_first})
+            _cancellation().model_copy(update={"first_generation_delivery": missing_first})
         ).classification
         is CancellationClassification.TERMINAL_UNKNOWN
     )

@@ -320,7 +320,7 @@ def _http_exchange(
     terminal_classification: Literal[
         "CLEAN_EOF",
         "CLEAN_RESPONSE_CLOSE",
-        "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN",
+        "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_DELIVERY",
     ],
     server_process_identity: str,
     launch_spec_identity_sha256: str,
@@ -632,15 +632,15 @@ def _cancellation_wire(
             (b"Transfer-Encoding", b"chunked"),
         ),
     )
-    first_token = probe.first_generation_token
+    first_delivery = probe.first_generation_delivery
     body_bytes = _sse_data(
         {
-            "id": first_token.response_body_id,
+            "id": first_delivery.response_body_id,
             "choices": [
                 {
                     "index": 0,
                     "text": "<fixture-1000>",
-                    "token_ids": list(first_token.output_token_ids),
+                    "token_ids": list(first_delivery.output_token_ids),
                     "finish_reason": None,
                     "prompt_token_ids": list(PROMPT),
                 }
@@ -652,8 +652,8 @@ def _cancellation_wire(
         "case_id": "cancellation-probe",
         "external_request_id": external_id,
         "ordinal": 0,
-        "observation_offset_ns": first_token.observation_offset_ns,
-        "completed_sse_frame_observation_offsets_ns": (first_token.observation_offset_ns,),
+        "observation_offset_ns": first_delivery.observation_offset_ns,
+        "completed_sse_frame_observation_offsets_ns": (first_delivery.observation_offset_ns,),
         "exact_bytes_base64": base64.b64encode(body_bytes).decode("ascii"),
         "decoded_byte_count": len(body_bytes),
         "sha256": hashlib.sha256(body_bytes).hexdigest(),
@@ -667,11 +667,30 @@ def _cancellation_wire(
         identity_chain=probe.identity_chain,
         identity_sha256=sha256_identity(probe.identity_chain),
     )
+    exchange = _http_exchange(
+        purpose="CANCELLATION",
+        repetition_index=repetition_index,
+        evidence_unit_id="cancellation-probe",
+        external_request_id=external_id,
+        request_headers=request_headers,
+        response_headers=response_headers,
+        request_body=request_bytes,
+        response_body=body_bytes,
+        response_body_inventory_sha256=sha256_identity(chunks),
+        request_body_offset_ns=probe.dispatch_offset_ns,
+        response_body_completion_offset_ns=first_delivery.observation_offset_ns,
+        terminal_offset_ns=probe.client_close_offset_ns,
+        terminal_classification="INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_DELIVERY",
+        server_process_identity=server_process_identity,
+        launch_spec_identity_sha256=launch_spec_identity_sha256,
+        provenance=provenance,
+    )
     placeholder_close = Stage2CancellationClientCloseCapture.model_construct(
         external_request_id=external_id,
-        close_classification="INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN",
+        close_classification="INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_DELIVERY",
         close_observation_offset_ns=probe.client_close_offset_ns,
-        response_close_completed=False,
+        response_close_completion_observation_offset_ns=probe.client_close_offset_ns,
+        response_close_completed=True,
         client_stream_context_exited=True,
         post_close_byte_count=0,
         post_close_event_count=0,
@@ -686,11 +705,13 @@ def _cancellation_wire(
         external_request_id=external_id,
         provenance=provenance,
         request_body=request_body,
-        http_exchange=None,
+        http_exchange=exchange,
         response_body_chunks=chunks,
         parser_replay=None,
         intentional_client_close=placeholder_close,
         request_identity=identity,
+        raw_log_capture=probe.raw_log_capture,
+        raw_log_capture_sha256=probe.raw_log_capture_sha256,
         identity_sha256="0" * 64,
     )
     replay = replay_stage2_cancellation_wire_capture(temporary)
@@ -700,24 +721,6 @@ def _cancellation_wire(
         close_values, omit_fields=frozenset({"identity_sha256"})
     )
     close = Stage2CancellationClientCloseCapture.model_validate(close_values)
-    exchange = _http_exchange(
-        purpose="CANCELLATION",
-        repetition_index=repetition_index,
-        evidence_unit_id="cancellation-probe",
-        external_request_id=external_id,
-        request_headers=request_headers,
-        response_headers=response_headers,
-        request_body=request_bytes,
-        response_body=body_bytes,
-        response_body_inventory_sha256=sha256_identity(chunks),
-        request_body_offset_ns=probe.dispatch_offset_ns,
-        response_body_completion_offset_ns=first_token.observation_offset_ns,
-        terminal_offset_ns=probe.client_close_offset_ns,
-        terminal_classification="INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN",
-        server_process_identity=server_process_identity,
-        launch_spec_identity_sha256=launch_spec_identity_sha256,
-        provenance=provenance,
-    )
     values: dict[str, object] = {
         "schema_version": "0.3.0",
         "repetition_index": repetition_index,
@@ -729,6 +732,8 @@ def _cancellation_wire(
         "parser_replay": replay,
         "intentional_client_close": close,
         "request_identity": identity,
+        "raw_log_capture": probe.raw_log_capture,
+        "raw_log_capture_sha256": probe.raw_log_capture_sha256,
     }
     values["identity_sha256"] = sha256_identity(values)
     return Stage2CancellationWireCapture.model_validate(values)

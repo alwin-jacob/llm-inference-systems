@@ -6,6 +6,9 @@ conservative filesystem walk that never follows symlinks and excludes only known
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import ntpath
 import os
 import re
@@ -288,6 +291,45 @@ def _patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
     return (*literal_patterns, *_private_environment_patterns(), *token_patterns)
 
 
+def _decoded_base64_payloads(text: str) -> tuple[str, ...]:
+    """Return UTF-8 views of JSON `*_base64` fields for content scanning."""
+
+    documents: tuple[object, ...]
+    try:
+        documents = (json.loads(text),)
+    except json.JSONDecodeError:
+        documents = tuple(
+            value for line in text.splitlines() if line.strip() for value in _parse_json_line(line)
+        )
+    decoded: list[str] = []
+
+    def visit(item: object) -> None:
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if isinstance(key, str) and key.endswith("_base64") and isinstance(child, str):
+                    try:
+                        raw = base64.b64decode(child, validate=True)
+                    except (binascii.Error, ValueError):
+                        continue
+                    if base64.b64encode(raw).decode("ascii") == child:
+                        decoded.append(raw.decode("utf-8", errors="replace"))
+                visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+
+    for document in documents:
+        visit(document)
+    return tuple(decoded)
+
+
+def _parse_json_line(line: str) -> tuple[object, ...]:
+    try:
+        return (json.loads(line),)
+    except json.JSONDecodeError:
+        return ()
+
+
 def scan_repository(root: Path) -> tuple[tuple[str, str], ...]:
     resolved_root = root.resolve(strict=True)
     findings: list[tuple[str, str]] = []
@@ -310,8 +352,9 @@ def scan_repository(root: Path) -> tuple[tuple[str, str], ...]:
                 if not match.group(0).startswith("http://127.0.0.1"):
                     findings.append((relative, "arbitrary-executable-runtime-url"))
                     break
+        scan_texts = (text, *_decoded_base64_payloads(text))
         for rule, pattern in _patterns():
-            if pattern.search(text):
+            if any(pattern.search(scan_text) for scan_text in scan_texts):
                 findings.append((relative, rule))
     return tuple(findings)
 

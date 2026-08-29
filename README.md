@@ -69,16 +69,29 @@ status or public résumé wording advances.
   boundary; it is not packet capture and does not expose Ethernet, IP, TCP, TLS, kernel, proxy, or
   server-parser state. Ordinary HTTPX/server-added fields remain retained, while any credential-
   bearing header rejects the capture before durable commit. Cancellation retains its exact
-  64-token/512-output request bytes and SSE bytes through exactly one first generation token,
-  followed by `INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN`; it cannot be represented as
-  clean EOF or successful stream completion. Each successful `GET /metrics` capture binds the raw
+  64-token/512-output request bytes and every raw body-read chunk through the first observed
+  generation delivery. Replay retains every complete nonterminal frame and token ID in that
+  close-triggering read plus both the exact raw bytes and the CRLF-normalized parser bytes, counts,
+  and SHA-256 values of any incomplete trailing SSE fragment. The bounded raw-log byte stream,
+  delimiters, and complete record inventory are retained and uniquely correlated. Grouped token
+  IDs and coalesced frames are accepted without fabricating per-token clocks, and the probe remains
+  ineligible for performance metrics. The actual HTTP response close is awaited and its completion
+  is retained separately from the intentional-close invocation. The close classification is
+  `INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_DELIVERY`; a generation/usage terminal,
+  `[DONE]`, or clean EOF before close invalidates the probe. It cannot be represented as clean EOF
+  or successful stream completion. Each successful `GET /metrics` capture binds the raw
   exposition body to its response headers and supports only `text/plain` or
   `application/openmetrics-text`. The measured-window attestation derives all ten required deltas,
   including `length=16` and zero `abort`, `stop`, `error`, and `repetition`. Semantic
   mismatch is retained only as an `INVALID` root and can never become `COMMITTED`.
-- A CPU-only Stage 2A fixture server fixed to `127.0.0.1:0`, plus generated `0.3.0` schemas and a
-  verifier that proves historical Stage 0/1 bytes and ordinary dependency boundaries remain
-  unchanged.
+- A CPU-only Stage 2A fixture server fixed to `127.0.0.1:0`, including actual HTTPX cancellation
+  scenarios for single/grouped token delivery, coalesced frames, incomplete trailing bytes, all
+  prohibited terminals, clean EOF, and post-close attribution. Its accepted integration derives
+  prompt, generation, abort, drain, and cooldown snapshots from live fixture `/metrics` responses.
+  Each scrape keeps the cadence schedule distinct from actual request-dispatch and
+  response-completion clocks; the live snapshot observation is the latter.
+  Generated `0.3.0` schemas and a verifier prove historical Stage 0/1 bytes and ordinary dependency
+  boundaries remain unchanged.
 
 Parsing and reconciliation are evidence-neutral. Request/component attestation remains fixture
 scope; only the complete experiment validator can assign a future real-runtime boundary. Its CPU

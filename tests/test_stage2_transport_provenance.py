@@ -278,7 +278,7 @@ def test_minimal_cancellation_boolean_summary_is_structurally_rejected() -> None
         "appended-chunk",
         "appended-empty-frame",
         "altered-chunk",
-        "parser-token-count",
+        "parser-delivery-token-drift",
         "close-before-token",
         "close-request-id",
         "identity-chain",
@@ -327,11 +327,11 @@ def test_cancellation_wire_rejects_raw_replay_and_identity_bypasses(
         chunk["decoded_byte_count"] = len(raw)
         chunk["sha256"] = hashlib.sha256(raw).hexdigest()
         _rehash(chunk)
-    elif mutation == "parser-token-count":
-        values["parser_replay"]["first_generation_token"]["output_token_ids"] = [1000, 1001]
+    elif mutation == "parser-delivery-token-drift":
+        values["parser_replay"]["first_generation_delivery"]["output_token_ids"] = [1001]
     elif mutation == "close-before-token":
         values["intentional_client_close"]["close_observation_offset_ns"] = (
-            wire.parser_replay.first_generation_token.observation_offset_ns - 1
+            wire.parser_replay.first_generation_delivery.observation_offset_ns - 1
         )
     elif mutation == "close-request-id":
         values["intentional_client_close"]["external_request_id"] = "different-close"
@@ -394,9 +394,8 @@ def test_cancellation_rejects_chunk_observation_overlapping_prior_frame(
 ) -> None:
     wire = experiment.repetitions[0].cancellation_wire
     values = wire.model_dump(mode="python")
-    first_token_offset = wire.parser_replay.first_generation_token.observation_offset_ns
+    first_token_offset = wire.parser_replay.first_generation_delivery.observation_offset_ns
     source_chunk = values["response_body_chunks"][0]
-    token_bytes = base64.b64decode(source_chunk["exact_bytes_base64"])
     comment_bytes = b": first\n\n: second\n\n"
     comment_chunk = dict(source_chunk)
     comment_chunk.update(
@@ -426,27 +425,9 @@ def test_cancellation_rejects_chunk_observation_overlapping_prior_frame(
         Stage2RawResponseBodyChunk.model_validate(comment_chunk),
         Stage2RawResponseBodyChunk.model_validate(token_chunk),
     )
-    inventory_sha = sha256_identity(typed_chunks)
     temporary = wire.model_copy(update={"response_body_chunks": typed_chunks})
-    replay = replay_stage2_cancellation_wire_capture(temporary)
-    values["response_body_chunks"] = tuple(
-        chunk.model_dump(mode="python") for chunk in typed_chunks
-    )
-    values["parser_replay"] = replay.model_dump(mode="python")
-    raw_body = comment_bytes + token_bytes
-    exchange = values["http_exchange"]
-    exchange["response_body_byte_count"] = len(raw_body)
-    exchange["response_body_sha256"] = hashlib.sha256(raw_body).hexdigest()
-    exchange["response_body_inventory_sha256"] = inventory_sha
-    exchange["response_body_completion_observation_offset_ns"] = first_token_offset + 1
-    _rehash(exchange)
-    close = values["intentional_client_close"]
-    close["raw_response_body_inventory_sha256"] = inventory_sha
-    close["parser_replay_identity_sha256"] = replay.identity_sha256
-    _rehash(close)
-    _rehash(values)
-    with pytest.raises(ValidationError, match="overlap prior SSE-frame"):
-        Stage2CancellationWireCapture.model_validate(values)
+    with pytest.raises(ValueError, match="failed parser replay"):
+        replay_stage2_cancellation_wire_capture(temporary)
 
 
 @pytest.mark.parametrize(
@@ -678,9 +659,9 @@ def test_positive_fixture_transport_shape_is_complete_and_fixture_only(
         assert len(repetition.prometheus_measurement.counter_deltas) == 10
         assert (
             repetition.cancellation_wire.intentional_client_close.close_classification
-            == "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN"
+            == "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_DELIVERY"
         )
-        assert repetition.cancellation_wire.parser_replay.first_generation_token.output_token_ids
+        assert repetition.cancellation_wire.parser_replay.first_generation_delivery.output_token_ids
         request_names = tuple(
             name
             for name, _ in repetition.measured_requests[

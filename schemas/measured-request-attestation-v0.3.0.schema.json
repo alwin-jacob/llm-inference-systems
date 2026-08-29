@@ -685,7 +685,7 @@
           "enum": [
             "CLEAN_EOF",
             "CLEAN_RESPONSE_CLOSE",
-            "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN"
+            "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_DELIVERY"
           ],
           "title": "Transport Terminal Classification",
           "type": "string"

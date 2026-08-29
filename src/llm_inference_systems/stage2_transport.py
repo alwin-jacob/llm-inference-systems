@@ -359,7 +359,7 @@ class Stage2HTTPExchangeCapture(StrictModel):
     transport_terminal_classification: Literal[
         "CLEAN_EOF",
         "CLEAN_RESPONSE_CLOSE",
-        "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN",
+        "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_DELIVERY",
     ]
     response_body_capture_complete_through_terminal_at_layer: Literal[True]
     server_process_identity: Identifier
@@ -438,7 +438,7 @@ class Stage2HTTPExchangeCapture(StrictModel):
             expected_terminal = (
                 "CLEAN_EOF"
                 if self.exchange_purpose == "MEASURED_COMPLETION"
-                else "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN"
+                else "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_DELIVERY"
             )
             if self.transport_terminal_classification != expected_terminal:
                 raise ValueError("completion HTTP exchange terminal classification differs")

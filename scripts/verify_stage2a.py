@@ -251,9 +251,21 @@ def main() -> int:
         or any(
             repetition.cancellation_wire.http_exchange.exchange_purpose != "CANCELLATION"
             or repetition.cancellation_wire.intentional_client_close.close_classification
-            != "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN"
-            or repetition.cancellation_wire.parser_replay.first_generation_token
-            != repetition.runtime_control.cancellation_probe.first_generation_token
+            != "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_DELIVERY"
+            or repetition.cancellation_wire.parser_replay.first_generation_delivery
+            != repetition.runtime_control.cancellation_probe.first_generation_delivery
+            or not repetition.cancellation_wire.parser_replay.generation_events
+            or not repetition.cancellation_wire.parser_replay.all_output_token_ids
+            or repetition.cancellation_wire.parser_replay.pending_byte_count != 0
+            or repetition.cancellation_wire.parser_replay.pending_bytes_sha256
+            != hashlib.sha256(b"").hexdigest()
+            or repetition.cancellation_wire.parser_replay.parser_pending_byte_count != 0
+            or repetition.cancellation_wire.parser_replay.parser_pending_bytes_sha256
+            != hashlib.sha256(b"").hexdigest()
+            or repetition.cancellation_wire.raw_log_capture
+            != repetition.runtime_control.cancellation_probe.raw_log_capture
+            or repetition.cancellation_wire.parser_replay.token_observation_metrics_available
+            or repetition.cancellation_wire.parser_replay.performance_measurement_eligible
             for repetition in experiment.repetitions
         )
         or any(

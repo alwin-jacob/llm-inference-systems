@@ -76,8 +76,8 @@
           "title": "Drain Snapshots",
           "type": "array"
         },
-        "first_generation_token": {
-          "$ref": "#/$defs/FirstGenerationTokenEvidence"
+        "first_generation_delivery": {
+          "$ref": "#/$defs/FirstGenerationDeliveryEvidence"
         },
         "identity_chain": {
           "$ref": "#/$defs/RequestIdentityChain"
@@ -98,13 +98,41 @@
           "title": "Pre Dispatch Snapshots",
           "type": "array"
         },
+        "raw_log_capture": {
+          "$ref": "#/$defs/RawLogCapture"
+        },
+        "raw_log_capture_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Raw Log Capture Sha256",
+          "type": "string"
+        },
         "raw_log_start_byte_offset": {
           "minimum": 0,
           "title": "Raw Log Start Byte Offset",
           "type": "integer"
         },
+        "repetition_index": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Repetition Index",
+          "type": "integer"
+        },
         "residual_state": {
           "$ref": "#/$defs/ResidualStateEvidence"
+        },
+        "scrape_observations": {
+          "items": {
+            "$ref": "#/$defs/CancellationScrapeObservationEvidence"
+          },
+          "minItems": 52,
+          "title": "Scrape Observations",
+          "type": "array"
+        },
+        "server_process_identity": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Server Process Identity",
+          "type": "string"
         },
         "stable_generation_snapshots": {
           "items": {
@@ -116,16 +144,21 @@
         }
       },
       "required": [
+        "repetition_index",
+        "server_process_identity",
         "identity_chain",
+        "raw_log_capture",
+        "raw_log_capture_sha256",
         "raw_log_start_byte_offset",
         "dispatch_offset_ns",
-        "first_generation_token",
+        "first_generation_delivery",
         "client_close_offset_ns",
         "pre_dispatch_snapshots",
         "drain_snapshots",
         "stable_generation_snapshots",
         "cooldown_snapshots",
         "later_retained_snapshots",
+        "scrape_observations",
         "residual_state"
       ],
       "title": "CancellationProbe",
@@ -204,6 +237,57 @@
         "observed_abort_delta"
       ],
       "title": "CancellationResult",
+      "type": "object"
+    },
+    "CancellationScrapeObservationEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "phase": {
+          "enum": [
+            "PRE_DISPATCH",
+            "DRAIN",
+            "STABLE_GENERATION",
+            "COOLDOWN",
+            "LATER"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "phase_ordinal": {
+          "minimum": 0,
+          "title": "Phase Ordinal",
+          "type": "integer"
+        },
+        "request_dispatch_offset_ns": {
+          "minimum": 0,
+          "title": "Request Dispatch Offset Ns",
+          "type": "integer"
+        },
+        "response_completion_offset_ns": {
+          "minimum": 0,
+          "title": "Response Completion Offset Ns",
+          "type": "integer"
+        },
+        "scheduled_offset_ns": {
+          "minimum": 0,
+          "title": "Scheduled Offset Ns",
+          "type": "integer"
+        },
+        "snapshot_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Snapshot Identity Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase",
+        "phase_ordinal",
+        "scheduled_offset_ns",
+        "request_dispatch_offset_ns",
+        "response_completion_offset_ns",
+        "snapshot_identity_sha256"
+      ],
+      "title": "CancellationScrapeObservationEvidence",
       "type": "object"
     },
     "CollectorWireCaptureProvenance": {
@@ -376,14 +460,24 @@
       "title": "CudaBackedExecutionAttestation",
       "type": "object"
     },
-    "FirstGenerationTokenEvidence": {
+    "FirstGenerationDeliveryEvidence": {
       "additionalProperties": false,
       "properties": {
+        "body_chunk_ordinal": {
+          "minimum": 0,
+          "title": "Body Chunk Ordinal",
+          "type": "integer"
+        },
         "external_request_id": {
           "maxLength": 160,
           "minLength": 1,
           "title": "External Request Id",
           "type": "string"
+        },
+        "generation_event_ordinal": {
+          "minimum": 0,
+          "title": "Generation Event Ordinal",
+          "type": "integer"
         },
         "observation_offset_ns": {
           "minimum": 0,
@@ -409,10 +503,12 @@
       "required": [
         "external_request_id",
         "response_body_id",
+        "generation_event_ordinal",
+        "body_chunk_ordinal",
         "observation_offset_ns",
         "output_token_ids"
       ],
-      "title": "FirstGenerationTokenEvidence",
+      "title": "FirstGenerationDeliveryEvidence",
       "type": "object"
     },
     "FixtureWireCaptureProvenance": {
@@ -1297,6 +1393,55 @@
         "scan_result_sha256"
       ],
       "title": "PublicSafetyAttestation",
+      "type": "object"
+    },
+    "RawLogCapture": {
+      "additionalProperties": false,
+      "description": "Complete bounded raw-log bytes and their lossless record inventory.",
+      "properties": {
+        "decoded_byte_count": {
+          "minimum": 0,
+          "title": "Decoded Byte Count",
+          "type": "integer"
+        },
+        "exact_bytes_base64": {
+          "title": "Exact Bytes Base64",
+          "type": "string"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "raw_bytes_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Raw Bytes Sha256",
+          "type": "string"
+        },
+        "records": {
+          "items": {
+            "$ref": "#/$defs/RawLogRecord"
+          },
+          "minItems": 1,
+          "title": "Records",
+          "type": "array"
+        },
+        "source_stream_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Source Stream Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_stream_id",
+        "exact_bytes_base64",
+        "decoded_byte_count",
+        "raw_bytes_sha256",
+        "records",
+        "identity_sha256"
+      ],
+      "title": "RawLogCapture",
       "type": "object"
     },
     "RawLogRecord": {
@@ -2210,7 +2355,7 @@
           "type": "boolean"
         },
         "close_classification": {
-          "const": "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN",
+          "const": "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_DELIVERY",
           "title": "Close Classification",
           "type": "string"
         },
@@ -2256,15 +2401,21 @@
           "type": "string"
         },
         "response_close_completed": {
-          "const": false,
+          "const": true,
           "title": "Response Close Completed",
           "type": "boolean"
+        },
+        "response_close_completion_observation_offset_ns": {
+          "minimum": 0,
+          "title": "Response Close Completion Observation Offset Ns",
+          "type": "integer"
         }
       },
       "required": [
         "external_request_id",
         "close_classification",
         "close_observation_offset_ns",
+        "response_close_completion_observation_offset_ns",
         "response_close_completed",
         "client_stream_context_exited",
         "post_close_byte_count",
@@ -2331,9 +2482,76 @@
       "title": "Stage2CancellationExactRequestBodyCapture",
       "type": "object"
     },
+    "Stage2CancellationGenerationEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "observation_offset_ns": {
+          "minimum": 0,
+          "title": "Observation Offset Ns",
+          "type": "integer"
+        },
+        "output_token_ids": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Output Token Ids",
+          "type": "array"
+        },
+        "prompt_token_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Prompt Token Ids"
+        },
+        "sse_event_ordinal": {
+          "minimum": 0,
+          "title": "Sse Event Ordinal",
+          "type": "integer"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sse_event_ordinal",
+        "observation_offset_ns",
+        "output_token_ids",
+        "text",
+        "prompt_token_ids",
+        "identity_sha256"
+      ],
+      "title": "Stage2CancellationGenerationEvent",
+      "type": "object"
+    },
     "Stage2CancellationParserReplay": {
       "additionalProperties": false,
       "properties": {
+        "all_output_token_ids": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "All Output Token Ids",
+          "type": "array"
+        },
         "clean_transport_eof_observed": {
           "const": false,
           "title": "Clean Transport Eof Observed",
@@ -2350,8 +2568,16 @@
           "title": "External Request Id",
           "type": "string"
         },
-        "first_generation_token": {
-          "$ref": "#/$defs/FirstGenerationTokenEvidence"
+        "first_generation_delivery": {
+          "$ref": "#/$defs/FirstGenerationDeliveryEvidence"
+        },
+        "generation_events": {
+          "items": {
+            "$ref": "#/$defs/Stage2CancellationGenerationEvent"
+          },
+          "minItems": 1,
+          "title": "Generation Events",
+          "type": "array"
         },
         "generation_terminal_observed": {
           "const": false,
@@ -2362,6 +2588,47 @@
           "pattern": "^[0-9a-f]{64}$",
           "title": "Identity Sha256",
           "type": "string"
+        },
+        "parser_pending_byte_count": {
+          "minimum": 0,
+          "title": "Parser Pending Byte Count",
+          "type": "integer"
+        },
+        "parser_pending_bytes_base64": {
+          "title": "Parser Pending Bytes Base64",
+          "type": "string"
+        },
+        "parser_pending_bytes_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Parser Pending Bytes Sha256",
+          "type": "string"
+        },
+        "parser_state_at_close": {
+          "enum": [
+            "AT_SSE_FRAME_BOUNDARY",
+            "INCOMPLETE_TRAILING_SSE_BYTES"
+          ],
+          "title": "Parser State At Close",
+          "type": "string"
+        },
+        "pending_byte_count": {
+          "minimum": 0,
+          "title": "Pending Byte Count",
+          "type": "integer"
+        },
+        "pending_bytes_base64": {
+          "title": "Pending Bytes Base64",
+          "type": "string"
+        },
+        "pending_bytes_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Pending Bytes Sha256",
+          "type": "string"
+        },
+        "performance_measurement_eligible": {
+          "const": false,
+          "title": "Performance Measurement Eligible",
+          "type": "boolean"
         },
         "raw_response_body_inventory_sha256": {
           "pattern": "^[0-9a-f]{64}$",
@@ -2382,6 +2649,16 @@
           "title": "Response Body Id",
           "type": "string"
         },
+        "token_observation_metrics_available": {
+          "const": false,
+          "title": "Token Observation Metrics Available",
+          "type": "boolean"
+        },
+        "token_observation_metrics_unavailable_reason": {
+          "const": "CANCELLATION_PROBE_NOT_MEASURED",
+          "title": "Token Observation Metrics Unavailable Reason",
+          "type": "string"
+        },
         "usage_terminal_observed": {
           "const": false,
           "title": "Usage Terminal Observed",
@@ -2392,12 +2669,24 @@
         "external_request_id",
         "response_body_id",
         "replayed_events",
-        "first_generation_token",
+        "generation_events",
+        "all_output_token_ids",
+        "first_generation_delivery",
+        "pending_bytes_base64",
+        "pending_byte_count",
+        "pending_bytes_sha256",
+        "parser_pending_bytes_base64",
+        "parser_pending_byte_count",
+        "parser_pending_bytes_sha256",
+        "parser_state_at_close",
         "raw_response_body_inventory_sha256",
         "generation_terminal_observed",
         "usage_terminal_observed",
         "done_terminal_observed",
         "clean_transport_eof_observed",
+        "token_observation_metrics_available",
+        "token_observation_metrics_unavailable_reason",
+        "performance_measurement_eligible",
         "identity_sha256"
       ],
       "title": "Stage2CancellationParserReplay",
@@ -2552,6 +2841,14 @@
           ],
           "title": "Provenance"
         },
+        "raw_log_capture": {
+          "$ref": "#/$defs/RawLogCapture"
+        },
+        "raw_log_capture_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Raw Log Capture Sha256",
+          "type": "string"
+        },
         "repetition_index": {
           "enum": [
             1,
@@ -2592,6 +2889,8 @@
         "parser_replay",
         "intentional_client_close",
         "request_identity",
+        "raw_log_capture",
+        "raw_log_capture_sha256",
         "identity_sha256"
       ],
       "title": "Stage2CancellationWireCapture",
@@ -3209,7 +3508,7 @@
           "enum": [
             "CLEAN_EOF",
             "CLEAN_RESPONSE_CLOSE",
-            "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN"
+            "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_DELIVERY"
           ],
           "title": "Transport Terminal Classification",
           "type": "string"

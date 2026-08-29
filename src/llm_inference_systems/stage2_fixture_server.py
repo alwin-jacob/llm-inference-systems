@@ -5,16 +5,33 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+import time
 from contextlib import suppress
+from enum import StrEnum
 from typing import Final
 
 from pydantic import ValidationError
 
-from llm_inference_systems.stage2_contracts import Stage2CompletionRequest
+from llm_inference_systems.stage2_contracts import (
+    Stage2CancellationRequest,
+    Stage2CompletionRequest,
+)
 
 STAGE2_FIXTURE_HOST: Final = "127.0.0.1"
 MAX_HEADER_BYTES: Final = 16 * 1024
 MAX_BODY_BYTES: Final = 64 * 1024
+
+
+class Stage2CancellationFixtureScenario(StrEnum):
+    SINGLE_TOKEN = "SINGLE_TOKEN"
+    GROUPED_TOKENS = "GROUPED_TOKENS"
+    COALESCED_FRAMES = "COALESCED_FRAMES"
+    COMPLETE_FRAME_WITH_TRAILING_FRAGMENT = "COMPLETE_FRAME_WITH_TRAILING_FRAGMENT"
+    GENERATION_TERMINAL = "GENERATION_TERMINAL"
+    USAGE_TERMINAL = "USAGE_TERMINAL"
+    DONE_TERMINAL = "DONE_TERMINAL"
+    CLEAN_EOF = "CLEAN_EOF"
+    POST_CLOSE_DATA = "POST_CLOSE_DATA"
 
 
 class Stage2FixtureHTTPError(ValueError):
@@ -26,13 +43,24 @@ class Stage2FixtureHTTPError(ValueError):
 class Stage2FixtureServer:
     """A deterministic protocol fixture with no configurable bind address."""
 
-    def __init__(self, *, finish_only_terminal: bool = False, grouped_tokens: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        finish_only_terminal: bool = False,
+        grouped_tokens: bool = False,
+        cancellation_scenario: Stage2CancellationFixtureScenario = (
+            Stage2CancellationFixtureScenario.SINGLE_TOKEN
+        ),
+    ) -> None:
         self.finish_only_terminal = finish_only_terminal
         self.grouped_tokens = grouped_tokens
+        self.cancellation_scenario = cancellation_scenario
         self._server: asyncio.AbstractServer | None = None
         self._tasks: set[asyncio.Task[None]] = set()
         self._port: int | None = None
         self.logs: list[str] = []
+        self.log_observation_offsets_ns: list[int] = []
+        self._aborted_request_ids: set[str] = set()
         self.prompt_tokens_total = 0
         self.generation_tokens_total = 0
         self.request_success: dict[str, int] = {
@@ -121,9 +149,13 @@ class Stage2FixtureServer:
                 external_id = request.request_id
                 serving_item = f"cmpl-{external_id}-0"
                 internal_id = f"{serving_item}-deadbeef"
-                self.logs.append(f"Received request {serving_item}: params: TEST_FIXTURE_ONLY.")
-                self.logs.append(f"Added request {internal_id}.")
+                self._append_log(f"Received request {serving_item}: params: TEST_FIXTURE_ONLY.")
+                self._append_log(f"Added request {internal_id}.")
                 self.running_requests += 1
+                if isinstance(request, Stage2CancellationRequest):
+                    if await self._send_cancellation(reader, writer, request):
+                        self._record_abort(external_id, internal_id)
+                    return
                 await self._send_completion(writer, request)
                 self.prompt_tokens_total += 64
                 self.generation_tokens_total += 32
@@ -132,17 +164,11 @@ class Stage2FixtureServer:
                 await self._send_plain(writer, error.status, "Stage 2 fixture request rejected")
         except asyncio.CancelledError:
             if external_id is not None and internal_id is not None:
-                serving_item = f"cmpl-{external_id}-0"
-                self.logs.append(f"Request {serving_item} aborted.")
-                self.logs.append(f"Aborted request(s) {internal_id}.")
-                self.request_success["abort"] += 1
+                self._record_abort(external_id, internal_id)
             raise
         except (BrokenPipeError, ConnectionError):
             if external_id is not None and internal_id is not None:
-                serving_item = f"cmpl-{external_id}-0"
-                self.logs.append(f"Request {serving_item} aborted.")
-                self.logs.append(f"Aborted request(s) {internal_id}.")
-                self.request_success["abort"] += 1
+                self._record_abort(external_id, internal_id)
         finally:
             if external_id is not None:
                 self.running_requests = max(0, self.running_requests - 1)
@@ -198,14 +224,34 @@ class Stage2FixtureServer:
         return method, path, headers, body
 
     @staticmethod
-    def _validate_completion(headers: dict[str, str], body: bytes) -> Stage2CompletionRequest:
+    def _validate_completion(
+        headers: dict[str, str], body: bytes
+    ) -> Stage2CompletionRequest | Stage2CancellationRequest:
         try:
-            request = Stage2CompletionRequest.model_validate_json(body)
-        except ValidationError as error:
-            raise Stage2FixtureHTTPError(400, "completion request differs") from error
+            request: Stage2CompletionRequest | Stage2CancellationRequest = (
+                Stage2CancellationRequest.model_validate_json(body)
+            )
+        except ValidationError:
+            try:
+                request = Stage2CompletionRequest.model_validate_json(body)
+            except ValidationError as error:
+                raise Stage2FixtureHTTPError(400, "completion request differs") from error
         if headers.get("x-request-id") != request.request_id:
             raise Stage2FixtureHTTPError(400, "header/body request ID mismatch")
         return request
+
+    def _append_log(self, message: str) -> None:
+        self.logs.append(message)
+        self.log_observation_offsets_ns.append(time.monotonic_ns())
+
+    def _record_abort(self, external_id: str, internal_id: str) -> None:
+        if external_id in self._aborted_request_ids:
+            return
+        self._aborted_request_ids.add(external_id)
+        serving_item = f"cmpl-{external_id}-0"
+        self._append_log(f"Aborted request(s) {internal_id}.")
+        self._append_log(f"Request {serving_item} aborted.")
+        self.request_success["abort"] += 1
 
     def _generation_payloads(self, request: Stage2CompletionRequest) -> tuple[bytes, ...]:
         output_ids = tuple(range(1_000, 1_032))
@@ -278,6 +324,111 @@ class Stage2FixtureServer:
             await writer.drain()
         writer.write(b"0\r\n\r\n")
         await writer.drain()
+
+    @staticmethod
+    def _cancellation_generation(
+        request: Stage2CancellationRequest,
+        token_ids: tuple[int, ...],
+        *,
+        prompt: bool,
+        finish_reason: str | None = None,
+    ) -> bytes:
+        choice: dict[str, object] = {
+            "index": 0,
+            "text": "".join(f"<fixture-{token_id}>" for token_id in token_ids),
+            "token_ids": list(token_ids),
+            "finish_reason": finish_reason,
+        }
+        if prompt:
+            choice["prompt_token_ids"] = list(request.prompt)
+        body = {
+            "id": f"cmpl-{request.request_id}",
+            "object": "text_completion",
+            "model": request.model,
+            "choices": [choice],
+        }
+        return f"data: {json.dumps(body, sort_keys=True, separators=(',', ':'))}\n\n".encode()
+
+    async def _send_cancellation(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        request: Stage2CancellationRequest,
+    ) -> bool:
+        writer.write(
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: text/event-stream\r\n"
+            + f"X-Request-Id: {request.request_id}\r\n".encode("ascii")
+            + b"Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+        )
+        await writer.drain()
+        scenario = self.cancellation_scenario
+        first = self._cancellation_generation(request, (1_000,), prompt=True)
+        grouped = self._cancellation_generation(request, (1_000, 1_001), prompt=True)
+        second = self._cancellation_generation(request, (1_001,), prompt=False)
+        generation_terminal = self._cancellation_generation(
+            request, (1_001,), prompt=False, finish_reason="length"
+        )
+        usage_terminal = (
+            "data: "
+            + json.dumps(
+                {
+                    "id": f"cmpl-{request.request_id}",
+                    "object": "text_completion",
+                    "model": request.model,
+                    "choices": [],
+                    "usage": {
+                        "prompt_tokens": 64,
+                        "completion_tokens": 1,
+                        "total_tokens": 65,
+                    },
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n\n"
+        ).encode()
+        if scenario is Stage2CancellationFixtureScenario.CLEAN_EOF:
+            payloads = (b": TEST_FIXTURE_ONLY clean-eof-before-generation\n\n",)
+        elif scenario is Stage2CancellationFixtureScenario.GROUPED_TOKENS:
+            payloads = (grouped,)
+        elif scenario is Stage2CancellationFixtureScenario.COALESCED_FRAMES:
+            payloads = (first + second,)
+        elif scenario is Stage2CancellationFixtureScenario.COMPLETE_FRAME_WITH_TRAILING_FRAGMENT:
+            payloads = (first + b'data: {"id":"incomplete',)
+        elif scenario is Stage2CancellationFixtureScenario.GENERATION_TERMINAL:
+            payloads = (first + generation_terminal,)
+        elif scenario is Stage2CancellationFixtureScenario.USAGE_TERMINAL:
+            payloads = (first + usage_terminal,)
+        elif scenario is Stage2CancellationFixtureScenario.DONE_TERMINAL:
+            payloads = (first + b"data: [DONE]\n\n",)
+        else:
+            payloads = (first,)
+        if scenario is not Stage2CancellationFixtureScenario.CLEAN_EOF:
+            self.prompt_tokens_total += 64
+            self.generation_tokens_total += (
+                2
+                if scenario
+                in {
+                    Stage2CancellationFixtureScenario.GROUPED_TOKENS,
+                    Stage2CancellationFixtureScenario.COALESCED_FRAMES,
+                    Stage2CancellationFixtureScenario.GENERATION_TERMINAL,
+                }
+                else 1
+            )
+        for payload in payloads:
+            writer.write(f"{len(payload):X}\r\n".encode("ascii") + payload + b"\r\n")
+            await writer.drain()
+        if scenario is Stage2CancellationFixtureScenario.CLEAN_EOF:
+            writer.write(b"0\r\n\r\n")
+            await writer.drain()
+            return False
+        if scenario is Stage2CancellationFixtureScenario.POST_CLOSE_DATA:
+            await asyncio.sleep(0.05)
+            writer.write(f"{len(second):X}\r\n".encode("ascii") + second + b"\r\n")
+            await writer.drain()
+        await reader.read()
+        return True
 
     def metrics_exposition(self) -> str:
         labels = 'engine="0",model_name="qwen2.5-0.5b-instruct-stage2"'

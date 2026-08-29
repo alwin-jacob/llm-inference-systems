@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import subprocess
 from pathlib import Path
 
@@ -300,6 +302,45 @@ def test_stage2_private_runtime_and_personal_patterns_are_detected(
     (root / "unsafe.txt").write_text(private_value + "\n", encoding="utf-8")
 
     assert scan_repository(root) == (("unsafe.txt", expected_rule),)
+
+
+@pytest.mark.parametrize(
+    ("decoded_value", "expected_rule"),
+    [
+        ("/" + "Users/private-user/model-cache", "apple-user-home-path"),
+        ("worker-47." + "co" + "rp." + "internal", "private-hostname-suffix"),
+        ("Author" + "ization: Bearer fixture-secret-value", "authorization-header"),
+        ("sk-" + "synthetic_fixture_token_12345", "generic-api-token"),
+    ],
+)
+def test_base64_encoded_raw_evidence_is_scanned_after_decoding(
+    tmp_path: Path,
+    decoded_value: str,
+    expected_rule: str,
+) -> None:
+    root = tmp_path / "archive"
+    root.mkdir()
+    encoded = base64.b64encode(decoded_value.encode()).decode("ascii")
+    (root / "unsafe.json").write_text(
+        json.dumps({"pending_bytes_base64": encoded}) + "\n",
+        encoding="utf-8",
+    )
+
+    assert scan_repository(root) == (("unsafe.json", expected_rule),)
+
+
+def test_base64_encoded_jsonl_evidence_is_scanned_record_by_record(tmp_path: Path) -> None:
+    root = tmp_path / "archive"
+    root.mkdir()
+    private_value = "/" + "Users/private-user/model-cache"
+    encoded = base64.b64encode(private_value.encode()).decode("ascii")
+    records = (
+        json.dumps({"kind": "TEST_FIXTURE_ONLY"}),
+        json.dumps({"pending_bytes_base64": encoded}),
+    )
+    (root / "unsafe.jsonl").write_text("\n".join(records) + "\n", encoding="utf-8")
+
+    assert scan_repository(root) == (("unsafe.jsonl", "apple-user-home-path"),)
 
 
 def test_executable_runtime_config_rejects_arbitrary_remote_url(tmp_path: Path) -> None:

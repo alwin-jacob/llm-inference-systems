@@ -29,6 +29,7 @@ from llm_inference_systems.stage2_attestation import (
 from llm_inference_systems.stage2_contracts import (
     BundleFileEntry,
     BundleState,
+    RawLogRecord,
     RequestIdentityChain,
     RuntimePhaseRecord,
     Stage2BundleManifest,
@@ -39,7 +40,8 @@ from llm_inference_systems.stage2_contracts import (
 from llm_inference_systems.stage2_control import (
     PHASE_EVIDENCE_KINDS,
     CancellationProbe,
-    FirstGenerationTokenEvidence,
+    CancellationScrapeObservationEvidence,
+    FirstGenerationDeliveryEvidence,
     ProcessExitEvidence,
     ResidualStateEvidence,
     Stage2RuntimeControlEvidence,
@@ -56,6 +58,7 @@ from llm_inference_systems.stage2_prometheus import (
 from llm_inference_systems.stage2_protocol import (
     Stage2StreamValidator,
     correlate_request_logs,
+    retain_raw_log_capture,
     retain_raw_log_records,
 )
 from llm_inference_systems.stage2_runtime import (
@@ -104,6 +107,7 @@ def make_log_chain(
     first_observation_offset_ns: int = 0,
     abort_observation_offset_ns: int | None = None,
     fixture_marked: bool = True,
+    server_process_identity: str = "fixture-process",
 ) -> RequestIdentityChain:
     internal = f"cmpl-{external_id}-0-deadbeef"
     provenance_marker = "TEST_FIXTURE_ONLY" if fixture_marked else "SYNTHETIC_FUTURE_SHAPE_ONLY"
@@ -114,13 +118,17 @@ def make_log_chain(
     if cancellation:
         lines.extend(
             (
-                f"Request cmpl-{external_id}-0 aborted.",
                 f"Aborted request(s) {internal}.",
+                f"Request cmpl-{external_id}-0 aborted.",
             )
         )
     records = retain_raw_log_records(
         tuple(lines),
-        source_stream_id=("stage2-fixture-log" if fixture_marked else "synthetic-future-shape-log"),
+        source_stream_id=(
+            f"{server_process_identity}-raw-log"
+            if cancellation
+            else ("stage2-fixture-log" if fixture_marked else "synthetic-future-shape-log")
+        ),
         first_observation_offset_ns=first_observation_offset_ns,
         observation_offsets_ns=(
             (
@@ -283,6 +291,7 @@ def make_cancellation_probe(
     process_start_id: str = "fixture-process",
     fixture_marked: bool = True,
     external_id: str = "E_cancel",
+    repetition_index: int = 1,
 ) -> CancellationProbe:
     second = 1_000_000_000
     pre = tuple(
@@ -322,20 +331,61 @@ def make_cancellation_probe(
         )
         for index in range(21)
     )
+    scrape_observations = tuple(
+        CancellationScrapeObservationEvidence(
+            phase=cast(
+                Literal["PRE_DISPATCH", "DRAIN", "STABLE_GENERATION", "COOLDOWN", "LATER"],
+                phase,
+            ),
+            phase_ordinal=ordinal,
+            scheduled_offset_ns=snapshot.scrape_monotonic_offset_ns,
+            request_dispatch_offset_ns=snapshot.scrape_monotonic_offset_ns,
+            response_completion_offset_ns=snapshot.scrape_monotonic_offset_ns,
+            snapshot_identity_sha256=sha256_identity(snapshot),
+        )
+        for phase, snapshots in (
+            ("PRE_DISPATCH", pre),
+            ("DRAIN", drain),
+            ("STABLE_GENERATION", stable),
+            ("COOLDOWN", cooldown),
+        )
+        for ordinal, snapshot in enumerate(snapshots)
+    )
     raw_inventory = "project_processes=[]\nactive_requests=[]\n"
+    identity_chain = make_log_chain(
+        external_id,
+        cancellation=True,
+        fixture_marked=fixture_marked,
+        server_process_identity=process_start_id,
+        first_observation_offset_ns=base_offset_ns + second + 1,
+        abort_observation_offset_ns=base_offset_ns + 1_200_000_001,
+    )
+    selected_records = (
+        identity_chain.request_received_log,
+        identity_chain.request_add_log,
+        identity_chain.internal_abort_log,
+        identity_chain.external_abort_log,
+    )
+    assert all(record is not None for record in selected_records)
+    log_records = tuple(cast(RawLogRecord, record) for record in selected_records)
+    raw_log_capture = retain_raw_log_capture(
+        tuple(record.raw_record for record in log_records),
+        source_stream_id=f"{process_start_id}-raw-log",
+        observation_offsets_ns=tuple(record.observation_offset_ns for record in log_records),
+    )
     return CancellationProbe(
-        identity_chain=make_log_chain(
-            external_id,
-            cancellation=True,
-            fixture_marked=fixture_marked,
-            first_observation_offset_ns=base_offset_ns + second + 1,
-            abort_observation_offset_ns=base_offset_ns + 1_200_000_001,
-        ),
+        repetition_index=repetition_index,
+        server_process_identity=process_start_id,
+        identity_chain=identity_chain,
+        raw_log_capture=raw_log_capture,
+        raw_log_capture_sha256=raw_log_capture.raw_bytes_sha256,
         raw_log_start_byte_offset=0,
         dispatch_offset_ns=base_offset_ns + second,
-        first_generation_token=FirstGenerationTokenEvidence(
+        first_generation_delivery=FirstGenerationDeliveryEvidence(
             external_request_id=external_id,
             response_body_id=f"cmpl-{external_id}",
+            generation_event_ordinal=0,
+            body_chunk_ordinal=0,
             observation_offset_ns=base_offset_ns + 1_100_000_000,
             output_token_ids=(1000,),
         ),
@@ -345,6 +395,7 @@ def make_cancellation_probe(
         stable_generation_snapshots=stable,
         cooldown_snapshots=cooldown,
         later_retained_snapshots=(),
+        scrape_observations=scrape_observations,
         residual_state=ResidualStateEvidence(
             observation_offset_ns=base_offset_ns + 5_300_000_000,
             raw_process_inventory=raw_inventory,
@@ -435,6 +486,7 @@ def make_runtime_control(
         process_start_id=server_process_identity,
         fixture_marked=not future_shape,
         external_id=f"E_r{repetition_index}_cancel",
+        repetition_index=repetition_index,
     )
     cancellation_result = evaluate_cancellation(cancellation_probe)
     steady = tuple(

@@ -36,9 +36,19 @@ invalidates the repetition while raw evidence remains retained.
 The cancellation evaluator reports one of
 `SERVER_ABORT_ACKNOWLEDGED_AND_DRAINED`, `UNKNOWN_ACKNOWLEDGEMENT`, `LATER_COMPLETION`,
 `RESIDUAL_WORK_TIMEOUT`, `TERMINAL_UNKNOWN`, or `ID_CORRELATION_FAILURE`. Acceptance requires the
-correlated abort chain, exact drain cadence, stable generation counter, cooldown, deadline, allowed
-abort counter, and no residual state. A terminal or counter from a non-abort reason is not accepted
-as cancellation success.
+correlated close → internal engine abort → external serving-item abort chain, exact drain cadence,
+stable generation counter, cooldown, deadline, allowed abort counter, and no residual state. The
+former external-before-internal fixture order is rejected. Missing, duplicate, ambiguous,
+cross-request, cross-process, cross-repetition, or pre-close abort records anywhere in the complete
+bounded raw-log capture invalidate the probe.
+
+Cancellation closes after first observed generation delivery, not proof of exactly one token.
+Grouped token IDs, multiple complete nonterminal frames in the close-triggering read, and exact
+incomplete trailing bytes are valid and losslessly replayed in both raw and CRLF-normalized parser
+form. A generation terminal, usage terminal,
+same-frame usage, `[DONE]`, clean EOF, response bytes/events timestamped after close, or a close
+before its triggering delivery invalidates the probe. A terminal or counter from a non-abort reason
+is not accepted as cancellation success.
 
 A future real-runtime boundary is rejected unless the complete experiment exists: three ordered
 committed repetitions, exactly 16 declared measured requests per repetition, exact measured-ID set

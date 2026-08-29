@@ -185,6 +185,33 @@ a model, tokenizer, GPU, CUDA, Kaggle, remote compute, or a paid resource; it do
 claims, résumé wording, historical authentication, interview-defense status, remotes, tags, or
 published history. Stage 2B remains separately unauthorized.
 
+## 2026-08-29 — Pinned-vLLM cancellation correction
+
+- Corrected the cancellation chronology to match pinned vLLM revision
+  `2cf0a6915ce544dc493a0990f2ea38d81601128a`: intentional client close precedes the internal
+  `Aborted request(s) ...` record, which precedes the external serving-item `Request ... aborted.`
+  record. The earlier external-before-internal fixture order is now explicit pinned-runtime drift.
+- Replaced the exactly-one-token/frame-boundary rule with first-generation-delivery semantics.
+  Cancellation replay retains every complete nonterminal frame and token ID in the close-triggering
+  body read plus exact incomplete trailing bytes, count, SHA-256, and parser state. Coalesced output
+  receives one body-read observation clock; no per-token clocks are fabricated.
+- Added actual IPv4-loopback HTTPX coverage for single and grouped first events, two coalesced
+  frames, complete frames plus incomplete trailing bytes, generation/usage/same-frame-usage/DONE/EOF
+  failures, and post-close attribution rejection. The probe is explicitly non-measured and cannot
+  advance latency, throughput, ITL, TPOT, or token-rate claims.
+- Closed independent-review gaps by retaining the complete bounded raw-log bytes and every record,
+  separating exact raw trailing bytes from CRLF-normalized parser-pending bytes, awaiting and
+  recording actual HTTP response-close completion, deriving the accepted probe's counters from live
+  fixture `/metrics` responses, and scanning decoded canonical Base64 evidence for private or secret
+  material.
+- Separated each cancellation scrape's exact cadence schedule from its actual HTTP request-dispatch
+  and response-completion clocks. Live `/metrics` snapshots use response completion as their
+  observation offset; schedule cadence cannot replace or fabricate the observed timing evidence.
+- Kept package and protocol `0.3.0`, the execution lock blocked and byte-identical, all frozen
+  Stage 0/1 bytes unchanged, and all fixture evidence at
+  `SYNTHETIC_PROTOCOL_SHAPE_ONLY / TEST_FIXTURE_ONLY`. No runtime, model, tokenizer, binary, CUDA,
+  GPU, Kaggle, remote compute, public Git, or claim-status action occurred.
+
 ## 2026-08-28 — Controller-authorized local Stage 2A source correction
 
 - Preserved the three existing Stage 2A commits and every frozen Stage 0/1 byte, then closed the

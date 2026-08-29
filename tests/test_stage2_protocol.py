@@ -544,8 +544,8 @@ def test_cancellation_identity_requires_both_abort_logs() -> None:
         f"Added request {INTERNAL_ID}.",
     )
     aborts = (
-        f"Request cmpl-{EXTERNAL_ID}-0 aborted.",
         f"Aborted request(s) {INTERNAL_ID}.",
+        f"Request cmpl-{EXTERNAL_ID}-0 aborted.",
     )
     chain = correlate_request_logs(
         EXTERNAL_ID,

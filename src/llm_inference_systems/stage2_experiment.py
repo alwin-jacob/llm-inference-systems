@@ -27,7 +27,6 @@ from llm_inference_systems.contracts import (
     Sha256,
     StrictModel,
 )
-from llm_inference_systems.sse import IncrementalSSEParser, SSEProtocolError
 from llm_inference_systems.stage2_attestation import (
     CudaBackedExecutionAttestation,
     LinuxEnvironmentManifest,
@@ -39,10 +38,15 @@ from llm_inference_systems.stage2_attestation import (
     RuntimePackageExecutionLockAttestation,
     ServerRestartIdentity,
 )
-from llm_inference_systems.stage2_bundle import Stage2BundleError, validate_committed_bundle
+from llm_inference_systems.stage2_bundle import (
+    Stage2BundleError,
+    decoded_base64_evidence_texts,
+    validate_committed_bundle,
+)
 from llm_inference_systems.stage2_contracts import (
     BundleFileEntry,
     BundleState,
+    RawLogCapture,
     Stage2BundleManifest,
     Stage2CancellationRequest,
     Stage2CompletionRequest,
@@ -54,7 +58,7 @@ from llm_inference_systems.stage2_contracts import (
 from llm_inference_systems.stage2_control import (
     AggregateComparisonState,
     CancellationResult,
-    FirstGenerationTokenEvidence,
+    FirstGenerationDeliveryEvidence,
     RestartComparison,
     RestartSemanticRecord,
     Stage2ControlError,
@@ -67,7 +71,12 @@ from llm_inference_systems.stage2_prometheus import (
     PrometheusSnapshot,
     parse_prometheus_snapshot,
 )
-from llm_inference_systems.stage2_protocol import Stage2ProtocolError, Stage2StreamValidator
+from llm_inference_systems.stage2_protocol import (
+    Stage2CancellationStreamCapture,
+    Stage2ProtocolError,
+    Stage2StreamValidator,
+    correlate_request_logs,
+)
 from llm_inference_systems.stage2_runtime import (
     LAUNCH_ABSENT_ENVIRONMENT_VARIABLES,
     OFFLINE_RUNTIME_ENVIRONMENT,
@@ -467,6 +476,23 @@ class Stage2ReplayedSSEEvent(StrictModel):
         return self
 
 
+class Stage2CancellationGenerationEvent(StrictModel):
+    sse_event_ordinal: NonNegativeInt
+    observation_offset_ns: NonNegativeInt
+    output_token_ids: tuple[NonNegativeInt, ...] = Field(min_length=1)
+    text: str
+    prompt_token_ids: tuple[NonNegativeInt, ...] | None
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_event(self) -> Self:
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("cancellation generation-event identity does not reconstruct")
+        return self
+
+
 def replay_stage2_wire_capture(
     capture: Stage2RequestWireCapture,
     identity_chain: object,
@@ -545,21 +571,71 @@ class Stage2CancellationParserReplay(StrictModel):
     external_request_id: Identifier
     response_body_id: Identifier
     replayed_events: tuple[Stage2ReplayedSSEEvent, ...] = Field(min_length=1)
-    first_generation_token: FirstGenerationTokenEvidence
+    generation_events: tuple[Stage2CancellationGenerationEvent, ...] = Field(min_length=1)
+    all_output_token_ids: tuple[NonNegativeInt, ...] = Field(min_length=1)
+    first_generation_delivery: FirstGenerationDeliveryEvidence
+    pending_bytes_base64: str
+    pending_byte_count: NonNegativeInt
+    pending_bytes_sha256: Sha256
+    parser_pending_bytes_base64: str
+    parser_pending_byte_count: NonNegativeInt
+    parser_pending_bytes_sha256: Sha256
+    parser_state_at_close: Literal[
+        "AT_SSE_FRAME_BOUNDARY",
+        "INCOMPLETE_TRAILING_SSE_BYTES",
+    ]
     raw_response_body_inventory_sha256: Sha256
     generation_terminal_observed: Literal[False]
     usage_terminal_observed: Literal[False]
     done_terminal_observed: Literal[False]
     clean_transport_eof_observed: Literal[False]
+    token_observation_metrics_available: Literal[False]
+    token_observation_metrics_unavailable_reason: Literal["CANCELLATION_PROBE_NOT_MEASURED"]
+    performance_measurement_eligible: Literal[False]
     identity_sha256: Sha256
 
     @model_validator(mode="after")
     def validate_replay(self) -> Self:
+        raw_pending = _decode_canonical_base64(
+            self.pending_bytes_base64, label="cancellation raw pending bytes"
+        )
+        parser_pending = _decode_canonical_base64(
+            self.parser_pending_bytes_base64,
+            label="cancellation normalized parser-pending bytes",
+        )
+        expected_state = (
+            "INCOMPLETE_TRAILING_SSE_BYTES" if parser_pending else "AT_SSE_FRAME_BOUNDARY"
+        )
+        generation_ordinals = tuple(event.sse_event_ordinal for event in self.generation_events)
+        replayed_by_ordinal = {event.ordinal: event for event in self.replayed_events}
+        flattened_ids = tuple(
+            token_id for event in self.generation_events for token_id in event.output_token_ids
+        )
+        first_event = self.generation_events[0]
+        first_delivery = self.first_generation_delivery
         if (
-            self.first_generation_token.external_request_id != self.external_request_id
-            or self.first_generation_token.response_body_id != self.response_body_id
+            tuple(event.ordinal for event in self.replayed_events)
+            != tuple(range(len(self.replayed_events)))
+            or generation_ordinals != tuple(sorted(generation_ordinals))
+            or len(generation_ordinals) != len(set(generation_ordinals))
+            or any(
+                ordinal not in replayed_by_ordinal or replayed_by_ordinal[ordinal].kind != "data"
+                for ordinal in generation_ordinals
+            )
+            or flattened_ids != self.all_output_token_ids
+            or first_delivery.external_request_id != self.external_request_id
+            or first_delivery.response_body_id != self.response_body_id
+            or first_delivery.generation_event_ordinal != first_event.sse_event_ordinal
+            or first_delivery.observation_offset_ns > first_event.observation_offset_ns
+            or first_delivery.output_token_ids != first_event.output_token_ids
+            or len(raw_pending) != self.pending_byte_count
+            or hashlib.sha256(raw_pending).hexdigest() != self.pending_bytes_sha256
+            or parser_pending != raw_pending.replace(b"\r\n", b"\n")
+            or len(parser_pending) != self.parser_pending_byte_count
+            or hashlib.sha256(parser_pending).hexdigest() != self.parser_pending_bytes_sha256
+            or self.parser_state_at_close != expected_state
         ):
-            raise ValueError("cancellation first-token identity differs from parser replay")
+            raise ValueError("cancellation delivery, event, token, or pending-byte replay differs")
         if self.identity_sha256 != sha256_identity(
             self, omit_fields=frozenset({"identity_sha256"})
         ):
@@ -569,9 +645,10 @@ class Stage2CancellationParserReplay(StrictModel):
 
 class Stage2CancellationClientCloseCapture(StrictModel):
     external_request_id: Identifier
-    close_classification: Literal["INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN"]
+    close_classification: Literal["INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_DELIVERY"]
     close_observation_offset_ns: NonNegativeInt
-    response_close_completed: Literal[False]
+    response_close_completion_observation_offset_ns: NonNegativeInt
+    response_close_completed: Literal[True]
     client_stream_context_exited: Literal[True]
     post_close_byte_count: Literal[0]
     post_close_event_count: Literal[0]
@@ -582,6 +659,8 @@ class Stage2CancellationClientCloseCapture(StrictModel):
 
     @model_validator(mode="after")
     def validate_close(self) -> Self:
+        if self.response_close_completion_observation_offset_ns < self.close_observation_offset_ns:
+            raise ValueError("response close completed before its invocation")
         if self.identity_sha256 != sha256_identity(
             self, omit_fields=frozenset({"identity_sha256"})
         ):
@@ -600,6 +679,8 @@ class Stage2CancellationWireCapture(StrictModel):
     parser_replay: Stage2CancellationParserReplay
     intentional_client_close: Stage2CancellationClientCloseCapture
     request_identity: RequestIdentityAttestation
+    raw_log_capture: RawLogCapture
+    raw_log_capture_sha256: Sha256
     identity_sha256: Sha256
 
     @model_validator(mode="after")
@@ -621,8 +702,21 @@ class Stage2CancellationWireCapture(StrictModel):
             or exchange.request_body_transmission_observation_offset_ns
             != request.transmission_offset_ns
             or request.transmission_offset_ns != exchange.request_headers.observation_offset_ns
+            or self.raw_log_capture_sha256 != self.raw_log_capture.raw_bytes_sha256
+            or self.raw_log_capture.source_stream_id
+            != f"{exchange.server_process_identity}-raw-log"
         ):
             raise ValueError("cancellation HTTP exchange differs from exact request identity")
+        try:
+            reconstructed_chain = correlate_request_logs(
+                self.external_request_id,
+                self.raw_log_capture.records,
+                cancellation=True,
+            )
+        except Stage2ProtocolError as error:
+            raise ValueError("cancellation raw-log capture does not correlate uniquely") from error
+        if reconstructed_chain != chain:
+            raise ValueError("cancellation raw-log capture differs from request identity")
         if tuple(chunk.ordinal for chunk in chunks) != tuple(range(len(chunks))):
             raise ValueError("cancellation raw chunks are missing, duplicated, or reordered")
         if tuple(chunk.observation_offset_ns for chunk in chunks) != tuple(
@@ -684,16 +778,29 @@ class Stage2CancellationWireCapture(StrictModel):
             raise ValueError("cancellation exchange, replay, close, and chunk inventory differ")
         if chain.external_abort_log is None or chain.internal_abort_log is None:
             raise ValueError("cancellation wire requires external and internal abort logs")
-        first_token = self.parser_replay.first_generation_token.observation_offset_ns
+        first_delivery = self.parser_replay.first_generation_delivery
         first_body = chunks[0].observation_offset_ns
-        if not (
-            request.transmission_offset_ns
-            < exchange.response_header_observation_offset_ns
-            < first_body
-            <= first_token
-            < close.close_observation_offset_ns
-            <= chain.external_abort_log.observation_offset_ns
-            <= chain.internal_abort_log.observation_offset_ns
+        if (
+            not (
+                request.transmission_offset_ns
+                < exchange.response_header_observation_offset_ns
+                < first_body
+                <= first_delivery.observation_offset_ns
+                <= close.close_observation_offset_ns
+                <= chain.internal_abort_log.observation_offset_ns
+                <= chain.external_abort_log.observation_offset_ns
+            )
+            or any(
+                offset > close.close_observation_offset_ns
+                for chunk in chunks
+                for offset in (
+                    chunk.observation_offset_ns,
+                    *chunk.completed_sse_frame_observation_offsets_ns,
+                )
+            )
+            or first_delivery.body_chunk_ordinal >= len(chunks)
+            or chunks[first_delivery.body_chunk_ordinal].observation_offset_ns
+            != first_delivery.observation_offset_ns
         ):
             raise ValueError("cancellation HTTP/SSE/close/abort observation order differs")
         reconstructed = replay_stage2_cancellation_wire_capture(self)
@@ -711,98 +818,98 @@ def replay_stage2_cancellation_wire_capture(
 ) -> Stage2CancellationParserReplay:
     """Replay retained partial SSE bytes through the intentional client close."""
 
-    parser = IncrementalSSEParser()
-    replayed: list[Stage2ReplayedSSEEvent] = []
-    first_token: FirstGenerationTokenEvidence | None = None
-    for chunk in capture.response_body_chunks:
-        try:
-            frames = parser.feed(chunk.exact_bytes())
-        except SSEProtocolError as error:
-            raise ValueError("cancellation SSE bytes are malformed") from error
-        expected_offsets = chunk.completed_sse_frame_observation_offsets_ns
-        if len(frames) != len(expected_offsets):
-            raise ValueError("cancellation completed-frame inventory differs from parser replay")
-        for frame, offset in zip(frames, expected_offsets, strict=True):
-            if first_token is not None:
-                raise ValueError("cancellation bytes continue after the first output-token frame")
-            event_values: dict[str, object] = {
-                "ordinal": len(replayed),
-                "observation_offset_ns": offset,
-                "kind": frame.kind,
-                "data": frame.data,
-                "comments": frame.comments,
-            }
-            event_values["identity_sha256"] = sha256_identity(event_values)
-            event = Stage2ReplayedSSEEvent.model_validate(event_values)
-            replayed.append(event)
-            if frame.kind == "comment":
-                continue
-            if frame.kind == "done" or frame.data is None:
-                raise ValueError("cancellation stream reached [DONE] before intentional close")
-            decoded = _json_without_duplicate_keys(frame.data.encode("utf-8"))
-            if not isinstance(decoded, dict) or decoded.get("id") != (
-                f"cmpl-{capture.external_request_id}"
-            ):
-                raise ValueError("cancellation response body ID differs")
-            if "usage" in decoded or "metrics" in decoded:
-                raise ValueError("cancellation replay observed a usage terminal")
-            choices = decoded.get("choices")
-            if not isinstance(choices, list) or len(choices) != 1:
-                raise ValueError("cancellation replay observed a usage or ambiguous event")
-            choice = choices[0]
-            if not isinstance(choice, dict) or choice.get("index") != 0:
-                raise ValueError("cancellation response choice differs")
-            token_ids = choice.get("token_ids")
-            if (
-                not isinstance(token_ids, list)
-                or len(token_ids) != 1
-                or isinstance(token_ids[0], bool)
-                or not isinstance(token_ids[0], int)
-                or token_ids[0] < 0
-                or choice.get("finish_reason") is not None
-                or not isinstance(choice.get("text"), str)
-            ):
-                raise ValueError(
-                    "cancellation replay must reconstruct exactly one nonterminal output token"
-                )
-            if first_token is not None:
-                raise ValueError("cancellation replay contains more than one output token event")
-            prompt_ids = choice.get("prompt_token_ids")
-            if prompt_ids != list(capture.request_body.canonical_request.prompt):
-                raise ValueError("cancellation returned prompt token IDs differ from request bytes")
-            first_token = FirstGenerationTokenEvidence(
-                external_request_id=capture.external_request_id,
-                response_body_id=f"cmpl-{capture.external_request_id}",
-                observation_offset_ns=offset,
-                output_token_ids=(token_ids[0],),
+    validator = Stage2CancellationStreamCapture(
+        external_base_id=capture.external_request_id,
+        sent_prompt_token_ids=capture.request_body.canonical_request.prompt,
+        dispatch_offset_ns=capture.request_body.transmission_offset_ns,
+    )
+    try:
+        validator.accept_response_headers(
+            capture.http_exchange.response_headers.effective("x-request-id"),
+            capture.http_exchange.response_headers.observation_offset_ns,
+        )
+        for chunk in capture.response_body_chunks:
+            event_start = len(validator.parsed_sse_events)
+            validator.feed(chunk.exact_bytes(), chunk.observation_offset_ns)
+            observed_offsets = tuple(
+                event.observation_offset_ns for event in validator.parsed_sse_events[event_start:]
             )
-    if first_token is None:
-        raise ValueError("cancellation replay contains no first output token")
+            if observed_offsets != chunk.completed_sse_frame_observation_offsets_ns:
+                raise Stage2ProtocolError(
+                    "cancellation completed-frame inventory differs from parser replay"
+                )
+        validator.close(capture.intentional_client_close.close_observation_offset_ns)
+        validator.complete_transport_close(
+            capture.intentional_client_close.response_close_completion_observation_offset_ns
+        )
+    except Stage2ProtocolError as error:
+        raise ValueError("cancellation retained stream failed parser replay") from error
     raw_body = b"".join(chunk.exact_bytes() for chunk in capture.response_body_chunks)
-    if not (raw_body.endswith(b"\n\n") or raw_body.endswith(b"\r\n\r\n")):
-        raise ValueError("cancellation capture contains trailing or incomplete SSE bytes")
     normalized_body = raw_body.replace(b"\r\n", b"\n")
-    framed_segments = normalized_body.split(b"\n\n")
-    if (
-        framed_segments[-1] != b""
-        or any(segment == b"" for segment in framed_segments[:-1])
-        or len(framed_segments) - 1 != len(replayed)
-    ):
+    normalized_segments = normalized_body.split(b"\n\n")
+    if any(segment == b"" for segment in normalized_segments[:-1]):
         raise ValueError("cancellation capture contains an empty or unobserved SSE frame")
-    if first_token.observation_offset_ns >= (
-        capture.intentional_client_close.close_observation_offset_ns
-    ):
-        raise ValueError("intentional client close did not follow the first output token")
+    replayed: list[Stage2ReplayedSSEEvent] = []
+    for event in validator.parsed_sse_events:
+        event_values: dict[str, object] = {
+            "ordinal": event.ordinal,
+            "observation_offset_ns": event.observation_offset_ns,
+            "kind": event.kind,
+            "data": event.data,
+            "comments": event.comments,
+        }
+        event_values["identity_sha256"] = sha256_identity(event_values)
+        replayed.append(Stage2ReplayedSSEEvent.model_validate(event_values))
+    generation_events: list[Stage2CancellationGenerationEvent] = []
+    for generation in validator.generation_events:
+        generation_values: dict[str, object] = {
+            "sse_event_ordinal": generation.sse_event_ordinal,
+            "observation_offset_ns": generation.observation_offset_ns,
+            "output_token_ids": generation.output_token_ids,
+            "text": generation.text,
+            "prompt_token_ids": generation.prompt_token_ids,
+        }
+        generation_values["identity_sha256"] = sha256_identity(generation_values)
+        generation_events.append(
+            Stage2CancellationGenerationEvent.model_validate(generation_values)
+        )
+    retained_delivery = validator.first_generation_delivery
+    if retained_delivery is None:
+        raise ValueError("cancellation replay contains no generation delivery")
+    first_delivery = FirstGenerationDeliveryEvidence(
+        external_request_id=capture.external_request_id,
+        response_body_id=f"cmpl-{capture.external_request_id}",
+        generation_event_ordinal=retained_delivery.generation_event_ordinal,
+        body_chunk_ordinal=retained_delivery.body_chunk_ordinal,
+        observation_offset_ns=retained_delivery.observation_offset_ns,
+        output_token_ids=retained_delivery.output_token_ids,
+    )
+    pending = validator.pending_bytes
+    parser_pending = validator.parser_pending_bytes
     values: dict[str, object] = {
         "external_request_id": capture.external_request_id,
         "response_body_id": f"cmpl-{capture.external_request_id}",
         "replayed_events": tuple(replayed),
-        "first_generation_token": first_token,
+        "generation_events": tuple(generation_events),
+        "all_output_token_ids": tuple(
+            token_id for event in generation_events for token_id in event.output_token_ids
+        ),
+        "first_generation_delivery": first_delivery,
+        "pending_bytes_base64": base64.b64encode(pending).decode("ascii"),
+        "pending_byte_count": len(pending),
+        "pending_bytes_sha256": hashlib.sha256(pending).hexdigest(),
+        "parser_pending_bytes_base64": base64.b64encode(parser_pending).decode("ascii"),
+        "parser_pending_byte_count": len(parser_pending),
+        "parser_pending_bytes_sha256": hashlib.sha256(parser_pending).hexdigest(),
+        "parser_state_at_close": (validator.parser_state_at_close),
         "raw_response_body_inventory_sha256": sha256_identity(capture.response_body_chunks),
         "generation_terminal_observed": False,
         "usage_terminal_observed": False,
         "done_terminal_observed": False,
         "clean_transport_eof_observed": False,
+        "token_observation_metrics_available": False,
+        "token_observation_metrics_unavailable_reason": "CANCELLATION_PROBE_NOT_MEASURED",
+        "performance_measurement_eligible": False,
     }
     values["identity_sha256"] = sha256_identity(values)
     return Stage2CancellationParserReplay.model_validate(values)
@@ -1811,12 +1918,16 @@ class Stage2RepetitionAttestation(StrictModel):
             self.cancellation_wire.repetition_index != self.repetition_index
             or self.cancellation_wire.external_request_id != cancellation_id
             or self.cancellation_wire.request_identity.identity_chain != probe.identity_chain
-            or self.cancellation_wire.parser_replay.first_generation_token
-            != probe.first_generation_token
+            or self.cancellation_wire.raw_log_capture != probe.raw_log_capture
+            or self.cancellation_wire.raw_log_capture_sha256 != probe.raw_log_capture_sha256
+            or self.cancellation_wire.parser_replay.first_generation_delivery
+            != probe.first_generation_delivery
             or self.cancellation_wire.request_body.transmission_offset_ns
             != probe.dispatch_offset_ns
             or self.cancellation_wire.intentional_client_close.close_observation_offset_ns
             != probe.client_close_offset_ns
+            or self.cancellation_wire.http_exchange.server_process_identity
+            != probe.server_process_identity
         ):
             raise ValueError("cancellation HTTP/SSE wire is detached from abort/drain evidence")
         measured_phase = next(
@@ -2577,7 +2688,12 @@ def _validate_file(root: Path, entry: BundleFileEntry | ManifestBoundFile) -> by
         text = data.decode("utf-8")
     except UnicodeDecodeError as error:
         raise Stage2ExperimentError("aggregate evidence must be public-safe UTF-8 text") from error
-    if any(pattern.search(text) for pattern in _AGGREGATE_SENSITIVE_PATTERNS):
+    scan_texts = (text, *decoded_base64_evidence_texts(text))
+    if any(
+        pattern.search(scan_text)
+        for scan_text in scan_texts
+        for pattern in _AGGREGATE_SENSITIVE_PATTERNS
+    ):
         raise Stage2ExperimentError("aggregate evidence contains prohibited private material")
     return data
 

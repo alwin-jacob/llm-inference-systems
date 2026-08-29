@@ -110,7 +110,10 @@ for future real-runtime evidence without executing a runtime, model, tokenizer, 
 For external base ID `E`, the header and JSON request ID are `E`, the response header is `E`, every
 response body ID is `cmpl-E`, the serving item is `cmpl-E-0`, and the internal engine ID is
 `cmpl-E-0-` followed by exactly eight lowercase hexadecimal characters. Request-add and, for
-cancellation, external and internal abort logs must correlate to this single chain.
+cancellation, internal engine and external serving-item abort logs must correlate to this single
+chain. At pinned vLLM revision `2cf0a6915ce544dc493a0990f2ea38d81601128a`, the internal
+`Aborted request(s) cmpl-E-0-<suffix>.` record precedes the external
+`Request cmpl-E-0 aborted.` record; the reverse order is pinned-runtime drift.
 
 A successful stream retains client dispatch, response headers, first nonempty body bytes, first
 output-token event, generation terminal, usage terminal, protocol terminal, and transport terminal.
@@ -158,15 +161,35 @@ entries in that repetition's committed manifest. The exact required deltas are `
 tokens, `512` generation tokens, `16` length completions, and zero preemptions, prefix-cache
 queries, and prefix-cache hits.
 
-The cancellation model retains raw request-add and abort log records with source identity, byte
-offsets, ordinals, monotonic times, and hashes. It requires exactly ten pre-dispatch zero
-running/waiting samples at at least 100-ms spacing, a baseline for every selected counter, dispatch,
-first generated-token evidence, intentional close, and exactly ten post-close quiescent drain
-samples. It then requires one continuous second of stable generation count at 100-ms cadence, two
-seconds of cooldown at 100-ms cadence, and a ten-second hard drain deadline. Deltas are derived only
-through exact-label, same-process counter arithmetic. Any missing stage, reset, ambiguity, label
-drift, residual state, or contradictory later retained sample invalidates the probe. An observed
-abort success-counter delta of zero or one is retained; every non-abort delta must be zero.
+The cancellation model retains the complete bounded raw-log bytes, newline delimiters, and every
+record with source identity, byte offsets, ordinals, monotonic times, and hashes. Correlation is
+rerun across the full record inventory so an omitted or duplicate candidate cannot hide outside a
+selected four-record chain. It closes after the first observed generation
+delivery: the first HTTPX body read that lets the incremental parser reconstruct at least one valid
+nonterminal generation event. The close-triggering read may carry multiple token IDs in one event,
+multiple complete nonterminal events, and an incomplete trailing SSE fragment. Every byte, complete
+frame, event, and token ID already delivered is retained. Incomplete state retains both the exact
+raw trailing transport bytes and the parser's CRLF-normalized pending bytes, with separate counts
+and SHA-256 values plus the boundary/incomplete state. The intentional-close invocation is ordered
+against abort logs, while successful completion of the awaited HTTP response close is separately
+retained. No per-token clock is synthesized from a grouped delivery, and cancellation remains a
+non-measured probe with no latency, throughput, ITL, TPOT, or token-rate eligibility.
+
+The probe requires exactly ten pre-dispatch zero running/waiting samples at at least 100-ms
+spacing, a baseline for every selected counter, dispatch, first-generation-delivery evidence,
+intentional close, pinned internal-then-external abort chronology, and exactly ten post-close
+quiescent drain samples. It then requires one continuous second of stable generation count at
+100-ms cadence, two seconds of cooldown at 100-ms cadence, and a ten-second hard drain deadline.
+Each cancellation scrape separately retains its scheduled cadence offset, actual HTTP request
+dispatch offset, and actual response-completion observation offset. Cadence is checked against the
+schedule, while snapshot identity, chronological ordering, duration, and the deadline are checked
+against the actual response-completion clock; the schedule is never substituted for an observed
+scrape time.
+Deltas are derived only through exact-label, same-process counter arithmetic. Generation terminal,
+usage terminal (including usage in a generation-bearing frame), `[DONE]`, clean EOF, post-close
+attribution, or any missing stage, reset, ambiguity, label drift, residual state, or contradictory
+later retained sample invalidates the probe. An observed abort success-counter delta of zero or one
+is retained; every non-abort delta must be zero.
 
 Each of the three repetition runtime-control records requires all 17 ordered, positive-duration
 phases with phase-specific evidence hashes/references retained in that repetition's committed

@@ -917,6 +917,38 @@ def test_manifest_writer_uses_complete_public_safety_patterns(tmp_path: Path) ->
         write_aggregate_manifest_last(root, rebound)
 
 
+def test_manifest_writer_scans_decoded_base64_evidence(tmp_path: Path) -> None:
+    attestation, repetition_payloads = make_experiment_attestation()
+    manifest, payloads = make_aggregate_manifest(attestation, repetition_payloads)
+    private_value = "worker-47." + "co" + "rp." + "internal"
+    payloads["extra-sensitive.json"] = canonical_json_bytes(
+        {"pending_bytes_base64": base64.b64encode(private_value.encode()).decode("ascii")}
+    )
+    rebound = _rebind_manifest_to_payloads(manifest, payloads)
+    root = tmp_path / "encoded-sensitive-publication"
+    _write_aggregate_payloads(root, payloads)
+    with pytest.raises(Stage2ExperimentError, match="prohibited private material"):
+        write_aggregate_manifest_last(root, rebound)
+
+
+def test_manifest_writer_scans_decoded_base64_jsonl_records(tmp_path: Path) -> None:
+    attestation, repetition_payloads = make_experiment_attestation()
+    manifest, payloads = make_aggregate_manifest(attestation, repetition_payloads)
+    private_value = "worker-47." + "co" + "rp." + "internal"
+    encoded = base64.b64encode(private_value.encode()).decode("ascii")
+    payloads["extra-sensitive.jsonl"] = b"\n".join(
+        (
+            canonical_json_bytes({"kind": "TEST_FIXTURE_ONLY"}),
+            canonical_json_bytes({"pending_bytes_base64": encoded}),
+        )
+    )
+    rebound = _rebind_manifest_to_payloads(manifest, payloads)
+    root = tmp_path / "encoded-jsonl-sensitive-publication"
+    _write_aggregate_payloads(root, payloads)
+    with pytest.raises(Stage2ExperimentError, match="prohibited private material"):
+        write_aggregate_manifest_last(root, rebound)
+
+
 def test_known_synthetic_future_marker_cannot_receive_live_scope(tmp_path: Path) -> None:
     attestation, repetition_payloads = make_experiment_attestation()
     manifest, payloads = make_aggregate_manifest(attestation, repetition_payloads)

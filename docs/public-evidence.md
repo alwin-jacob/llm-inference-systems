@@ -15,7 +15,7 @@ invariants; they are not LLM measurements.
 | Checked derived summaries | Exactly reconstruct from retained raw evidence |
 | Checked semantic comparison | Compatible and passing with performance gating disabled |
 | Stage 2A protocol source and CPU fixtures | Present at package/protocol `0.3.0`, including strict launch/snapshot/runtime-control/attestation schemas |
-| Stage 2A complete experiment shape | CPU fixture validates 48 measured attestations, 16 comparisons, three cancellation/CUDA/repetition shapes, and one aggregate root as `SYNTHETIC_PROTOCOL_SHAPE_ONLY` |
+| Stage 2A complete experiment shape | CPU fixture validates 48 measured attestations, 16 comparisons, three cancellation/CUDA/repetition shapes, first-generation-delivery replay, and one aggregate root as `SYNTHETIC_PROTOCOL_SHAPE_ONLY` |
 | Stage 2A real-runtime execution | Not performed; protocol requirements only |
 | Separate Linux/CUDA execution lock | Uninstalled, unexecuted, and blocked on one metadata-unavailable artifact hash |
 | CI configuration | Present and executed for repository verification |
@@ -74,6 +74,12 @@ assign only `TEST_FIXTURE_ONLY`; the full 16 × 3 synthetic experiment and recon
 root remain `SYNTHETIC_PROTOCOL_SHAPE_ONLY` and prove structural validation only. Its retained
 exact-wire records and three measured-window Prometheus records are synthetic CPU fixture captures,
 not observations of vLLM, a model, tokenizer, GPU, CUDA, Kaggle, or performance.
+Actual loopback cancellation tests exercise HTTPX body reads for single/grouped token delivery,
+coalesced nonterminal frames, incomplete trailing bytes, and prohibited terminal/EOF shapes. They
+await the actual HTTP response close, reconstruct the complete bounded fixture log stream, and
+derive counter/drain/cooldown snapshots from live fixture `/metrics` responses. They are
+deterministic protocol fixtures shaped to the pinned source contract, not vLLM execution or a
+benchmark, and cancellation output advances no latency, throughput, ITL, TPOT, or token-rate claim.
 Future launch arguments, snapshot records, Linux/NVIDIA/CUDA attestations, and the Linux/CUDA lock
 are specifications, not evidence that packages were installed or that a provider shape, model,
 tokenizer, GPU, CUDA state, request result, or serving metric was observed. Stage 2B remains a

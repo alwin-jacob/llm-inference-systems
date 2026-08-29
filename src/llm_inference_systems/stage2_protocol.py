@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
@@ -16,6 +17,7 @@ from llm_inference_systems.canonical import sha256_identity
 from llm_inference_systems.sse import IncrementalSSEParser, SSEProtocolError
 from llm_inference_systems.stage2_contracts import (
     MetricAvailability,
+    RawLogCapture,
     RawLogRecord,
     RequestIdentityChain,
     Stage2CancellationRequest,
@@ -63,6 +65,219 @@ class RetainedSSEEvent:
     kind: str
     data: str | None
     comments: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RetainedCancellationGenerationEvent:
+    sse_event_ordinal: int
+    observation_offset_ns: int
+    output_token_ids: tuple[int, ...]
+    text: str
+    prompt_token_ids: tuple[int, ...] | None
+
+
+@dataclass(frozen=True, slots=True)
+class RetainedFirstGenerationDelivery:
+    generation_event_ordinal: int
+    body_chunk_ordinal: int
+    observation_offset_ns: int
+    output_token_ids: tuple[int, ...]
+
+
+def _pending_sse_bytes(raw_body: bytes) -> bytes:
+    boundary_end = 0
+    for match in re.finditer(rb"(?:\r\n|\n)(?:\r\n|\n)", raw_body):
+        boundary_end = match.end()
+    return raw_body[boundary_end:]
+
+
+class Stage2CancellationStreamCapture:
+    """Retain one cancellation stream through its first generation delivery."""
+
+    def __init__(
+        self,
+        *,
+        external_base_id: str,
+        sent_prompt_token_ids: tuple[int, ...],
+        dispatch_offset_ns: int,
+    ) -> None:
+        request = build_cancellation_request(external_base_id, sent_prompt_token_ids)
+        self._external_base_id = external_base_id
+        self._sent_prompt_token_ids = request.prompt
+        self._parser = IncrementalSSEParser()
+        self._response_headers_offset_ns: int | None = None
+        self._raw_body_chunks: list[RetainedBodyChunk] = []
+        self._parsed_sse_events: list[RetainedSSEEvent] = []
+        self._generation_events: list[RetainedCancellationGenerationEvent] = []
+        self._first_generation_delivery: RetainedFirstGenerationDelivery | None = None
+        self._close_offset_ns: int | None = None
+        self._transport_close_completion_offset_ns: int | None = None
+        self._last_observation_offset_ns = dispatch_offset_ns
+
+    @property
+    def retained_raw_body_chunks(self) -> tuple[RetainedBodyChunk, ...]:
+        return tuple(self._raw_body_chunks)
+
+    @property
+    def parsed_sse_events(self) -> tuple[RetainedSSEEvent, ...]:
+        return tuple(self._parsed_sse_events)
+
+    @property
+    def generation_events(self) -> tuple[RetainedCancellationGenerationEvent, ...]:
+        return tuple(self._generation_events)
+
+    @property
+    def first_generation_delivery(self) -> RetainedFirstGenerationDelivery | None:
+        return self._first_generation_delivery
+
+    @property
+    def pending_bytes(self) -> bytes:
+        return _pending_sse_bytes(b"".join(chunk.data for chunk in self._raw_body_chunks))
+
+    @property
+    def parser_pending_bytes(self) -> bytes:
+        """Pending bytes in the parser's CRLF-normalized internal representation."""
+
+        return self.pending_bytes.replace(b"\r\n", b"\n")
+
+    @property
+    def parser_state_at_close(self) -> str:
+        return (
+            "INCOMPLETE_TRAILING_SSE_BYTES"
+            if self.parser_pending_bytes
+            else "AT_SSE_FRAME_BOUNDARY"
+        )
+
+    @property
+    def close_offset_ns(self) -> int | None:
+        return self._close_offset_ns
+
+    @property
+    def transport_close_completion_offset_ns(self) -> int | None:
+        return self._transport_close_completion_offset_ns
+
+    def _advance(self, observation_offset_ns: int) -> None:
+        if observation_offset_ns < self._last_observation_offset_ns:
+            raise Stage2ProtocolError("cancellation stream observations are not monotonic")
+        self._last_observation_offset_ns = observation_offset_ns
+
+    def accept_response_headers(self, x_request_id: str, observation_offset_ns: int) -> None:
+        if self._response_headers_offset_ns is not None:
+            raise Stage2ProtocolError("duplicate cancellation response headers")
+        if x_request_id != self._external_base_id:
+            raise Stage2ProtocolError("cancellation response X-Request-Id differs")
+        self._advance(observation_offset_ns)
+        self._response_headers_offset_ns = observation_offset_ns
+
+    def feed(self, chunk: bytes, observation_offset_ns: int) -> bool:
+        if self._close_offset_ns is not None:
+            raise Stage2ProtocolError("cancellation response bytes attributed after client close")
+        if self._first_generation_delivery is not None:
+            raise Stage2ProtocolError(
+                "cancellation body read occurred after the first generation delivery"
+            )
+        if self._response_headers_offset_ns is None:
+            raise Stage2ProtocolError("cancellation body observed before response headers")
+        if not chunk:
+            raise Stage2ProtocolError("cancellation body read cannot be empty")
+        self._advance(observation_offset_ns)
+        chunk_ordinal = len(self._raw_body_chunks)
+        self._raw_body_chunks.append(
+            RetainedBodyChunk(
+                observation_offset_ns=observation_offset_ns,
+                data=chunk,
+                sha256=hashlib.sha256(chunk).hexdigest(),
+            )
+        )
+        try:
+            frames = self._parser.feed(chunk)
+        except SSEProtocolError as error:
+            raise Stage2ProtocolError(str(error)) from error
+        for frame in frames:
+            event = RetainedSSEEvent(
+                ordinal=len(self._parsed_sse_events),
+                observation_offset_ns=observation_offset_ns,
+                kind=frame.kind,
+                data=frame.data,
+                comments=frame.comments,
+            )
+            self._parsed_sse_events.append(event)
+            if frame.kind == "comment":
+                continue
+            if frame.kind == "done" or frame.data is None:
+                raise Stage2ProtocolError("cancellation stream reached [DONE] before client close")
+            decoded = _json_without_duplicate_keys(frame.data)
+            response = _object(decoded, field="cancellation completion response")
+            if response.get("id") != f"cmpl-{self._external_base_id}":
+                raise Stage2ProtocolError("cancellation response body ID differs")
+            if "usage" in response or "metrics" in response:
+                raise Stage2ProtocolError("cancellation usage terminal preceded client close")
+            choices = _array(response.get("choices"), field="cancellation choices")
+            if len(choices) != 1:
+                raise Stage2ProtocolError("cancellation usage or ambiguous event preceded close")
+            choice = _object(choices[0], field="cancellation choice")
+            if choice.get("index") != 0:
+                raise Stage2ProtocolError("cancellation response choice differs")
+            if choice.get("finish_reason") is not None:
+                raise Stage2ProtocolError("cancellation generation terminal preceded client close")
+            text = choice.get("text")
+            if not isinstance(text, str):
+                raise Stage2ProtocolError("cancellation response text must be a string")
+            output_token_ids = _token_ids(
+                choice.get("token_ids"), field="cancellation choice.token_ids"
+            )
+            if not output_token_ids:
+                raise Stage2ProtocolError("cancellation generation event has no output token IDs")
+            expected_prompt = self._sent_prompt_token_ids if not self._generation_events else None
+            raw_prompt = choice.get("prompt_token_ids")
+            prompt_token_ids = (
+                _token_ids(raw_prompt, field="cancellation choice.prompt_token_ids")
+                if raw_prompt is not None
+                else None
+            )
+            if prompt_token_ids != expected_prompt:
+                raise Stage2ProtocolError(
+                    "cancellation returned prompt token IDs differ from request"
+                )
+            generation_event = RetainedCancellationGenerationEvent(
+                sse_event_ordinal=event.ordinal,
+                observation_offset_ns=observation_offset_ns,
+                output_token_ids=output_token_ids,
+                text=text,
+                prompt_token_ids=prompt_token_ids,
+            )
+            self._generation_events.append(generation_event)
+            if self._first_generation_delivery is None:
+                self._first_generation_delivery = RetainedFirstGenerationDelivery(
+                    generation_event_ordinal=event.ordinal,
+                    body_chunk_ordinal=chunk_ordinal,
+                    observation_offset_ns=observation_offset_ns,
+                    output_token_ids=output_token_ids,
+                )
+        return self._first_generation_delivery is not None
+
+    def close(self, observation_offset_ns: int) -> None:
+        if self._close_offset_ns is not None:
+            raise Stage2ProtocolError("duplicate intentional cancellation close")
+        self._advance(observation_offset_ns)
+        delivery = self._first_generation_delivery
+        if delivery is None:
+            raise Stage2ProtocolError("client closed before a generation event was reconstructable")
+        if observation_offset_ns < delivery.observation_offset_ns:
+            raise Stage2ProtocolError("client close precedes its triggering body read")
+        self._close_offset_ns = observation_offset_ns
+
+    def complete_transport_close(self, observation_offset_ns: int) -> None:
+        if self._close_offset_ns is None:
+            raise Stage2ProtocolError("transport close completed before close invocation")
+        if self._transport_close_completion_offset_ns is not None:
+            raise Stage2ProtocolError("duplicate transport-close completion")
+        self._advance(observation_offset_ns)
+        self._transport_close_completion_offset_ns = observation_offset_ns
+
+    def observe_clean_eof(self, observation_offset_ns: int) -> None:
+        self._advance(observation_offset_ns)
+        raise Stage2ProtocolError("clean EOF preceded intentional cancellation close")
 
 
 def build_completion_request(
@@ -165,16 +380,21 @@ def correlate_request_logs(
             raise Stage2ProtocolError("cancellation requires both external and internal abort logs")
     elif external_aborts or internal_aborts:
         raise Stage2ProtocolError("unexpected abort logs observed for a completed request")
-    return RequestIdentityChain(
-        external_base_id=external_base_id,
-        response_body_id=f"cmpl-{external_base_id}",
-        serving_item_id=serving_item,
-        internal_engine_id=internal_id,
-        request_received_log=received[0],
-        request_add_log=request_add_record,
-        external_abort_log=external_aborts[0] if external_aborts else None,
-        internal_abort_log=internal_aborts[0] if internal_aborts else None,
-    )
+    try:
+        return RequestIdentityChain(
+            external_base_id=external_base_id,
+            response_body_id=f"cmpl-{external_base_id}",
+            serving_item_id=serving_item,
+            internal_engine_id=internal_id,
+            request_received_log=received[0],
+            request_add_log=request_add_record,
+            external_abort_log=external_aborts[0] if external_aborts else None,
+            internal_abort_log=internal_aborts[0] if internal_aborts else None,
+        )
+    except ValidationError as error:
+        raise Stage2ProtocolError(
+            "request-log chronology differs from the pinned internal-before-external chain"
+        ) from error
 
 
 def retain_raw_log_records(
@@ -212,6 +432,33 @@ def retain_raw_log_records(
         )
         byte_offset += len(encoded) + 1
     return tuple(records)
+
+
+def retain_raw_log_capture(
+    lines: tuple[str, ...],
+    *,
+    source_stream_id: str,
+    first_observation_offset_ns: int = 0,
+    observation_offsets_ns: tuple[int, ...] | None = None,
+) -> RawLogCapture:
+    """Retain a complete bounded raw-log byte stream and all record delimiters."""
+
+    records = retain_raw_log_records(
+        lines,
+        source_stream_id=source_stream_id,
+        first_observation_offset_ns=first_observation_offset_ns,
+        observation_offsets_ns=observation_offsets_ns,
+    )
+    exact = b"\n".join(line.encode("utf-8") for line in lines)
+    values: dict[str, object] = {
+        "source_stream_id": source_stream_id,
+        "exact_bytes_base64": base64.b64encode(exact).decode("ascii"),
+        "decoded_byte_count": len(exact),
+        "raw_bytes_sha256": hashlib.sha256(exact).hexdigest(),
+        "records": records,
+    }
+    values["identity_sha256"] = sha256_identity(values)
+    return RawLogCapture.model_validate(values)
 
 
 def _object(value: object, *, field: str) -> dict[str, object]:
