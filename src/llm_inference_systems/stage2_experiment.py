@@ -27,6 +27,7 @@ from llm_inference_systems.contracts import (
     Sha256,
     StrictModel,
 )
+from llm_inference_systems.sse import IncrementalSSEParser, SSEProtocolError
 from llm_inference_systems.stage2_attestation import (
     CudaBackedExecutionAttestation,
     LinuxEnvironmentManifest,
@@ -43,6 +44,7 @@ from llm_inference_systems.stage2_contracts import (
     BundleFileEntry,
     BundleState,
     Stage2BundleManifest,
+    Stage2CancellationRequest,
     Stage2CompletionRequest,
     Stage2EvidenceScope,
     Stage2ManifestBoundFile,
@@ -52,6 +54,7 @@ from llm_inference_systems.stage2_contracts import (
 from llm_inference_systems.stage2_control import (
     AggregateComparisonState,
     CancellationResult,
+    FirstGenerationTokenEvidence,
     RestartComparison,
     RestartSemanticRecord,
     Stage2ControlError,
@@ -70,6 +73,13 @@ from llm_inference_systems.stage2_runtime import (
     OFFLINE_RUNTIME_ENVIRONMENT,
     ModelTokenizerSnapshotManifest,
     Stage2LaunchSpec,
+)
+from llm_inference_systems.stage2_transport import (
+    CollectorWireCaptureProvenance,
+    FixtureWireCaptureProvenance,
+    Stage2HTTPExchangeCapture,
+    Stage2OrderedHeadersCapture,
+    Stage2WireCaptureProvenance,
 )
 
 STAGE2_EXPERIMENT_CASE_IDS: Final = tuple(f"stage2-case-v1-{index:02d}" for index in range(1, 17))
@@ -109,24 +119,8 @@ _FIXTURE_VALUE_MARKERS: Final = (
     "stage2-fixture",
 )
 
-_PUBLIC_CAPTURED_HEADER_NAMES: Final = frozenset(
-    {
-        "accept",
-        "accept-encoding",
-        "cache-control",
-        "connection",
-        "content-length",
-        "content-type",
-        "date",
-        "host",
-        "server",
-        "transfer-encoding",
-        "user-agent",
-        "x-request-id",
-    }
-)
-
 REQUEST_EVIDENCE_FIELDS: Final = (
+    "http_exchange",
     "request_body",
     "request_headers",
     "response_headers",
@@ -210,48 +204,6 @@ def _json_without_duplicate_keys(data: bytes) -> object:
         raise Stage2ExperimentError("request body is not valid JSON") from error
 
 
-class FixtureWireCaptureProvenance(StrictModel):
-    capture_kind: Literal["FIXTURE_CONSTRUCTOR"]
-    evidence_scope: Literal[Stage2EvidenceScope.TEST_FIXTURE_ONLY]
-    classification: Literal["SYNTHETIC_PROTOCOL_SHAPE_ONLY"]
-    fixture_marker: Literal["TEST_FIXTURE_ONLY"]
-    fixture_identity_sha256: Sha256
-    identity_sha256: Sha256
-
-    @model_validator(mode="after")
-    def validate_identity(self) -> Self:
-        if self.identity_sha256 != sha256_identity(
-            self, omit_fields=frozenset({"identity_sha256"})
-        ):
-            raise ValueError("fixture wire-capture provenance identity does not reconstruct")
-        return self
-
-
-class CollectorWireCaptureProvenance(StrictModel):
-    capture_kind: Literal["COLLECTOR_CAPTURE"]
-    evidence_scope: Literal[Stage2EvidenceScope.FUTURE_REAL_RUNTIME]
-    classification: Literal["FUTURE_REAL_RUNTIME"]
-    collector_identity_sha256: Sha256
-    server_process_identity: Identifier
-    model_snapshot_identity_sha256: Sha256
-    environment_identity_sha256: Sha256
-    identity_sha256: Sha256
-
-    @model_validator(mode="after")
-    def validate_identity(self) -> Self:
-        if self.identity_sha256 != sha256_identity(
-            self, omit_fields=frozenset({"identity_sha256"})
-        ):
-            raise ValueError("collector wire-capture provenance identity does not reconstruct")
-        return self
-
-
-Stage2WireCaptureProvenance = Annotated[
-    FixtureWireCaptureProvenance | CollectorWireCaptureProvenance,
-    Field(discriminator="capture_kind"),
-]
-
-
 class Stage2ExactRequestBodyCapture(StrictModel):
     exact_bytes_base64: str
     byte_count: NonNegativeInt
@@ -287,84 +239,41 @@ class Stage2ExactRequestBodyCapture(StrictModel):
         return self
 
 
-class Stage2LosslessHeaderField(StrictModel):
-    ordinal: NonNegativeInt
-    name_base64: str
-    value_base64: str
-    name_byte_count: NonNegativeInt
-    value_byte_count: NonNegativeInt
-    name_sha256: Sha256
-    value_sha256: Sha256
-    normalized_name: str
-    normalized_value: str
+class Stage2CancellationExactRequestBodyCapture(StrictModel):
+    exact_bytes_base64: str
+    byte_count: NonNegativeInt
+    sha256: Sha256
+    canonical_request: Stage2CancellationRequest
+    canonical_request_sha256: Sha256
+    request_identity_sha256: Sha256
+    transmission_offset_ns: NonNegativeInt
     identity_sha256: Sha256
 
     @model_validator(mode="after")
-    def validate_field(self) -> Self:
-        name_bytes = _decode_canonical_base64(self.name_base64, label="header name")
-        value_bytes = _decode_canonical_base64(self.value_base64, label="header value")
-        if (
-            len(name_bytes) != self.name_byte_count
-            or len(value_bytes) != self.value_byte_count
-            or hashlib.sha256(name_bytes).hexdigest() != self.name_sha256
-            or hashlib.sha256(value_bytes).hexdigest() != self.value_sha256
-        ):
-            raise ValueError("header byte count or SHA-256 differs")
+    def validate_body(self) -> Self:
+        data = _decode_canonical_base64(self.exact_bytes_base64, label="cancellation request body")
+        if len(data) != self.byte_count or hashlib.sha256(data).hexdigest() != self.sha256:
+            raise ValueError("cancellation request body byte count or SHA-256 differs")
         try:
-            name = name_bytes.decode("ascii")
-            value = value_bytes.decode("ascii")
-        except UnicodeDecodeError as error:
-            raise ValueError("HTTP header field encoding is malformed") from error
-        if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name):
-            raise ValueError("HTTP header name is malformed")
-        if any((byte < 0x20 and byte != 0x09) or byte == 0x7F for byte in value_bytes):
-            raise ValueError("HTTP header value is malformed")
-        if self.normalized_name != name.casefold() or self.normalized_value != value.strip(" \t"):
-            raise ValueError("normalized header view differs from retained bytes")
+            _json_without_duplicate_keys(data)
+            parsed = Stage2CancellationRequest.model_validate_json(data)
+        except (Stage2ExperimentError, ValueError) as error:
+            raise ValueError(
+                "exact cancellation bytes do not parse as the frozen request"
+            ) from error
+        if parsed != self.canonical_request:
+            raise ValueError("canonical cancellation request differs from exact bytes")
+        if self.canonical_request_sha256 != sha256_identity(parsed):
+            raise ValueError("canonical cancellation request identity does not reconstruct")
+        if self.request_identity_sha256 != sha256_identity(
+            {"request": parsed, "request_id": parsed.request_id}
+        ):
+            raise ValueError("cancellation request-body identity does not reconstruct")
         if self.identity_sha256 != sha256_identity(
             self, omit_fields=frozenset({"identity_sha256"})
         ):
-            raise ValueError("lossless header-field identity does not reconstruct")
+            raise ValueError("exact cancellation request-body identity does not reconstruct")
         return self
-
-
-class Stage2OrderedHeadersCapture(StrictModel):
-    direction: Literal["TRANSMITTED_REQUEST", "RECEIVED_RESPONSE"]
-    observation_offset_ns: NonNegativeInt
-    fields: tuple[Stage2LosslessHeaderField, ...] = Field(min_length=1)
-    normalized_view: tuple[tuple[str, str], ...]
-    identity_sha256: Sha256
-
-    @model_validator(mode="after")
-    def validate_headers(self) -> Self:
-        if tuple(item.ordinal for item in self.fields) != tuple(range(len(self.fields))):
-            raise ValueError("HTTP header ordinals are missing, duplicated, or reordered")
-        expected_view = tuple((item.normalized_name, item.normalized_value) for item in self.fields)
-        if self.normalized_view != expected_view:
-            raise ValueError("deterministic normalized header view does not reconstruct")
-        by_name: dict[str, list[str]] = {}
-        for name, value in expected_view:
-            by_name.setdefault(name, []).append(value)
-        if not set(by_name) <= _PUBLIC_CAPTURED_HEADER_NAMES:
-            raise ValueError("HTTP header is outside the public evidence allowlist")
-        request_ids = by_name.get("x-request-id", [])
-        if len(request_ids) != 1 or not request_ids[0]:
-            raise ValueError("X-Request-Id header is missing, duplicated, or ambiguous")
-        if self.direction == "TRANSMITTED_REQUEST":
-            content_types = by_name.get("content-type", [])
-            if content_types != ["application/json"]:
-                raise ValueError("Content-Type application/json is missing or ambiguous")
-        if self.identity_sha256 != sha256_identity(
-            self, omit_fields=frozenset({"identity_sha256"})
-        ):
-            raise ValueError("ordered HTTP-header capture identity does not reconstruct")
-        return self
-
-    def effective(self, name: str) -> str:
-        values = tuple(value for field, value in self.normalized_view if field == name.casefold())
-        if len(values) != 1:
-            raise ValueError(f"effective {name} header is missing or ambiguous")
-        return values[0]
 
 
 class Stage2RawResponseBodyChunk(StrictModel):
@@ -381,7 +290,7 @@ class Stage2RawResponseBodyChunk(StrictModel):
         "TEST_FIXTURE_ONLY_CPU_SCRIPTED_HTTP",
         "FUTURE_RUNTIME_COLLECTOR_HTTP_BODY",
     ]
-    inventory_manifest_path: Literal["raw_response_body.json"]
+    inventory_manifest_path: Literal["raw_response_body.json", "raw/cancellation/client-wire.json"]
     identity_sha256: Sha256
 
     @model_validator(mode="after")
@@ -433,6 +342,7 @@ class Stage2RequestWireCapture(StrictModel):
     case_id: Identifier
     external_request_id: Identifier
     provenance: Stage2WireCaptureProvenance
+    http_exchange: Stage2HTTPExchangeCapture
     request_body: Stage2ExactRequestBodyCapture
     request_headers: Stage2OrderedHeadersCapture
     response_headers: Stage2OrderedHeadersCapture
@@ -455,6 +365,21 @@ class Stage2RequestWireCapture(StrictModel):
             == self.transport_close.external_request_id
         ):
             raise ValueError("wire request/header/response/transport identities differ")
+        exchange = self.http_exchange
+        if (
+            exchange.exchange_purpose != "MEASURED_COMPLETION"
+            or exchange.repetition_index != self.repetition_index
+            or exchange.evidence_unit_id != self.case_id
+            or exchange.external_request_id != self.external_request_id
+            or exchange.provenance != self.provenance
+            or exchange.request_headers != self.request_headers
+            or exchange.response_headers != self.response_headers
+            or exchange.request_body_byte_count != self.request_body.byte_count
+            or exchange.request_body_sha256 != self.request_body.sha256
+            or exchange.request_body_transmission_observation_offset_ns
+            != self.request_body.transmission_offset_ns
+        ):
+            raise ValueError("measured HTTP exchange is detached from exact request identity")
         if self.request_body.transmission_offset_ns != self.request_headers.observation_offset_ns:
             raise ValueError("request body and transmitted headers have different dispatch times")
         chunks = self.response_body_chunks
@@ -485,15 +410,35 @@ class Stage2RequestWireCapture(StrictModel):
             if fixture
             else "FUTURE_RUNTIME_COLLECTOR_HTTP_BODY"
         )
-        if any(chunk.source_capture_provenance != expected_chunk_source for chunk in chunks):
+        if any(
+            chunk.source_capture_provenance != expected_chunk_source
+            or chunk.inventory_manifest_path != "raw_response_body.json"
+            for chunk in chunks
+        ):
             raise ValueError("raw response chunk provenance differs from wire provenance")
         inventory_sha = sha256_identity(chunks)
         close = self.transport_close
+        raw_body = b"".join(chunk.exact_bytes() for chunk in chunks)
+        body_completion_offset = max(
+            offset
+            for chunk in chunks
+            for offset in (
+                chunk.observation_offset_ns,
+                *chunk.completed_sse_frame_observation_offsets_ns,
+            )
+        )
         if (
             close.raw_response_body_inventory_sha256 != inventory_sha
             or close.close_observation_offset_ns <= chunks[-1].observation_offset_ns
+            or exchange.response_body_byte_count != len(raw_body)
+            or exchange.response_body_sha256 != hashlib.sha256(raw_body).hexdigest()
+            or exchange.response_body_inventory_sha256 != inventory_sha
+            or exchange.response_body_completion_observation_offset_ns != body_completion_offset
+            or exchange.transport_terminal_observation_offset_ns
+            != close.close_observation_offset_ns
+            or exchange.transport_terminal_classification != close.close_classification
         ):
-            raise ValueError("transport close is detached from the raw body inventory")
+            raise ValueError("HTTP exchange or transport close is detached from raw body chunks")
         if self.identity_sha256 != sha256_identity(
             self, omit_fields=frozenset({"identity_sha256"})
         ):
@@ -596,7 +541,275 @@ def replay_stage2_wire_capture(
     return evidence, tuple(parsed_events)
 
 
+class Stage2CancellationParserReplay(StrictModel):
+    external_request_id: Identifier
+    response_body_id: Identifier
+    replayed_events: tuple[Stage2ReplayedSSEEvent, ...] = Field(min_length=1)
+    first_generation_token: FirstGenerationTokenEvidence
+    raw_response_body_inventory_sha256: Sha256
+    generation_terminal_observed: Literal[False]
+    usage_terminal_observed: Literal[False]
+    done_terminal_observed: Literal[False]
+    clean_transport_eof_observed: Literal[False]
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_replay(self) -> Self:
+        if (
+            self.first_generation_token.external_request_id != self.external_request_id
+            or self.first_generation_token.response_body_id != self.response_body_id
+        ):
+            raise ValueError("cancellation first-token identity differs from parser replay")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("cancellation parser-replay identity does not reconstruct")
+        return self
+
+
+class Stage2CancellationClientCloseCapture(StrictModel):
+    external_request_id: Identifier
+    close_classification: Literal["INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN"]
+    close_observation_offset_ns: NonNegativeInt
+    response_close_completed: Literal[False]
+    client_stream_context_exited: Literal[True]
+    post_close_byte_count: Literal[0]
+    post_close_event_count: Literal[0]
+    raw_response_body_inventory_sha256: Sha256
+    request_identity_chain_sha256: Sha256
+    parser_replay_identity_sha256: Sha256
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_close(self) -> Self:
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("intentional client-close identity does not reconstruct")
+        return self
+
+
+class Stage2CancellationWireCapture(StrictModel):
+    schema_version: Literal["0.3.0"]
+    repetition_index: Literal[1, 2, 3]
+    external_request_id: Identifier
+    provenance: Stage2WireCaptureProvenance
+    request_body: Stage2CancellationExactRequestBodyCapture
+    http_exchange: Stage2HTTPExchangeCapture
+    response_body_chunks: tuple[Stage2RawResponseBodyChunk, ...] = Field(min_length=1)
+    parser_replay: Stage2CancellationParserReplay
+    intentional_client_close: Stage2CancellationClientCloseCapture
+    request_identity: RequestIdentityAttestation
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_capture(self) -> Self:
+        exchange = self.http_exchange
+        chain = self.request_identity.identity_chain
+        chunks = self.response_body_chunks
+        request = self.request_body
+        if (
+            self.external_request_id != request.canonical_request.request_id
+            or self.external_request_id != chain.external_base_id
+            or exchange.exchange_purpose != "CANCELLATION"
+            or exchange.repetition_index != self.repetition_index
+            or exchange.evidence_unit_id != "cancellation-probe"
+            or exchange.external_request_id != self.external_request_id
+            or exchange.provenance != self.provenance
+            or exchange.request_body_byte_count != request.byte_count
+            or exchange.request_body_sha256 != request.sha256
+            or exchange.request_body_transmission_observation_offset_ns
+            != request.transmission_offset_ns
+            or request.transmission_offset_ns != exchange.request_headers.observation_offset_ns
+        ):
+            raise ValueError("cancellation HTTP exchange differs from exact request identity")
+        if tuple(chunk.ordinal for chunk in chunks) != tuple(range(len(chunks))):
+            raise ValueError("cancellation raw chunks are missing, duplicated, or reordered")
+        if tuple(chunk.observation_offset_ns for chunk in chunks) != tuple(
+            sorted(chunk.observation_offset_ns for chunk in chunks)
+        ):
+            raise ValueError("cancellation raw chunk observations are reordered")
+        previous_frame_offset: int | None = None
+        for chunk in chunks:
+            if (
+                previous_frame_offset is not None
+                and chunk.observation_offset_ns < previous_frame_offset
+            ):
+                raise ValueError("cancellation raw chunks overlap prior SSE-frame observations")
+            if chunk.completed_sse_frame_observation_offsets_ns:
+                previous_frame_offset = chunk.completed_sse_frame_observation_offsets_ns[-1]
+        if any(
+            (chunk.repetition_index, chunk.case_id, chunk.external_request_id)
+            != (self.repetition_index, "cancellation-probe", self.external_request_id)
+            for chunk in chunks
+        ):
+            raise ValueError("cancellation raw chunk identity differs")
+        fixture = isinstance(self.provenance, FixtureWireCaptureProvenance)
+        expected_chunk_source = (
+            "TEST_FIXTURE_ONLY_CPU_SCRIPTED_HTTP"
+            if fixture
+            else "FUTURE_RUNTIME_COLLECTOR_HTTP_BODY"
+        )
+        if any(
+            chunk.source_capture_provenance != expected_chunk_source
+            or chunk.inventory_manifest_path != "raw/cancellation/client-wire.json"
+            for chunk in chunks
+        ):
+            raise ValueError("cancellation raw chunk provenance differs")
+        raw_body = b"".join(chunk.exact_bytes() for chunk in chunks)
+        inventory_sha = sha256_identity(chunks)
+        body_completion_offset = max(
+            offset
+            for chunk in chunks
+            for offset in (
+                chunk.observation_offset_ns,
+                *chunk.completed_sse_frame_observation_offsets_ns,
+            )
+        )
+        close = self.intentional_client_close
+        if (
+            exchange.response_body_byte_count != len(raw_body)
+            or exchange.response_body_sha256 != hashlib.sha256(raw_body).hexdigest()
+            or exchange.response_body_inventory_sha256 != inventory_sha
+            or exchange.response_body_completion_observation_offset_ns != body_completion_offset
+            or exchange.transport_terminal_observation_offset_ns
+            != close.close_observation_offset_ns
+            or exchange.transport_terminal_classification != close.close_classification
+            or self.parser_replay.raw_response_body_inventory_sha256 != inventory_sha
+            or close.raw_response_body_inventory_sha256 != inventory_sha
+            or close.external_request_id != self.external_request_id
+            or close.request_identity_chain_sha256 != self.request_identity.identity_sha256
+            or close.parser_replay_identity_sha256 != self.parser_replay.identity_sha256
+        ):
+            raise ValueError("cancellation exchange, replay, close, and chunk inventory differ")
+        if chain.external_abort_log is None or chain.internal_abort_log is None:
+            raise ValueError("cancellation wire requires external and internal abort logs")
+        first_token = self.parser_replay.first_generation_token.observation_offset_ns
+        first_body = chunks[0].observation_offset_ns
+        if not (
+            request.transmission_offset_ns
+            < exchange.response_header_observation_offset_ns
+            < first_body
+            <= first_token
+            < close.close_observation_offset_ns
+            <= chain.external_abort_log.observation_offset_ns
+            <= chain.internal_abort_log.observation_offset_ns
+        ):
+            raise ValueError("cancellation HTTP/SSE/close/abort observation order differs")
+        reconstructed = replay_stage2_cancellation_wire_capture(self)
+        if reconstructed != self.parser_replay:
+            raise ValueError("cancellation parser replay does not reconstruct from raw chunks")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("cancellation wire identity does not reconstruct")
+        return self
+
+
+def replay_stage2_cancellation_wire_capture(
+    capture: Stage2CancellationWireCapture,
+) -> Stage2CancellationParserReplay:
+    """Replay retained partial SSE bytes through the intentional client close."""
+
+    parser = IncrementalSSEParser()
+    replayed: list[Stage2ReplayedSSEEvent] = []
+    first_token: FirstGenerationTokenEvidence | None = None
+    for chunk in capture.response_body_chunks:
+        try:
+            frames = parser.feed(chunk.exact_bytes())
+        except SSEProtocolError as error:
+            raise ValueError("cancellation SSE bytes are malformed") from error
+        expected_offsets = chunk.completed_sse_frame_observation_offsets_ns
+        if len(frames) != len(expected_offsets):
+            raise ValueError("cancellation completed-frame inventory differs from parser replay")
+        for frame, offset in zip(frames, expected_offsets, strict=True):
+            if first_token is not None:
+                raise ValueError("cancellation bytes continue after the first output-token frame")
+            event_values: dict[str, object] = {
+                "ordinal": len(replayed),
+                "observation_offset_ns": offset,
+                "kind": frame.kind,
+                "data": frame.data,
+                "comments": frame.comments,
+            }
+            event_values["identity_sha256"] = sha256_identity(event_values)
+            event = Stage2ReplayedSSEEvent.model_validate(event_values)
+            replayed.append(event)
+            if frame.kind == "comment":
+                continue
+            if frame.kind == "done" or frame.data is None:
+                raise ValueError("cancellation stream reached [DONE] before intentional close")
+            decoded = _json_without_duplicate_keys(frame.data.encode("utf-8"))
+            if not isinstance(decoded, dict) or decoded.get("id") != (
+                f"cmpl-{capture.external_request_id}"
+            ):
+                raise ValueError("cancellation response body ID differs")
+            if "usage" in decoded or "metrics" in decoded:
+                raise ValueError("cancellation replay observed a usage terminal")
+            choices = decoded.get("choices")
+            if not isinstance(choices, list) or len(choices) != 1:
+                raise ValueError("cancellation replay observed a usage or ambiguous event")
+            choice = choices[0]
+            if not isinstance(choice, dict) or choice.get("index") != 0:
+                raise ValueError("cancellation response choice differs")
+            token_ids = choice.get("token_ids")
+            if (
+                not isinstance(token_ids, list)
+                or len(token_ids) != 1
+                or isinstance(token_ids[0], bool)
+                or not isinstance(token_ids[0], int)
+                or token_ids[0] < 0
+                or choice.get("finish_reason") is not None
+                or not isinstance(choice.get("text"), str)
+            ):
+                raise ValueError(
+                    "cancellation replay must reconstruct exactly one nonterminal output token"
+                )
+            if first_token is not None:
+                raise ValueError("cancellation replay contains more than one output token event")
+            prompt_ids = choice.get("prompt_token_ids")
+            if prompt_ids != list(capture.request_body.canonical_request.prompt):
+                raise ValueError("cancellation returned prompt token IDs differ from request bytes")
+            first_token = FirstGenerationTokenEvidence(
+                external_request_id=capture.external_request_id,
+                response_body_id=f"cmpl-{capture.external_request_id}",
+                observation_offset_ns=offset,
+                output_token_ids=(token_ids[0],),
+            )
+    if first_token is None:
+        raise ValueError("cancellation replay contains no first output token")
+    raw_body = b"".join(chunk.exact_bytes() for chunk in capture.response_body_chunks)
+    if not (raw_body.endswith(b"\n\n") or raw_body.endswith(b"\r\n\r\n")):
+        raise ValueError("cancellation capture contains trailing or incomplete SSE bytes")
+    normalized_body = raw_body.replace(b"\r\n", b"\n")
+    framed_segments = normalized_body.split(b"\n\n")
+    if (
+        framed_segments[-1] != b""
+        or any(segment == b"" for segment in framed_segments[:-1])
+        or len(framed_segments) - 1 != len(replayed)
+    ):
+        raise ValueError("cancellation capture contains an empty or unobserved SSE frame")
+    if first_token.observation_offset_ns >= (
+        capture.intentional_client_close.close_observation_offset_ns
+    ):
+        raise ValueError("intentional client close did not follow the first output token")
+    values: dict[str, object] = {
+        "external_request_id": capture.external_request_id,
+        "response_body_id": f"cmpl-{capture.external_request_id}",
+        "replayed_events": tuple(replayed),
+        "first_generation_token": first_token,
+        "raw_response_body_inventory_sha256": sha256_identity(capture.response_body_chunks),
+        "generation_terminal_observed": False,
+        "usage_terminal_observed": False,
+        "done_terminal_observed": False,
+        "clean_transport_eof_observed": False,
+    }
+    values["identity_sha256"] = sha256_identity(values)
+    return Stage2CancellationParserReplay.model_validate(values)
+
+
 class Stage2RequestRawEvidence(StrictModel):
+    http_exchange: ManifestBoundFile
     request_body: ManifestBoundFile
     request_headers: ManifestBoundFile
     response_headers: ManifestBoundFile
@@ -892,6 +1105,7 @@ def build_request_raw_evidence_payloads(
         },
     }
     content: dict[str, object] = {
+        "http_exchange": wire_capture.http_exchange,
         "request_body": wire_capture.request_body,
         "request_headers": wire_capture.request_headers,
         "response_headers": wire_capture.response_headers,
@@ -934,6 +1148,7 @@ def request_raw_evidence_payloads(
 
 
 _RAW_REQUEST_EVIDENCE_FIELDS: Final = (
+    "http_exchange",
     "request_body",
     "request_headers",
     "response_headers",
@@ -1018,6 +1233,9 @@ def _derive_request_from_raw_wire(
         request_body = Stage2ExactRequestBodyCapture.model_validate_json(
             canonical_json_bytes(content("request_body"))
         )
+        http_exchange = Stage2HTTPExchangeCapture.model_validate_json(
+            canonical_json_bytes(content("http_exchange"))
+        )
         request_headers = Stage2OrderedHeadersCapture.model_validate_json(
             canonical_json_bytes(content("request_headers"))
         )
@@ -1041,6 +1259,7 @@ def _derive_request_from_raw_wire(
             case_id=case_id,
             external_request_id=external_request_id,
             provenance=provenance,
+            http_exchange=http_exchange,
             request_body=request_body,
             request_headers=request_headers,
             response_headers=response_headers,
@@ -1270,8 +1489,13 @@ def validate_prometheus_raw_capture_binding(
     expected_snapshot = (
         measurement.baseline_snapshot if boundary == "baseline" else measurement.final_snapshot
     )
+    expected_capture = (
+        measurement.baseline_capture if boundary == "baseline" else measurement.final_capture
+    )
     if (
-        capture.evidence_scope is not evidence_scope
+        capture != expected_capture
+        or capture.boundary != boundary
+        or capture.evidence_scope is not evidence_scope
         or capture.repetition_index != repetition_index
         or capture.process_start_id != measurement.server_process_identity
         or snapshot != expected_snapshot
@@ -1281,34 +1505,29 @@ def validate_prometheus_raw_capture_binding(
         )
 
 
-def build_cancellation_client_stream_raw_evidence_bytes(
-    *,
-    repetition_index: Literal[1, 2, 3],
-    external_request_id: str,
-    evidence_scope: Stage2EvidenceScope,
-) -> bytes:
-    return scoped_raw_evidence_bytes(
-        evidence_kind="cancellation_client_stream",
-        evidence_scope=evidence_scope,
-        content={
-            "repetition_index": repetition_index,
-            "external_request_id": external_request_id,
-            "transport_closed": True,
-        },
-    )
+def cancellation_wire_capture_bytes(capture: Stage2CancellationWireCapture) -> bytes:
+    return canonical_json_bytes(capture) + b"\n"
 
 
-def cancellation_client_stream_raw_evidence_bytes(
+def cancellation_wire_capture_from_raw(data: bytes) -> Stage2CancellationWireCapture:
+    try:
+        capture = Stage2CancellationWireCapture.model_validate_json(data)
+    except ValueError as error:
+        raise Stage2ExperimentError("raw cancellation HTTP/SSE wire capture is invalid") from error
+    if data != cancellation_wire_capture_bytes(capture):
+        raise Stage2ExperimentError("raw cancellation HTTP/SSE wire capture is not canonical JSON")
+    if replay_stage2_cancellation_wire_capture(capture) != capture.parser_replay:
+        raise Stage2ExperimentError("cancellation raw chunks do not reconstruct parser replay")
+    return capture
+
+
+def cancellation_wire_raw_evidence_bytes(
     repetition: Stage2RepetitionAttestation,
     evidence_scope: Stage2EvidenceScope,
 ) -> bytes:
-    return build_cancellation_client_stream_raw_evidence_bytes(
-        repetition_index=repetition.repetition_index,
-        external_request_id=(
-            repetition.runtime_control.cancellation_probe.identity_chain.external_base_id
-        ),
-        evidence_scope=evidence_scope,
-    )
+    if repetition.cancellation_wire.provenance.evidence_scope is not evidence_scope:
+        raise Stage2ExperimentError("cancellation wire evidence scope differs")
+    return cancellation_wire_capture_bytes(repetition.cancellation_wire)
 
 
 def build_cuda_raw_evidence_bytes(
@@ -1405,7 +1624,7 @@ def reconstruct_experiment_repetition(raw: dict[str, bytes]) -> dict[str, bytes]
     if len(request_groups) != 16 or any(
         fields != set(_RAW_REQUEST_EVIDENCE_FIELDS) for fields in request_groups.values()
     ):
-        raise Stage2ExperimentError("repetition raw inventory lacks the exact 16-by-5 wire set")
+        raise Stage2ExperimentError("repetition raw inventory lacks the exact 16-by-6 wire set")
     derived: dict[str, bytes] = {}
     repetition_indexes: set[int] = set()
     evidence_scopes: set[Stage2EvidenceScope] = set()
@@ -1432,6 +1651,10 @@ def reconstruct_experiment_repetition(raw: dict[str, bytes]) -> dict[str, bytes]
             derived[f"derived/requests/{external_id}/{field}.json"] = expected[field]
     if len(repetition_indexes) != 1 or len(evidence_scopes) != 1:
         raise Stage2ExperimentError("request wire captures cross a repetition or evidence scope")
+    cancellation_path = "raw/cancellation/client-wire.json"
+    if cancellation_path not in raw:
+        raise Stage2ExperimentError("repetition raw inventory lacks cancellation HTTP/SSE wire")
+    cancellation_wire = cancellation_wire_capture_from_raw(raw[cancellation_path])
     prometheus_paths = (
         "raw/prometheus/measured-window-baseline.json",
         "raw/prometheus/measured-window-final.json",
@@ -1445,8 +1668,10 @@ def reconstruct_experiment_repetition(raw: dict[str, bytes]) -> dict[str, bytes]
     if (
         baseline_capture.repetition_index != expected_repetition_index
         or final_capture.repetition_index != expected_repetition_index
+        or cancellation_wire.repetition_index != expected_repetition_index
         or baseline_capture.evidence_scope is not expected_scope
         or final_capture.evidence_scope is not expected_scope
+        or cancellation_wire.provenance.evidence_scope is not expected_scope
         or baseline_capture.process_start_id != final_capture.process_start_id
     ):
         raise Stage2ExperimentError(
@@ -1467,6 +1692,9 @@ def reconstruct_experiment_repetition(raw: dict[str, bytes]) -> dict[str, bytes]
         "request_derived_file_count": 16
         * (len(REQUEST_EVIDENCE_FIELDS) - len(_RAW_REQUEST_EVIDENCE_FIELDS)),
         "prometheus_raw_scrape_count": 2,
+        "measured_http_exchange_count": 16,
+        "cancellation_http_exchange_count": 1,
+        "prometheus_http_exchange_count": 2,
         "prometheus_parsed_snapshot_count": 2,
         "raw_inventory_sha256": sha256_identity(
             {path: hashlib.sha256(raw[path]).hexdigest() for path in paths}
@@ -1520,7 +1748,8 @@ class Stage2RepetitionAttestation(StrictModel):
     repetition_manifest: Stage2BundleManifest
     repetition_manifest_sha256: Sha256
     cancellation_result_file: ManifestBoundFile
-    cancellation_client_stream_file: ManifestBoundFile
+    cancellation_wire_file: ManifestBoundFile
+    cancellation_wire: Stage2CancellationWireCapture
     prometheus_measurement: PrometheusMeasurementAttestation
     cuda_execution: Stage2RepetitionCudaAttestation
     measured_requests: tuple[Stage2MeasuredRequestAttestation, ...] = Field(
@@ -1577,6 +1806,19 @@ class Stage2RepetitionAttestation(StrictModel):
         )
         if len(all_ids) != len(set(all_ids)):
             raise ValueError("excluded, cancellation, and measured request IDs must be disjoint")
+        probe = self.runtime_control.cancellation_probe
+        if (
+            self.cancellation_wire.repetition_index != self.repetition_index
+            or self.cancellation_wire.external_request_id != cancellation_id
+            or self.cancellation_wire.request_identity.identity_chain != probe.identity_chain
+            or self.cancellation_wire.parser_replay.first_generation_token
+            != probe.first_generation_token
+            or self.cancellation_wire.request_body.transmission_offset_ns
+            != probe.dispatch_offset_ns
+            or self.cancellation_wire.intentional_client_close.close_observation_offset_ns
+            != probe.client_close_offset_ns
+        ):
+            raise ValueError("cancellation HTTP/SSE wire is detached from abort/drain evidence")
         measured_phase = next(
             phase for phase in self.runtime_control.phases if phase.phase.value == "MEASURED_WINDOW"
         )
@@ -1614,7 +1856,7 @@ class Stage2RepetitionAttestation(StrictModel):
         files = _manifest_file_map(manifest)
         references = [
             self.cancellation_result_file,
-            self.cancellation_client_stream_file,
+            self.cancellation_wire_file,
             measurement.baseline_raw_exposition_file,
             measurement.baseline_parsed_snapshot_file,
             measurement.final_raw_exposition_file,
@@ -1909,6 +2151,16 @@ class Stage2ExperimentAttestation(StrictModel):
             for request in all_requests
         ):
             raise ValueError("request wire provenance differs from experiment scope")
+        if any(
+            provenance.evidence_scope is not self.evidence_scope
+            for repetition in self.repetitions
+            for provenance in (
+                repetition.cancellation_wire.provenance,
+                repetition.prometheus_measurement.baseline_capture.provenance,
+                repetition.prometheus_measurement.final_capture.provenance,
+            )
+        ):
+            raise ValueError("cancellation or scrape provenance differs from experiment scope")
         all_external_ids = tuple(
             request_id
             for repetition in self.repetitions
@@ -1963,6 +2215,24 @@ class Stage2ExperimentAttestation(StrictModel):
             for repetition in self.repetitions
         ):
             raise ValueError("server restarts are not bound to the exact launch specification")
+        for repetition in self.repetitions:
+            expected_process = repetition.server_restart.server_process_identity
+            exchanges = (
+                *(request.wire_capture.http_exchange for request in repetition.measured_requests),
+                repetition.cancellation_wire.http_exchange,
+                repetition.prometheus_measurement.baseline_capture.http_exchange,
+                repetition.prometheus_measurement.final_capture.http_exchange,
+            )
+            try:
+                for exchange in exchanges:
+                    exchange.require_launch_and_process(
+                        self.launch_spec,
+                        server_process_identity=expected_process,
+                    )
+            except ValueError as error:
+                raise ValueError(
+                    "measured, cancellation, or scrape transport differs from launch/process"
+                ) from error
         if (
             self.launch_spec.model_path != self.snapshot_manifest.snapshot_root_path
             or self.launch_spec.tokenizer_path != self.snapshot_manifest.snapshot_root_path
@@ -2044,6 +2314,26 @@ class Stage2ExperimentAttestation(StrictModel):
                 for request in all_requests
             ):
                 raise ValueError("live wire capture lacks collector/runtime/environment bindings")
+            additional_provenances = tuple(
+                provenance
+                for repetition in self.repetitions
+                for provenance in (
+                    repetition.cancellation_wire.provenance,
+                    repetition.prometheus_measurement.baseline_capture.provenance,
+                    repetition.prometheus_measurement.final_capture.provenance,
+                )
+            )
+            if any(
+                not isinstance(provenance, CollectorWireCaptureProvenance)
+                or provenance.server_process_identity
+                != self.repetitions[index // 3].server_restart.server_process_identity
+                or provenance.model_snapshot_identity_sha256 != snapshot_identity
+                or provenance.environment_identity_sha256 != environment_identity
+                for index, provenance in enumerate(additional_provenances)
+            ):
+                raise ValueError(
+                    "live cancellation/scrape capture lacks collector/runtime bindings"
+                )
             chains = (
                 *(request.request_identity.identity_chain for request in all_requests),
                 *(
@@ -2653,10 +2943,17 @@ def _validate_terminal_graph(
                 raise Stage2ExperimentError(
                     f"measured request {request.external_request_id} does not reconstruct from raw"
                 )
+        cancellation_capture = cancellation_wire_capture_from_raw(
+            files[prefix + repetition.cancellation_wire_file.path]
+        )
+        if cancellation_capture != repetition.cancellation_wire:
+            raise Stage2ExperimentError(
+                f"repetition {repetition.repetition_index} cancellation wire differs"
+            )
         _require_exact_raw(
-            files[prefix + repetition.cancellation_client_stream_file.path],
-            cancellation_client_stream_raw_evidence_bytes(repetition, attestation.evidence_scope),
-            label=f"repetition {repetition.repetition_index} cancellation client stream",
+            files[prefix + repetition.cancellation_wire_file.path],
+            cancellation_wire_raw_evidence_bytes(repetition, attestation.evidence_scope),
+            label=f"repetition {repetition.repetition_index} cancellation HTTP/SSE wire",
         )
         for reference in repetition.cuda_execution.raw_evidence_files:
             _require_exact_raw(

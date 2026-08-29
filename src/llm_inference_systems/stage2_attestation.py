@@ -35,9 +35,8 @@ from llm_inference_systems.stage2_prometheus import (
     CounterDelta,
     PrometheusProtocolError,
     PrometheusSnapshot,
-    derive_counter_delta,
+    derive_measured_window_deltas,
     require_quiescent,
-    validate_measured_window_deltas,
 )
 from llm_inference_systems.stage2_runtime import (
     LAUNCH_ABSENT_ENVIRONMENT_VARIABLES,
@@ -45,6 +44,11 @@ from llm_inference_systems.stage2_runtime import (
     ModelTokenizerSnapshotManifest,
     Stage2LaunchSpec,
     stage2_launch_identity,
+)
+from llm_inference_systems.stage2_transport import (
+    FixtureWireCaptureProvenance,
+    Stage2HTTPExchangeCapture,
+    Stage2WireCaptureProvenance,
 )
 
 COMPONENT_ORDER: Final = (
@@ -113,6 +117,7 @@ class PrometheusRawScrapeCapture(StrictModel):
     schema_version: Literal["0.3.0"]
     evidence_scope: Stage2EvidenceScope
     repetition_index: Literal[1, 2, 3]
+    boundary: Literal["baseline", "final"]
     process_start_id: Identifier
     scrape_wall_clock_utc: AwareDatetime
     scrape_monotonic_offset_ns: NonNegativeInt
@@ -123,6 +128,8 @@ class PrometheusRawScrapeCapture(StrictModel):
         "TEST_FIXTURE_ONLY_CPU_SCRAPE",
         "FUTURE_RUNTIME_PROMETHEUS_COLLECTOR",
     ]
+    provenance: Stage2WireCaptureProvenance
+    http_exchange: Stage2HTTPExchangeCapture
     identity_sha256: Sha256
 
     @model_validator(mode="after")
@@ -147,6 +154,31 @@ class PrometheusRawScrapeCapture(StrictModel):
         fixture = self.evidence_scope is Stage2EvidenceScope.TEST_FIXTURE_ONLY
         if fixture != (self.capture_source == "TEST_FIXTURE_ONLY_CPU_SCRAPE"):
             raise ValueError("Prometheus capture source and evidence scope differ")
+        if fixture != isinstance(self.provenance, FixtureWireCaptureProvenance):
+            raise ValueError("Prometheus transport provenance and evidence scope differ")
+        exchange = self.http_exchange
+        expected_purpose = (
+            "PROMETHEUS_BASELINE" if self.boundary == "baseline" else "PROMETHEUS_FINAL"
+        )
+        if (
+            exchange.exchange_purpose != expected_purpose
+            or exchange.repetition_index != self.repetition_index
+            or exchange.evidence_unit_id != f"prometheus-{self.boundary}"
+            or exchange.provenance != self.provenance
+            or exchange.server_process_identity != self.process_start_id
+            or exchange.response_body_byte_count != self.decoded_byte_count
+            or exchange.response_body_sha256 != self.raw_exposition_sha256
+            or exchange.response_body_inventory_sha256
+            != sha256_identity(
+                {
+                    "decoded_byte_count": self.decoded_byte_count,
+                    "raw_exposition_sha256": self.raw_exposition_sha256,
+                }
+            )
+            or exchange.response_body_completion_observation_offset_ns
+            != self.scrape_monotonic_offset_ns
+        ):
+            raise ValueError("Prometheus scrape HTTP exchange differs from retained body")
         if self.identity_sha256 != sha256_identity(
             self, omit_fields=frozenset({"identity_sha256"})
         ):
@@ -168,6 +200,8 @@ class PrometheusMeasurementAttestation(StrictModel):
     baseline_parsed_snapshot_file: Stage2ManifestBoundFile
     final_raw_exposition_file: Stage2ManifestBoundFile
     final_parsed_snapshot_file: Stage2ManifestBoundFile
+    baseline_capture: PrometheusRawScrapeCapture
+    final_capture: PrometheusRawScrapeCapture
     baseline_snapshot: PrometheusSnapshot
     final_snapshot: PrometheusSnapshot
     measured_phase_identity_sha256: Sha256
@@ -176,7 +210,7 @@ class PrometheusMeasurementAttestation(StrictModel):
     first_measured_request_dispatch_offset_ns: NonNegativeInt
     last_measured_request_terminal_offset_ns: NonNegativeInt
     final_drain_boundary_offset_ns: NonNegativeInt
-    counter_deltas: tuple[CounterDelta, ...] = Field(min_length=6, max_length=6)
+    counter_deltas: tuple[CounterDelta, ...] = Field(min_length=10, max_length=10)
     evidence_sha256: Sha256
 
     @model_validator(mode="after")
@@ -197,9 +231,35 @@ class PrometheusMeasurementAttestation(StrictModel):
             raise ValueError("Prometheus evidence paths differ from the fixed repetition layout")
         if len({item.path.casefold() for item in references}) != 4:
             raise ValueError("Prometheus evidence paths are duplicated or ambiguous")
+        baseline_capture_bytes = canonical_json_bytes(self.baseline_capture) + b"\n"
+        final_capture_bytes = canonical_json_bytes(self.final_capture) + b"\n"
+        if (
+            self.baseline_raw_exposition_file.sha256
+            != hashlib.sha256(baseline_capture_bytes).hexdigest()
+            or self.baseline_raw_exposition_file.size != len(baseline_capture_bytes)
+            or self.final_raw_exposition_file.sha256
+            != hashlib.sha256(final_capture_bytes).hexdigest()
+            or self.final_raw_exposition_file.size != len(final_capture_bytes)
+        ):
+            raise ValueError("Prometheus raw scrape file identity does not reconstruct")
         if (
             self.baseline_snapshot.process_start_id != self.server_process_identity
             or self.final_snapshot.process_start_id != self.server_process_identity
+            or self.baseline_capture.process_start_id != self.server_process_identity
+            or self.final_capture.process_start_id != self.server_process_identity
+            or self.baseline_capture.boundary != "baseline"
+            or self.final_capture.boundary != "final"
+            or self.baseline_capture.repetition_index != self.repetition_index
+            or self.final_capture.repetition_index != self.repetition_index
+            or self.baseline_capture.raw_exposition() != self.baseline_snapshot.raw_exposition
+            or self.final_capture.raw_exposition() != self.final_snapshot.raw_exposition
+            or self.baseline_capture.scrape_monotonic_offset_ns
+            != self.baseline_snapshot.scrape_monotonic_offset_ns
+            or self.final_capture.scrape_monotonic_offset_ns
+            != self.final_snapshot.scrape_monotonic_offset_ns
+            or self.baseline_capture.scrape_wall_clock_utc
+            != self.baseline_snapshot.scrape_wall_clock_utc
+            or self.final_capture.scrape_wall_clock_utc != self.final_snapshot.scrape_wall_clock_utc
         ):
             raise ValueError("Prometheus measurement crosses a process or restart")
         if not (
@@ -235,40 +295,9 @@ class PrometheusMeasurementAttestation(StrictModel):
         try:
             require_quiescent(self.baseline_snapshot)
             require_quiescent(self.final_snapshot)
-            reconstructed = (
-                derive_counter_delta(
-                    self.baseline_snapshot,
-                    self.final_snapshot,
-                    "vllm:prompt_tokens_total",
-                ),
-                derive_counter_delta(
-                    self.baseline_snapshot,
-                    self.final_snapshot,
-                    "vllm:generation_tokens_total",
-                ),
-                derive_counter_delta(
-                    self.baseline_snapshot,
-                    self.final_snapshot,
-                    "vllm:request_success_total",
-                    finished_reason="length",
-                ),
-                derive_counter_delta(
-                    self.baseline_snapshot,
-                    self.final_snapshot,
-                    "vllm:num_preemptions_total",
-                ),
-                derive_counter_delta(
-                    self.baseline_snapshot,
-                    self.final_snapshot,
-                    "vllm:prefix_cache_queries_total",
-                ),
-                derive_counter_delta(
-                    self.baseline_snapshot,
-                    self.final_snapshot,
-                    "vllm:prefix_cache_hits_total",
-                ),
+            reconstructed = derive_measured_window_deltas(
+                self.baseline_snapshot, self.final_snapshot
             )
-            validate_measured_window_deltas(reconstructed)
         except PrometheusProtocolError as error:
             raise ValueError("Prometheus measurement attestation is invalid") from error
         if self.counter_deltas != reconstructed:

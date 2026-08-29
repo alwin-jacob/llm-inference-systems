@@ -21,9 +21,9 @@ from llm_inference_systems.stage2_contracts import (
 )
 from llm_inference_systems.stage2_experiment import (
     STAGE2_EXPERIMENT_CASE_IDS,
-    FixtureWireCaptureProvenance,
     reconstruct_experiment_attestation,
 )
+from llm_inference_systems.stage2_transport import FixtureWireCaptureProvenance
 
 FROZEN_HASHES = {
     "artifacts/stage1-fixture/2026-08-27/README.md": "b2703214ac2be0be93dea56158229a467d4494d903ed49a4a8bab02329abf4e8",
@@ -243,6 +243,40 @@ def main() -> int:
             for repetition in experiment.repetitions
             for request in repetition.measured_requests
         )
+        or any(
+            request.wire_capture.http_exchange.exchange_purpose != "MEASURED_COMPLETION"
+            for repetition in experiment.repetitions
+            for request in repetition.measured_requests
+        )
+        or any(
+            repetition.cancellation_wire.http_exchange.exchange_purpose != "CANCELLATION"
+            or repetition.cancellation_wire.intentional_client_close.close_classification
+            != "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN"
+            or repetition.cancellation_wire.parser_replay.first_generation_token
+            != repetition.runtime_control.cancellation_probe.first_generation_token
+            for repetition in experiment.repetitions
+        )
+        or any(
+            len(repetition.prometheus_measurement.counter_deltas) != 10
+            or {
+                dict(delta.labels).get("finished_reason"): delta.delta
+                for delta in repetition.prometheus_measurement.counter_deltas
+                if delta.metric == "vllm:request_success_total"
+            }
+            != {
+                "length": 16.0,
+                "abort": 0.0,
+                "stop": 0.0,
+                "error": 0.0,
+                "repetition": 0.0,
+            }
+            or {
+                repetition.prometheus_measurement.baseline_capture.http_exchange.normalized_response_media_type,
+                repetition.prometheus_measurement.final_capture.http_exchange.normalized_response_media_type,
+            }
+            != {"text/plain", "application/openmetrics-text"}
+            for repetition in experiment.repetitions
+        )
         or experiment.summary.runtime_claim_advancement_allowed
         or experiment.summary.performance_claim_advancement_allowed
     ):
@@ -271,6 +305,10 @@ def main() -> int:
                 "synthetic_prometheus_measurement_attestation_count": 3,
                 "synthetic_measured_request_attestation_count": 48,
                 "synthetic_exact_wire_capture_count": 48,
+                "synthetic_measured_http_exchange_count": 48,
+                "synthetic_cancellation_http_exchange_count": 3,
+                "synthetic_prometheus_http_exchange_count": 6,
+                "measured_window_counter_delta_count_per_repetition": 10,
                 "synthetic_repetition_manifest_count": 3,
                 "synthetic_semantic_comparison_count": 16,
                 "synthetic_experiment_classification": experiment.classification,

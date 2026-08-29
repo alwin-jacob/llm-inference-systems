@@ -44,10 +44,15 @@ EXPECTED_MEASURED_DELTAS: Final = {
     "vllm:prompt_tokens_total": 1024.0,
     "vllm:generation_tokens_total": 512.0,
     'vllm:request_success_total{finished_reason="length"}': 16.0,
+    'vllm:request_success_total{finished_reason="abort"}': 0.0,
+    'vllm:request_success_total{finished_reason="stop"}': 0.0,
+    'vllm:request_success_total{finished_reason="error"}': 0.0,
+    'vllm:request_success_total{finished_reason="repetition"}': 0.0,
     "vllm:num_preemptions_total": 0.0,
     "vllm:prefix_cache_queries_total": 0.0,
     "vllm:prefix_cache_hits_total": 0.0,
 }
+MEASURED_FINISH_REASONS: Final = ("length", "abort", "stop", "error", "repetition")
 
 _SAMPLE_RE = re.compile(
     r"^(?P<name>[A-Za-z_:][A-Za-z0-9_:]*)"
@@ -274,8 +279,10 @@ def validate_measured_window_deltas(deltas: tuple[CounterDelta, ...]) -> None:
         key = delta.metric
         expected_labels = dict(MODEL_LABELS)
         if delta.metric == "vllm:request_success_total":
-            expected_labels["finished_reason"] = "length"
-            reason = "length"
+            reason = dict(delta.labels).get("finished_reason")
+            if reason not in MEASURED_FINISH_REASONS:
+                raise PrometheusProtocolError("unexpected measured-window finish reason")
+            expected_labels["finished_reason"] = reason
             key = f'vllm:request_success_total{{finished_reason="{reason}"}}'
         if delta.labels != tuple(sorted(expected_labels.items())):
             raise PrometheusProtocolError("measured-window delta labels differ from exact series")
@@ -284,6 +291,47 @@ def validate_measured_window_deltas(deltas: tuple[CounterDelta, ...]) -> None:
         observed[key] = delta.delta
     if observed != EXPECTED_MEASURED_DELTAS:
         raise PrometheusProtocolError("measured-window counter deltas differ from the contract")
+
+
+def derive_measured_window_deltas(
+    before: PrometheusSnapshot,
+    after: PrometheusSnapshot,
+) -> tuple[CounterDelta, ...]:
+    """Derive the complete ten-series measured window from retained exposition."""
+
+    expected_reason_labels = {
+        tuple(sorted({**MODEL_LABELS, "finished_reason": reason}.items()))
+        for reason in MEASURED_FINISH_REASONS
+    }
+    for snapshot in (before, after):
+        exact_model_reason_labels = {
+            sample.labels
+            for sample in snapshot.samples
+            if sample.name == "vllm:request_success_total"
+            and all(sample.label_map.get(name) == value for name, value in MODEL_LABELS.items())
+        }
+        if exact_model_reason_labels != expected_reason_labels:
+            raise PrometheusProtocolError(
+                "measured-window finish-reason family is absent, extra, or label-drifted"
+            )
+    deltas = (
+        derive_counter_delta(before, after, "vllm:prompt_tokens_total"),
+        derive_counter_delta(before, after, "vllm:generation_tokens_total"),
+        *(
+            derive_counter_delta(
+                before,
+                after,
+                "vllm:request_success_total",
+                finished_reason=reason,
+            )
+            for reason in MEASURED_FINISH_REASONS
+        ),
+        derive_counter_delta(before, after, "vllm:num_preemptions_total"),
+        derive_counter_delta(before, after, "vllm:prefix_cache_queries_total"),
+        derive_counter_delta(before, after, "vllm:prefix_cache_hits_total"),
+    )
+    validate_measured_window_deltas(deltas)
+    return deltas
 
 
 def require_quiescent(snapshot: PrometheusSnapshot) -> None:

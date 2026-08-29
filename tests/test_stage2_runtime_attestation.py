@@ -432,7 +432,7 @@ def test_measured_prometheus_attestation_requires_quiescent_raw_snapshots() -> N
     ).model_dump(mode="python")
     with pytest.raises(
         ValidationError,
-        match=r"Prometheus measurement attestation|parsed snapshot file identity",
+        match=r"Prometheus measurement|parsed snapshot file identity|crosses a process",
     ):
         PrometheusMeasurementAttestation.model_validate(value)
 

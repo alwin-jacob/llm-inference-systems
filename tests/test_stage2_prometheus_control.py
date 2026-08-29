@@ -36,6 +36,7 @@ from llm_inference_systems.stage2_prometheus import (
     PrometheusProtocolError,
     PrometheusSnapshot,
     derive_counter_delta,
+    derive_measured_window_deltas,
     parse_prometheus_snapshot,
     require_fresh_snapshot,
     require_quiescent,
@@ -56,27 +57,37 @@ def _exposition(
     prompt: int = 0,
     generation: int = 0,
     length: int = 0,
+    abort: int = 0,
+    stop: int = 0,
+    error: int = 0,
+    repetition: int = 0,
     running: int = 0,
     engine: str = "0",
 ) -> str:
     labels = f'engine="{engine}",model_name="qwen2.5-0.5b-instruct-stage2"'
-    success = (
-        f'engine="{engine}",finished_reason="length",model_name="qwen2.5-0.5b-instruct-stage2"'
-    )
-    return "\n".join(
-        (
-            f"vllm:num_requests_running{{{labels}}} {running}.0",
-            f"vllm:num_requests_waiting{{{labels}}} 0.0",
-            f"vllm:kv_cache_usage_perc{{{labels}}} 0.25",
-            f"vllm:prompt_tokens_total{{{labels}}} {prompt}.0",
-            f"vllm:generation_tokens_total{{{labels}}} {generation}.0",
-            f"vllm:request_success_total{{{success}}} {length}.0",
-            f"vllm:num_preemptions_total{{{labels}}} 0.0",
-            f"vllm:prefix_cache_queries_total{{{labels}}} 0.0",
-            f"vllm:prefix_cache_hits_total{{{labels}}} 0.0",
-            "",
+    lines = [
+        f"vllm:num_requests_running{{{labels}}} {running}.0",
+        f"vllm:num_requests_waiting{{{labels}}} 0.0",
+        f"vllm:kv_cache_usage_perc{{{labels}}} 0.25",
+        f"vllm:prompt_tokens_total{{{labels}}} {prompt}.0",
+        f"vllm:generation_tokens_total{{{labels}}} {generation}.0",
+        f"vllm:num_preemptions_total{{{labels}}} 0.0",
+        f"vllm:prefix_cache_queries_total{{{labels}}} 0.0",
+        f"vllm:prefix_cache_hits_total{{{labels}}} 0.0",
+    ]
+    for reason, value in (
+        ("abort", abort),
+        ("error", error),
+        ("length", length),
+        ("repetition", repetition),
+        ("stop", stop),
+    ):
+        success = (
+            f'engine="{engine}",finished_reason="{reason}",'
+            'model_name="qwen2.5-0.5b-instruct-stage2"'
         )
-    )
+        lines.append(f"vllm:request_success_total{{{success}}} {value}.0")
+    return "\n".join((*lines, ""))
 
 
 def _snapshot(raw: str, offset: int, process: str = "process-a") -> PrometheusSnapshot:
@@ -172,19 +183,7 @@ def test_changed_label_inventory_is_rejected_before_subtraction() -> None:
 def test_expected_16_by_64_to_32_counter_deltas() -> None:
     before = _snapshot(_exposition(), 1)
     after = _snapshot(_exposition(prompt=1024, generation=512, length=16), 2)
-    deltas = (
-        derive_counter_delta(before, after, "vllm:prompt_tokens_total"),
-        derive_counter_delta(before, after, "vllm:generation_tokens_total"),
-        derive_counter_delta(
-            before,
-            after,
-            "vllm:request_success_total",
-            finished_reason="length",
-        ),
-        derive_counter_delta(before, after, "vllm:num_preemptions_total"),
-        derive_counter_delta(before, after, "vllm:prefix_cache_queries_total"),
-        derive_counter_delta(before, after, "vllm:prefix_cache_hits_total"),
-    )
+    deltas = derive_measured_window_deltas(before, after)
     validate_measured_window_deltas(deltas)
 
 
@@ -199,20 +198,10 @@ def test_measured_window_delta_rejects_false_arithmetic_or_labels() -> None:
         )
     before = _snapshot(_exposition(), 1)
     after = _snapshot(_exposition(prompt=1024, generation=512, length=16), 2)
+    original = derive_measured_window_deltas(before, after)
     deltas = (
-        derive_counter_delta(before, after, "vllm:prompt_tokens_total").model_copy(
-            update={"labels": (("engine", "different"),)}
-        ),
-        derive_counter_delta(before, after, "vllm:generation_tokens_total"),
-        derive_counter_delta(
-            before,
-            after,
-            "vllm:request_success_total",
-            finished_reason="length",
-        ),
-        derive_counter_delta(before, after, "vllm:num_preemptions_total"),
-        derive_counter_delta(before, after, "vllm:prefix_cache_queries_total"),
-        derive_counter_delta(before, after, "vllm:prefix_cache_hits_total"),
+        original[0].model_copy(update={"labels": (("engine", "different"),)}),
+        *original[1:],
     )
     with pytest.raises(PrometheusProtocolError, match="labels differ"):
         validate_measured_window_deltas(deltas)
