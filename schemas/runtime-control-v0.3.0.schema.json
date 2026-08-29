@@ -230,7 +230,8 @@
       "additionalProperties": false,
       "properties": {
         "external_request_id": {
-          "const": "E_cancel",
+          "maxLength": 160,
+          "minLength": 1,
           "title": "External Request Id",
           "type": "string"
         },
@@ -249,7 +250,8 @@
           "type": "array"
         },
         "response_body_id": {
-          "const": "cmpl-E_cancel",
+          "maxLength": 160,
+          "minLength": 1,
           "title": "Response Body Id",
           "type": "string"
         }

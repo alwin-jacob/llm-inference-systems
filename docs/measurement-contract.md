@@ -188,3 +188,26 @@ reason, usage, and output-text hash are compared. Any mismatch makes semantic re
 and prohibits pooled performance interpretation. Stage 2A never calculates or displays p99. P50
 and p95 are named descriptive values with exact sample counts and restart grouping; goodput and
 capacity advancement remain prohibited.
+
+## Cardinality-complete experiment attestation
+
+The final boundary requires the exact versioned 16-case set in each of repetitions 1, 2, and 3.
+Measured-request IDs must equal the runtime-control measured-ID set; three stabilization IDs, four
+shape-warmup IDs, the cancellation ID, and 16 measured IDs are locally disjoint, and every external
+ID is globally unique across repetitions. Case IDs intentionally repeat only for comparison.
+
+Each measured request binds parsed four-terminal evidence, the full request identity, exact token
+and usage reconciliation, and ten distinct path/hash/size references to its committed repetition
+manifest. Filesystem reconstruction also derives the exact expected canonical bytes for all ten
+records and rejects swapped or semantically detached references. Lifecycle intervals are half-open
+`[dispatch, terminal)`. Terminal events are processed
+before dispatch events at equal timestamps, so touching intervals do not create overlap. Every
+interval lies inside the measured phase, the derived maximum active client count is exactly two,
+it never exceeds two, and at least one positive-duration overlap exists. Slot labels are not
+concurrency evidence.
+
+Server metric availability is derived independently for each of the exact five fields. Explicit
+null disables only that server metric's advancement; client metrics never fill it. Grouped token
+events separately disable client-generation TPOT and token-observation ITL. Repetition summaries
+require 16 requests and experiment summaries require all 48; a metric is advancement-eligible only
+when it is available for the full relevant population.

@@ -57,3 +57,11 @@ proxy credentials, private home and cache paths, host/notebook/account identifie
 sensitive private-file patterns, arbitrary remote URLs in executable example configuration,
 repository symlinks, and unreviewed binary/profiler artifacts. Runtime-token environment variables
 are modeled as unset without reading; tests do not access their values.
+
+The aggregate reconstruction path applies the same public-safe UTF-8 boundary to every inventoried
+shared, repetition, request, comparison, summary, and attestation file. It rejects symlinks in any
+component, normalized-path escape, case collisions, missing or extra files, size/hash changes, and
+environment, hardware, CUDA, cancellation, or safety raw hashes without retained files. The
+aggregate manifest is atomically replaced only after every referenced byte validates, is fsynced,
+and is later than each inventoried file. This remains integrity evidence, not authorship or runtime
+provenance.

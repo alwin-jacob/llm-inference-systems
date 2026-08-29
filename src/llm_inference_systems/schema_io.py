@@ -24,7 +24,6 @@ from llm_inference_systems.stage1_contracts import (
     Stage1RunConfiguration,
     Stage1WorkloadDefinition,
 )
-from llm_inference_systems.stage2_attestation import FutureRealRuntimeAttestation
 from llm_inference_systems.stage2_contracts import (
     Stage2BundleManifest,
     Stage2CompletionRequest,
@@ -32,6 +31,12 @@ from llm_inference_systems.stage2_contracts import (
     Stage2RunConfiguration,
 )
 from llm_inference_systems.stage2_control import Stage2RuntimeControlEvidence
+from llm_inference_systems.stage2_experiment import (
+    Stage2AggregateExperimentManifest,
+    Stage2ExperimentAttestation,
+    Stage2MeasuredRequestAttestation,
+    Stage2RepetitionAttestation,
+)
 from llm_inference_systems.stage2_runtime import (
     ModelTokenizerSnapshotManifest,
     Stage2LaunchSpec,
@@ -50,11 +55,15 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "run-configuration-v0.2.0.schema.json": Stage1RunConfiguration,
     "workload-definition-v0.2.0.schema.json": Stage1WorkloadDefinition,
     "bundle-manifest-v0.3.0.schema.json": Stage2BundleManifest,
+    "aggregate-experiment-manifest-v0.3.0.schema.json": Stage2AggregateExperimentManifest,
     "completion-request-v0.3.0.schema.json": Stage2CompletionRequest,
     "execution-lock-v0.3.0.schema.json": Stage2ExecutionLock,
     "launch-spec-v0.3.0.schema.json": Stage2LaunchSpec,
     "model-tokenizer-snapshot-manifest-v0.3.0.schema.json": (ModelTokenizerSnapshotManifest),
-    "real-runtime-attestation-v0.3.0.schema.json": FutureRealRuntimeAttestation,
+    "experiment-attestation-v0.3.0.schema.json": Stage2ExperimentAttestation,
+    "measured-request-attestation-v0.3.0.schema.json": Stage2MeasuredRequestAttestation,
+    "real-runtime-attestation-v0.3.0.schema.json": Stage2ExperimentAttestation,
+    "repetition-attestation-v0.3.0.schema.json": Stage2RepetitionAttestation,
     "run-configuration-v0.3.0.schema.json": Stage2RunConfiguration,
     "runtime-control-v0.3.0.schema.json": Stage2RuntimeControlEvidence,
 }

@@ -1,0 +1,826 @@
+{
+  "$defs": {
+    "ManifestBoundFile": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "size"
+      ],
+      "title": "ManifestBoundFile",
+      "type": "object"
+    },
+    "MetricAvailability": {
+      "additionalProperties": false,
+      "properties": {
+        "unavailable_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "GROUPED_TOKEN_EVENT",
+                "INSUFFICIENT_OUTPUT_TOKENS"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unavailable Reason"
+        },
+        "value_ns": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value Ns"
+        }
+      },
+      "required": [
+        "value_ns",
+        "unavailable_reason"
+      ],
+      "title": "MetricAvailability",
+      "type": "object"
+    },
+    "RawLogRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_end": {
+          "exclusiveMinimum": 0,
+          "title": "Byte End",
+          "type": "integer"
+        },
+        "byte_start": {
+          "minimum": 0,
+          "title": "Byte Start",
+          "type": "integer"
+        },
+        "observation_offset_ns": {
+          "minimum": 0,
+          "title": "Observation Offset Ns",
+          "type": "integer"
+        },
+        "raw_record": {
+          "title": "Raw Record",
+          "type": "string"
+        },
+        "raw_record_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Raw Record Sha256",
+          "type": "string"
+        },
+        "record_ordinal": {
+          "minimum": 0,
+          "title": "Record Ordinal",
+          "type": "integer"
+        },
+        "source_stream_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Source Stream Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_stream_id",
+        "record_ordinal",
+        "byte_start",
+        "byte_end",
+        "observation_offset_ns",
+        "raw_record",
+        "raw_record_sha256"
+      ],
+      "title": "RawLogRecord",
+      "type": "object"
+    },
+    "RequestIdentityAttestation": {
+      "additionalProperties": false,
+      "properties": {
+        "identity_chain": {
+          "$ref": "#/$defs/RequestIdentityChain"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity_chain",
+        "identity_sha256"
+      ],
+      "title": "RequestIdentityAttestation",
+      "type": "object"
+    },
+    "RequestIdentityChain": {
+      "additionalProperties": false,
+      "properties": {
+        "external_abort_log": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RawLogRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "external_base_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "title": "External Base Id",
+          "type": "string"
+        },
+        "internal_abort_log": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RawLogRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "internal_engine_id": {
+          "title": "Internal Engine Id",
+          "type": "string"
+        },
+        "request_add_log": {
+          "$ref": "#/$defs/RawLogRecord"
+        },
+        "request_received_log": {
+          "$ref": "#/$defs/RawLogRecord"
+        },
+        "response_body_id": {
+          "title": "Response Body Id",
+          "type": "string"
+        },
+        "serving_item_id": {
+          "title": "Serving Item Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "external_base_id",
+        "response_body_id",
+        "serving_item_id",
+        "internal_engine_id",
+        "request_received_log",
+        "request_add_log",
+        "external_abort_log",
+        "internal_abort_log"
+      ],
+      "title": "RequestIdentityChain",
+      "type": "object"
+    },
+    "Stage2MetricAvailability": {
+      "additionalProperties": false,
+      "properties": {
+        "client_generation_tpot_advancement_allowed": {
+          "title": "Client Generation Tpot Advancement Allowed",
+          "type": "boolean"
+        },
+        "client_generation_tpot_available": {
+          "title": "Client Generation Tpot Available",
+          "type": "boolean"
+        },
+        "server_generation_time_advancement_allowed": {
+          "title": "Server Generation Time Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_generation_time_available": {
+          "title": "Server Generation Time Available",
+          "type": "boolean"
+        },
+        "server_mean_itl_advancement_allowed": {
+          "title": "Server Mean Itl Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_mean_itl_available": {
+          "title": "Server Mean Itl Available",
+          "type": "boolean"
+        },
+        "server_queue_time_advancement_allowed": {
+          "title": "Server Queue Time Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_queue_time_available": {
+          "title": "Server Queue Time Available",
+          "type": "boolean"
+        },
+        "server_tokens_per_second_advancement_allowed": {
+          "title": "Server Tokens Per Second Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_tokens_per_second_available": {
+          "title": "Server Tokens Per Second Available",
+          "type": "boolean"
+        },
+        "server_ttft_advancement_allowed": {
+          "title": "Server Ttft Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_ttft_available": {
+          "title": "Server Ttft Available",
+          "type": "boolean"
+        },
+        "token_observation_itl_advancement_allowed": {
+          "title": "Token Observation Itl Advancement Allowed",
+          "type": "boolean"
+        },
+        "token_observation_itl_available": {
+          "title": "Token Observation Itl Available",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "server_ttft_available",
+        "server_generation_time_available",
+        "server_queue_time_available",
+        "server_mean_itl_available",
+        "server_tokens_per_second_available",
+        "client_generation_tpot_available",
+        "token_observation_itl_available",
+        "server_ttft_advancement_allowed",
+        "server_generation_time_advancement_allowed",
+        "server_queue_time_advancement_allowed",
+        "server_mean_itl_advancement_allowed",
+        "server_tokens_per_second_advancement_allowed",
+        "client_generation_tpot_advancement_allowed",
+        "token_observation_itl_advancement_allowed"
+      ],
+      "title": "Stage2MetricAvailability",
+      "type": "object"
+    },
+    "Stage2PerRequestMetrics": {
+      "additionalProperties": false,
+      "properties": {
+        "generation_time_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Generation Time Ms"
+        },
+        "mean_itl_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mean Itl Ms"
+        },
+        "queue_time_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Queue Time Ms"
+        },
+        "time_to_first_token_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Time To First Token Ms"
+        },
+        "tokens_per_second": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tokens Per Second"
+        }
+      },
+      "required": [
+        "time_to_first_token_ms",
+        "generation_time_ms",
+        "queue_time_ms",
+        "mean_itl_ms",
+        "tokens_per_second"
+      ],
+      "title": "Stage2PerRequestMetrics",
+      "type": "object"
+    },
+    "Stage2RequestEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "client_generation_tpot": {
+          "$ref": "#/$defs/MetricAvailability"
+        },
+        "disagreements": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Disagreements",
+          "type": "array"
+        },
+        "external_request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "title": "External Request Id",
+          "type": "string"
+        },
+        "final_output_token_ids": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 32,
+          "minItems": 32,
+          "title": "Final Output Token Ids",
+          "type": "array"
+        },
+        "finish_reason": {
+          "const": "length",
+          "title": "Finish Reason",
+          "type": "string"
+        },
+        "fixture_identity_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Fixture Identity Sha256"
+        },
+        "internal_engine_request_id": {
+          "title": "Internal Engine Request Id",
+          "type": "string"
+        },
+        "local_output_token_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Local Output Token Count"
+        },
+        "local_prompt_token_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Local Prompt Token Count"
+        },
+        "output_text": {
+          "title": "Output Text",
+          "type": "string"
+        },
+        "output_text_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Output Text Sha256",
+          "type": "string"
+        },
+        "request_identity_chain_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Request Identity Chain Sha256",
+          "type": "string"
+        },
+        "response_request_id": {
+          "title": "Response Request Id",
+          "type": "string"
+        },
+        "returned_prompt_token_ids": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 64,
+          "minItems": 64,
+          "title": "Returned Prompt Token Ids",
+          "type": "array"
+        },
+        "sent_prompt_token_ids": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 64,
+          "minItems": 64,
+          "title": "Sent Prompt Token Ids",
+          "type": "array"
+        },
+        "server_per_request_metrics": {
+          "$ref": "#/$defs/Stage2PerRequestMetrics"
+        },
+        "serving_item_request_id": {
+          "title": "Serving Item Request Id",
+          "type": "string"
+        },
+        "stream_output_gap_ns": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Stream Output Gap Ns",
+          "type": "array"
+        },
+        "terminal_event_carried_token_ids": {
+          "title": "Terminal Event Carried Token Ids",
+          "type": "boolean"
+        },
+        "timing": {
+          "$ref": "#/$defs/Stage2TimingRecord"
+        },
+        "token_events": {
+          "items": {
+            "$ref": "#/$defs/Stage2TokenEvent"
+          },
+          "minItems": 1,
+          "title": "Token Events",
+          "type": "array"
+        },
+        "token_observation_itl": {
+          "$ref": "#/$defs/MetricAvailability"
+        },
+        "usage": {
+          "$ref": "#/$defs/Stage2Usage"
+        }
+      },
+      "required": [
+        "fixture_identity_sha256",
+        "request_identity_chain_sha256",
+        "external_request_id",
+        "response_request_id",
+        "serving_item_request_id",
+        "internal_engine_request_id",
+        "sent_prompt_token_ids",
+        "returned_prompt_token_ids",
+        "token_events",
+        "final_output_token_ids",
+        "finish_reason",
+        "terminal_event_carried_token_ids",
+        "usage",
+        "local_prompt_token_count",
+        "local_output_token_count",
+        "server_per_request_metrics",
+        "disagreements",
+        "output_text",
+        "output_text_sha256",
+        "timing",
+        "client_generation_tpot",
+        "token_observation_itl",
+        "stream_output_gap_ns"
+      ],
+      "title": "Stage2RequestEvidence",
+      "type": "object"
+    },
+    "Stage2RequestLifecycle": {
+      "additionalProperties": false,
+      "properties": {
+        "dispatch_offset_ns": {
+          "minimum": 0,
+          "title": "Dispatch Offset Ns",
+          "type": "integer"
+        },
+        "measurement_phase_end_ns": {
+          "exclusiveMinimum": 0,
+          "title": "Measurement Phase End Ns",
+          "type": "integer"
+        },
+        "measurement_phase_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Measurement Phase Identity Sha256",
+          "type": "string"
+        },
+        "measurement_phase_start_ns": {
+          "minimum": 0,
+          "title": "Measurement Phase Start Ns",
+          "type": "integer"
+        },
+        "terminal_offset_ns": {
+          "exclusiveMinimum": 0,
+          "title": "Terminal Offset Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dispatch_offset_ns",
+        "terminal_offset_ns",
+        "measurement_phase_start_ns",
+        "measurement_phase_end_ns",
+        "measurement_phase_identity_sha256"
+      ],
+      "title": "Stage2RequestLifecycle",
+      "type": "object"
+    },
+    "Stage2RequestRawEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "lifecycle": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "parsed_sse_events": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "raw_response_body": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "request_body": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "request_headers": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "response_headers": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "server_logs": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "server_metrics": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "terminal_boundary": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "token_usage_reconciliation": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        }
+      },
+      "required": [
+        "request_body",
+        "request_headers",
+        "response_headers",
+        "raw_response_body",
+        "parsed_sse_events",
+        "terminal_boundary",
+        "server_logs",
+        "server_metrics",
+        "lifecycle",
+        "token_usage_reconciliation"
+      ],
+      "title": "Stage2RequestRawEvidence",
+      "type": "object"
+    },
+    "Stage2TimingRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "dispatch_offset_ns": {
+          "minimum": 0,
+          "title": "Dispatch Offset Ns",
+          "type": "integer"
+        },
+        "first_output_token_offset_ns": {
+          "minimum": 0,
+          "title": "First Output Token Offset Ns",
+          "type": "integer"
+        },
+        "first_response_body_bytes_offset_ns": {
+          "minimum": 0,
+          "title": "First Response Body Bytes Offset Ns",
+          "type": "integer"
+        },
+        "generation_terminal_offset_ns": {
+          "minimum": 0,
+          "title": "Generation Terminal Offset Ns",
+          "type": "integer"
+        },
+        "protocol_terminal_offset_ns": {
+          "minimum": 0,
+          "title": "Protocol Terminal Offset Ns",
+          "type": "integer"
+        },
+        "response_headers_offset_ns": {
+          "minimum": 0,
+          "title": "Response Headers Offset Ns",
+          "type": "integer"
+        },
+        "transport_terminal_offset_ns": {
+          "minimum": 0,
+          "title": "Transport Terminal Offset Ns",
+          "type": "integer"
+        },
+        "usage_terminal_offset_ns": {
+          "minimum": 0,
+          "title": "Usage Terminal Offset Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dispatch_offset_ns",
+        "response_headers_offset_ns",
+        "first_response_body_bytes_offset_ns",
+        "first_output_token_offset_ns",
+        "generation_terminal_offset_ns",
+        "usage_terminal_offset_ns",
+        "protocol_terminal_offset_ns",
+        "transport_terminal_offset_ns"
+      ],
+      "title": "Stage2TimingRecord",
+      "type": "object"
+    },
+    "Stage2TokenEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "finish_reason": {
+          "anyOf": [
+            {
+              "const": "length",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Finish Reason"
+        },
+        "observation_offset_ns": {
+          "minimum": 0,
+          "title": "Observation Offset Ns",
+          "type": "integer"
+        },
+        "output_token_ids": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Output Token Ids",
+          "type": "array"
+        },
+        "prompt_token_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Token Ids"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation_offset_ns",
+        "output_token_ids",
+        "text",
+        "finish_reason"
+      ],
+      "title": "Stage2TokenEvent",
+      "type": "object"
+    },
+    "Stage2Usage": {
+      "additionalProperties": false,
+      "properties": {
+        "completion_tokens": {
+          "const": 32,
+          "title": "Completion Tokens",
+          "type": "integer"
+        },
+        "prompt_tokens": {
+          "const": 64,
+          "title": "Prompt Tokens",
+          "type": "integer"
+        },
+        "total_tokens": {
+          "const": 96,
+          "title": "Total Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens"
+      ],
+      "title": "Stage2Usage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "attestation_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Attestation Sha256",
+      "type": "string"
+    },
+    "case_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Case Id",
+      "type": "string"
+    },
+    "external_request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "External Request Id",
+      "type": "string"
+    },
+    "lifecycle": {
+      "$ref": "#/$defs/Stage2RequestLifecycle"
+    },
+    "metric_availability": {
+      "$ref": "#/$defs/Stage2MetricAvailability"
+    },
+    "raw_evidence": {
+      "$ref": "#/$defs/Stage2RequestRawEvidence"
+    },
+    "repetition_index": {
+      "enum": [
+        1,
+        2,
+        3
+      ],
+      "title": "Repetition Index",
+      "type": "integer"
+    },
+    "repetition_manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Repetition Manifest Sha256",
+      "type": "string"
+    },
+    "request_evidence": {
+      "$ref": "#/$defs/Stage2RequestEvidence"
+    },
+    "request_identity": {
+      "$ref": "#/$defs/RequestIdentityAttestation"
+    },
+    "schema_version": {
+      "const": "0.3.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "repetition_index",
+    "case_id",
+    "external_request_id",
+    "request_evidence",
+    "request_identity",
+    "lifecycle",
+    "raw_evidence",
+    "metric_availability",
+    "repetition_manifest_sha256",
+    "attestation_sha256"
+  ],
+  "title": "Stage2MeasuredRequestAttestation",
+  "type": "object"
+}

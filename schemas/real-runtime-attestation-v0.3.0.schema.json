@@ -1,26 +1,12 @@
 {
   "$defs": {
-    "AttestedComponentIdentity": {
-      "additionalProperties": false,
-      "properties": {
-        "component": {
-          "maxLength": 160,
-          "minLength": 1,
-          "title": "Component",
-          "type": "string"
-        },
-        "identity_sha256": {
-          "pattern": "^[0-9a-f]{64}$",
-          "title": "Identity Sha256",
-          "type": "string"
-        }
-      },
-      "required": [
-        "component",
-        "identity_sha256"
+    "AggregateComparisonState": {
+      "enum": [
+        "COMMITTED",
+        "INVALID_SEMANTIC_NONREPRODUCTION"
       ],
-      "title": "AttestedComponentIdentity",
-      "type": "object"
+      "title": "AggregateComparisonState",
+      "type": "string"
     },
     "BundleFileEntry": {
       "additionalProperties": false,
@@ -336,7 +322,8 @@
       "additionalProperties": false,
       "properties": {
         "external_request_id": {
-          "const": "E_cancel",
+          "maxLength": 160,
+          "minLength": 1,
           "title": "External Request Id",
           "type": "string"
         },
@@ -355,7 +342,8 @@
           "type": "array"
         },
         "response_body_id": {
-          "const": "cmpl-E_cancel",
+          "maxLength": 160,
+          "minLength": 1,
           "title": "Response Body Id",
           "type": "string"
         }
@@ -460,6 +448,32 @@
         "identity_sha256"
       ],
       "title": "LinuxEnvironmentManifest",
+      "type": "object"
+    },
+    "ManifestBoundFile": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "size"
+      ],
+      "title": "ManifestBoundFile",
       "type": "object"
     },
     "MetricAvailability": {
@@ -775,31 +789,6 @@
       "title": "NvidiaT4ResourceAttestation",
       "type": "object"
     },
-    "PerRequestMetricsAttestation": {
-      "additionalProperties": false,
-      "properties": {
-        "metrics": {
-          "$ref": "#/$defs/Stage2PerRequestMetrics"
-        },
-        "metrics_sha256": {
-          "pattern": "^[0-9a-f]{64}$",
-          "title": "Metrics Sha256",
-          "type": "string"
-        },
-        "request_evidence_sha256": {
-          "pattern": "^[0-9a-f]{64}$",
-          "title": "Request Evidence Sha256",
-          "type": "string"
-        }
-      },
-      "required": [
-        "request_evidence_sha256",
-        "metrics",
-        "metrics_sha256"
-      ],
-      "title": "PerRequestMetricsAttestation",
-      "type": "object"
-    },
     "ProcessExitEvidence": {
       "additionalProperties": false,
       "properties": {
@@ -832,39 +821,6 @@
         "raw_evidence_sha256"
       ],
       "title": "ProcessExitEvidence",
-      "type": "object"
-    },
-    "PrometheusMeasurementAttestation": {
-      "additionalProperties": false,
-      "properties": {
-        "baseline_snapshot": {
-          "$ref": "#/$defs/PrometheusSnapshot"
-        },
-        "counter_deltas": {
-          "items": {
-            "$ref": "#/$defs/CounterDelta"
-          },
-          "maxItems": 6,
-          "minItems": 6,
-          "title": "Counter Deltas",
-          "type": "array"
-        },
-        "evidence_sha256": {
-          "pattern": "^[0-9a-f]{64}$",
-          "title": "Evidence Sha256",
-          "type": "string"
-        },
-        "final_snapshot": {
-          "$ref": "#/$defs/PrometheusSnapshot"
-        }
-      },
-      "required": [
-        "baseline_snapshot",
-        "final_snapshot",
-        "counter_deltas",
-        "evidence_sha256"
-      ],
-      "title": "PrometheusMeasurementAttestation",
       "type": "object"
     },
     "PrometheusSample": {
@@ -1372,6 +1328,44 @@
       "title": "ResolvedVllmRuntimeArtifact",
       "type": "object"
     },
+    "RestartComparison": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "title": "Case Id",
+          "type": "string"
+        },
+        "lis_obs_003_advancement_allowed": {
+          "const": false,
+          "title": "Lis Obs 003 Advancement Allowed",
+          "type": "boolean"
+        },
+        "mismatches": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Mismatches",
+          "type": "array"
+        },
+        "pooled_performance_interpretation_allowed": {
+          "const": false,
+          "title": "Pooled Performance Interpretation Allowed",
+          "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/AggregateComparisonState"
+        }
+      },
+      "required": [
+        "case_id",
+        "state",
+        "pooled_performance_interpretation_allowed",
+        "lis_obs_003_advancement_allowed",
+        "mismatches"
+      ],
+      "title": "RestartComparison",
+      "type": "object"
+    },
     "RuntimePackageExecutionLockAttestation": {
       "additionalProperties": false,
       "properties": {
@@ -1575,39 +1569,6 @@
       "title": "RuntimePhaseRecord",
       "type": "object"
     },
-    "ServerRestartAttestation": {
-      "additionalProperties": false,
-      "properties": {
-        "identity_sha256": {
-          "pattern": "^[0-9a-f]{64}$",
-          "title": "Identity Sha256",
-          "type": "string"
-        },
-        "restarts": {
-          "maxItems": 3,
-          "minItems": 3,
-          "prefixItems": [
-            {
-              "$ref": "#/$defs/ServerRestartIdentity"
-            },
-            {
-              "$ref": "#/$defs/ServerRestartIdentity"
-            },
-            {
-              "$ref": "#/$defs/ServerRestartIdentity"
-            }
-          ],
-          "title": "Restarts",
-          "type": "array"
-        }
-      },
-      "required": [
-        "restarts",
-        "identity_sha256"
-      ],
-      "title": "ServerRestartAttestation",
-      "type": "object"
-    },
     "ServerRestartIdentity": {
       "additionalProperties": false,
       "properties": {
@@ -1778,6 +1739,83 @@
       "title": "SnapshotSpecialTokenIds",
       "type": "object"
     },
+    "Stage2AggregateValidationResult": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregate_validator": {
+          "const": "validate_aggregate_commit",
+          "title": "Aggregate Validator",
+          "type": "string"
+        },
+        "comparison_count": {
+          "const": 16,
+          "title": "Comparison Count",
+          "type": "integer"
+        },
+        "failure_reason": {
+          "anyOf": [
+            {
+              "const": "INVALID_SEMANTIC_NONREPRODUCTION",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Failure Reason"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "invalid_case_ids": {
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Invalid Case Ids",
+          "type": "array"
+        },
+        "measured_request_count": {
+          "const": 48,
+          "title": "Measured Request Count",
+          "type": "integer"
+        },
+        "repetition_count": {
+          "const": 3,
+          "title": "Repetition Count",
+          "type": "integer"
+        },
+        "state": {
+          "enum": [
+            "COMMITTED",
+            "INVALID_SEMANTIC_NONREPRODUCTION"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "validated_input_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Validated Input Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state",
+        "aggregate_validator",
+        "repetition_count",
+        "measured_request_count",
+        "comparison_count",
+        "invalid_case_ids",
+        "failure_reason",
+        "validated_input_sha256",
+        "identity_sha256"
+      ],
+      "title": "Stage2AggregateValidationResult",
+      "type": "object"
+    },
     "Stage2BundleManifest": {
       "additionalProperties": false,
       "properties": {
@@ -1837,6 +1875,198 @@
         "reconstruction_sha256"
       ],
       "title": "Stage2BundleManifest",
+      "type": "object"
+    },
+    "Stage2CrossRestartComparison": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "comparison": {
+          "$ref": "#/$defs/RestartComparison"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.3.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "semantic_records": {
+          "maxItems": 3,
+          "minItems": 3,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/Stage2RestartSemanticAttestation"
+            },
+            {
+              "$ref": "#/$defs/Stage2RestartSemanticAttestation"
+            },
+            {
+              "$ref": "#/$defs/Stage2RestartSemanticAttestation"
+            }
+          ],
+          "title": "Semantic Records",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "case_id",
+        "semantic_records",
+        "comparison",
+        "identity_sha256"
+      ],
+      "title": "Stage2CrossRestartComparison",
+      "type": "object"
+    },
+    "Stage2EvidenceScope": {
+      "enum": [
+        "TEST_FIXTURE_ONLY",
+        "FUTURE_REAL_RUNTIME"
+      ],
+      "title": "Stage2EvidenceScope",
+      "type": "string"
+    },
+    "Stage2ExperimentClassification": {
+      "enum": [
+        "SYNTHETIC_PROTOCOL_SHAPE_ONLY",
+        "FUTURE_REAL_RUNTIME"
+      ],
+      "title": "Stage2ExperimentClassification",
+      "type": "string"
+    },
+    "Stage2ExperimentSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "cancellation_probe_count": {
+          "const": 3,
+          "title": "Cancellation Probe Count",
+          "type": "integer"
+        },
+        "cuda_attestation_count": {
+          "const": 3,
+          "title": "Cuda Attestation Count",
+          "type": "integer"
+        },
+        "fixture_or_protocol_shape_only": {
+          "title": "Fixture Or Protocol Shape Only",
+          "type": "boolean"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "measured_request_count": {
+          "const": 48,
+          "title": "Measured Request Count",
+          "type": "integer"
+        },
+        "observed_max_active_concurrency_per_repetition": {
+          "maxItems": 3,
+          "minItems": 3,
+          "prefixItems": [
+            {
+              "const": 2,
+              "type": "integer"
+            },
+            {
+              "const": 2,
+              "type": "integer"
+            },
+            {
+              "const": 2,
+              "type": "integer"
+            }
+          ],
+          "title": "Observed Max Active Concurrency Per Repetition",
+          "type": "array"
+        },
+        "performance_claim_advancement_allowed": {
+          "const": false,
+          "title": "Performance Claim Advancement Allowed",
+          "type": "boolean"
+        },
+        "repetition_count": {
+          "const": 3,
+          "title": "Repetition Count",
+          "type": "integer"
+        },
+        "requested_client_concurrency": {
+          "const": 2,
+          "title": "Requested Client Concurrency",
+          "type": "integer"
+        },
+        "runtime_claim_advancement_allowed": {
+          "const": false,
+          "title": "Runtime Claim Advancement Allowed",
+          "type": "boolean"
+        },
+        "semantic_comparison_count": {
+          "const": 16,
+          "title": "Semantic Comparison Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "repetition_count",
+        "measured_request_count",
+        "cancellation_probe_count",
+        "cuda_attestation_count",
+        "semantic_comparison_count",
+        "requested_client_concurrency",
+        "observed_max_active_concurrency_per_repetition",
+        "fixture_or_protocol_shape_only",
+        "runtime_claim_advancement_allowed",
+        "performance_claim_advancement_allowed",
+        "identity_sha256"
+      ],
+      "title": "Stage2ExperimentSummary",
+      "type": "object"
+    },
+    "Stage2ExperimentWorkload": {
+      "additionalProperties": false,
+      "properties": {
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/Stage2WorkloadCase"
+          },
+          "maxItems": 16,
+          "minItems": 16,
+          "title": "Cases",
+          "type": "array"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.3.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "workload_name": {
+          "const": "stage2-fixed-16-case-v1",
+          "title": "Workload Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "workload_name",
+        "cases",
+        "identity_sha256"
+      ],
+      "title": "Stage2ExperimentWorkload",
       "type": "object"
     },
     "Stage2LaunchEnvironment": {
@@ -2119,6 +2349,249 @@
       "title": "Stage2LaunchSpec",
       "type": "object"
     },
+    "Stage2MeasuredRequestAttestation": {
+      "additionalProperties": false,
+      "properties": {
+        "attestation_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Attestation Sha256",
+          "type": "string"
+        },
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "external_request_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "External Request Id",
+          "type": "string"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/Stage2RequestLifecycle"
+        },
+        "metric_availability": {
+          "$ref": "#/$defs/Stage2MetricAvailability"
+        },
+        "raw_evidence": {
+          "$ref": "#/$defs/Stage2RequestRawEvidence"
+        },
+        "repetition_index": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "title": "Repetition Index",
+          "type": "integer"
+        },
+        "repetition_manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Repetition Manifest Sha256",
+          "type": "string"
+        },
+        "request_evidence": {
+          "$ref": "#/$defs/Stage2RequestEvidence"
+        },
+        "request_identity": {
+          "$ref": "#/$defs/RequestIdentityAttestation"
+        },
+        "schema_version": {
+          "const": "0.3.0",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "repetition_index",
+        "case_id",
+        "external_request_id",
+        "request_evidence",
+        "request_identity",
+        "lifecycle",
+        "raw_evidence",
+        "metric_availability",
+        "repetition_manifest_sha256",
+        "attestation_sha256"
+      ],
+      "title": "Stage2MeasuredRequestAttestation",
+      "type": "object"
+    },
+    "Stage2MetricAvailability": {
+      "additionalProperties": false,
+      "properties": {
+        "client_generation_tpot_advancement_allowed": {
+          "title": "Client Generation Tpot Advancement Allowed",
+          "type": "boolean"
+        },
+        "client_generation_tpot_available": {
+          "title": "Client Generation Tpot Available",
+          "type": "boolean"
+        },
+        "server_generation_time_advancement_allowed": {
+          "title": "Server Generation Time Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_generation_time_available": {
+          "title": "Server Generation Time Available",
+          "type": "boolean"
+        },
+        "server_mean_itl_advancement_allowed": {
+          "title": "Server Mean Itl Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_mean_itl_available": {
+          "title": "Server Mean Itl Available",
+          "type": "boolean"
+        },
+        "server_queue_time_advancement_allowed": {
+          "title": "Server Queue Time Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_queue_time_available": {
+          "title": "Server Queue Time Available",
+          "type": "boolean"
+        },
+        "server_tokens_per_second_advancement_allowed": {
+          "title": "Server Tokens Per Second Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_tokens_per_second_available": {
+          "title": "Server Tokens Per Second Available",
+          "type": "boolean"
+        },
+        "server_ttft_advancement_allowed": {
+          "title": "Server Ttft Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_ttft_available": {
+          "title": "Server Ttft Available",
+          "type": "boolean"
+        },
+        "token_observation_itl_advancement_allowed": {
+          "title": "Token Observation Itl Advancement Allowed",
+          "type": "boolean"
+        },
+        "token_observation_itl_available": {
+          "title": "Token Observation Itl Available",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "server_ttft_available",
+        "server_generation_time_available",
+        "server_queue_time_available",
+        "server_mean_itl_available",
+        "server_tokens_per_second_available",
+        "client_generation_tpot_available",
+        "token_observation_itl_available",
+        "server_ttft_advancement_allowed",
+        "server_generation_time_advancement_allowed",
+        "server_queue_time_advancement_allowed",
+        "server_mean_itl_advancement_allowed",
+        "server_tokens_per_second_advancement_allowed",
+        "client_generation_tpot_advancement_allowed",
+        "token_observation_itl_advancement_allowed"
+      ],
+      "title": "Stage2MetricAvailability",
+      "type": "object"
+    },
+    "Stage2MetricAvailabilitySummary": {
+      "additionalProperties": false,
+      "properties": {
+        "client_generation_tpot_advancement_allowed": {
+          "title": "Client Generation Tpot Advancement Allowed",
+          "type": "boolean"
+        },
+        "client_generation_tpot_available_count": {
+          "minimum": 0,
+          "title": "Client Generation Tpot Available Count",
+          "type": "integer"
+        },
+        "server_generation_time_advancement_allowed": {
+          "title": "Server Generation Time Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_generation_time_available_count": {
+          "minimum": 0,
+          "title": "Server Generation Time Available Count",
+          "type": "integer"
+        },
+        "server_mean_itl_advancement_allowed": {
+          "title": "Server Mean Itl Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_mean_itl_available_count": {
+          "minimum": 0,
+          "title": "Server Mean Itl Available Count",
+          "type": "integer"
+        },
+        "server_queue_time_advancement_allowed": {
+          "title": "Server Queue Time Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_queue_time_available_count": {
+          "minimum": 0,
+          "title": "Server Queue Time Available Count",
+          "type": "integer"
+        },
+        "server_tokens_per_second_advancement_allowed": {
+          "title": "Server Tokens Per Second Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_tokens_per_second_available_count": {
+          "minimum": 0,
+          "title": "Server Tokens Per Second Available Count",
+          "type": "integer"
+        },
+        "server_ttft_advancement_allowed": {
+          "title": "Server Ttft Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_ttft_available_count": {
+          "minimum": 0,
+          "title": "Server Ttft Available Count",
+          "type": "integer"
+        },
+        "token_observation_itl_advancement_allowed": {
+          "title": "Token Observation Itl Advancement Allowed",
+          "type": "boolean"
+        },
+        "token_observation_itl_available_count": {
+          "minimum": 0,
+          "title": "Token Observation Itl Available Count",
+          "type": "integer"
+        },
+        "total_request_count": {
+          "maximum": 48,
+          "minimum": 1,
+          "title": "Total Request Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total_request_count",
+        "server_ttft_available_count",
+        "server_generation_time_available_count",
+        "server_queue_time_available_count",
+        "server_mean_itl_available_count",
+        "server_tokens_per_second_available_count",
+        "client_generation_tpot_available_count",
+        "token_observation_itl_available_count",
+        "server_ttft_advancement_allowed",
+        "server_generation_time_advancement_allowed",
+        "server_queue_time_advancement_allowed",
+        "server_mean_itl_advancement_allowed",
+        "server_tokens_per_second_advancement_allowed",
+        "client_generation_tpot_advancement_allowed",
+        "token_observation_itl_advancement_allowed"
+      ],
+      "title": "Stage2MetricAvailabilitySummary",
+      "type": "object"
+    },
     "Stage2PerRequestMetrics": {
       "additionalProperties": false,
       "properties": {
@@ -2329,6 +2802,174 @@
       "title": "Stage2ProcessRecord",
       "type": "object"
     },
+    "Stage2RepetitionAttestation": {
+      "additionalProperties": false,
+      "properties": {
+        "cancellation_client_stream_file": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "cancellation_result_file": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "cuda_execution": {
+          "$ref": "#/$defs/Stage2RepetitionCudaAttestation"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "measured_requests": {
+          "items": {
+            "$ref": "#/$defs/Stage2MeasuredRequestAttestation"
+          },
+          "maxItems": 16,
+          "minItems": 16,
+          "title": "Measured Requests",
+          "type": "array"
+        },
+        "metric_availability_summary": {
+          "$ref": "#/$defs/Stage2MetricAvailabilitySummary"
+        },
+        "observed_max_active_concurrency": {
+          "const": 2,
+          "title": "Observed Max Active Concurrency",
+          "type": "integer"
+        },
+        "positive_duration_overlap_observed": {
+          "const": true,
+          "title": "Positive Duration Overlap Observed",
+          "type": "boolean"
+        },
+        "repetition_index": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "title": "Repetition Index",
+          "type": "integer"
+        },
+        "repetition_manifest": {
+          "$ref": "#/$defs/Stage2BundleManifest"
+        },
+        "repetition_manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Repetition Manifest Sha256",
+          "type": "string"
+        },
+        "requested_client_concurrency": {
+          "const": 2,
+          "title": "Requested Client Concurrency",
+          "type": "integer"
+        },
+        "runtime_control": {
+          "$ref": "#/$defs/Stage2RuntimeControlEvidence"
+        },
+        "runtime_control_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Runtime Control Sha256",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.3.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "server_restart": {
+          "$ref": "#/$defs/ServerRestartIdentity"
+        }
+      },
+      "required": [
+        "schema_version",
+        "repetition_index",
+        "runtime_control",
+        "runtime_control_sha256",
+        "server_restart",
+        "repetition_manifest",
+        "repetition_manifest_sha256",
+        "cancellation_result_file",
+        "cancellation_client_stream_file",
+        "cuda_execution",
+        "measured_requests",
+        "requested_client_concurrency",
+        "observed_max_active_concurrency",
+        "positive_duration_overlap_observed",
+        "metric_availability_summary",
+        "identity_sha256"
+      ],
+      "title": "Stage2RepetitionAttestation",
+      "type": "object"
+    },
+    "Stage2RepetitionCudaAttestation": {
+      "additionalProperties": false,
+      "properties": {
+        "environment_resource_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Environment Resource Identity Sha256",
+          "type": "string"
+        },
+        "execution": {
+          "$ref": "#/$defs/CudaBackedExecutionAttestation"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "raw_evidence_files": {
+          "items": {
+            "$ref": "#/$defs/ManifestBoundFile"
+          },
+          "minItems": 1,
+          "title": "Raw Evidence Files",
+          "type": "array"
+        },
+        "repetition_index": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "title": "Repetition Index",
+          "type": "integer"
+        },
+        "repetition_manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Repetition Manifest Sha256",
+          "type": "string"
+        },
+        "runtime_control_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Runtime Control Sha256",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.3.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "server_process_identity": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Server Process Identity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "repetition_index",
+        "server_process_identity",
+        "runtime_control_sha256",
+        "repetition_manifest_sha256",
+        "environment_resource_identity_sha256",
+        "execution",
+        "raw_evidence_files",
+        "identity_sha256"
+      ],
+      "title": "Stage2RepetitionCudaAttestation",
+      "type": "object"
+    },
     "Stage2RequestEvidence": {
       "additionalProperties": false,
       "properties": {
@@ -2503,6 +3144,192 @@
         "stream_output_gap_ns"
       ],
       "title": "Stage2RequestEvidence",
+      "type": "object"
+    },
+    "Stage2RequestLifecycle": {
+      "additionalProperties": false,
+      "properties": {
+        "dispatch_offset_ns": {
+          "minimum": 0,
+          "title": "Dispatch Offset Ns",
+          "type": "integer"
+        },
+        "measurement_phase_end_ns": {
+          "exclusiveMinimum": 0,
+          "title": "Measurement Phase End Ns",
+          "type": "integer"
+        },
+        "measurement_phase_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Measurement Phase Identity Sha256",
+          "type": "string"
+        },
+        "measurement_phase_start_ns": {
+          "minimum": 0,
+          "title": "Measurement Phase Start Ns",
+          "type": "integer"
+        },
+        "terminal_offset_ns": {
+          "exclusiveMinimum": 0,
+          "title": "Terminal Offset Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dispatch_offset_ns",
+        "terminal_offset_ns",
+        "measurement_phase_start_ns",
+        "measurement_phase_end_ns",
+        "measurement_phase_identity_sha256"
+      ],
+      "title": "Stage2RequestLifecycle",
+      "type": "object"
+    },
+    "Stage2RequestRawEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "lifecycle": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "parsed_sse_events": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "raw_response_body": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "request_body": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "request_headers": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "response_headers": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "server_logs": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "server_metrics": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "terminal_boundary": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "token_usage_reconciliation": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        }
+      },
+      "required": [
+        "request_body",
+        "request_headers",
+        "response_headers",
+        "raw_response_body",
+        "parsed_sse_events",
+        "terminal_boundary",
+        "server_logs",
+        "server_metrics",
+        "lifecycle",
+        "token_usage_reconciliation"
+      ],
+      "title": "Stage2RequestRawEvidence",
+      "type": "object"
+    },
+    "Stage2RestartSemanticAttestation": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "completion_tokens": {
+          "const": 32,
+          "title": "Completion Tokens",
+          "type": "integer"
+        },
+        "finish_reason": {
+          "const": "length",
+          "title": "Finish Reason",
+          "type": "string"
+        },
+        "measured_request_attestation_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Measured Request Attestation Sha256",
+          "type": "string"
+        },
+        "output_text_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Output Text Sha256",
+          "type": "string"
+        },
+        "output_token_ids": {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 32,
+          "minItems": 32,
+          "title": "Output Token Ids",
+          "type": "array"
+        },
+        "prompt_tokens": {
+          "const": 64,
+          "title": "Prompt Tokens",
+          "type": "integer"
+        },
+        "repetition_index": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "title": "Repetition Index",
+          "type": "integer"
+        },
+        "repetition_manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Repetition Manifest Sha256",
+          "type": "string"
+        },
+        "returned_prompt_token_ids": {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 64,
+          "minItems": 64,
+          "title": "Returned Prompt Token Ids",
+          "type": "array"
+        },
+        "sent_prompt_token_ids": {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 64,
+          "minItems": 64,
+          "title": "Sent Prompt Token Ids",
+          "type": "array"
+        },
+        "total_tokens": {
+          "const": 96,
+          "title": "Total Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "repetition_index",
+        "case_id",
+        "measured_request_attestation_sha256",
+        "sent_prompt_token_ids",
+        "returned_prompt_token_ids",
+        "output_token_ids",
+        "finish_reason",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "output_text_sha256",
+        "repetition_manifest_sha256"
+      ],
+      "title": "Stage2RestartSemanticAttestation",
       "type": "object"
     },
     "Stage2RuntimeControlEvidence": {
@@ -2857,46 +3684,77 @@
       ],
       "title": "Stage2Usage",
       "type": "object"
+    },
+    "Stage2WorkloadCase": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "sent_prompt_token_ids": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 64,
+          "minItems": 64,
+          "title": "Sent Prompt Token Ids",
+          "type": "array"
+        },
+        "sent_prompt_token_ids_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sent Prompt Token Ids Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "case_id",
+        "sent_prompt_token_ids",
+        "sent_prompt_token_ids_sha256"
+      ],
+      "title": "Stage2WorkloadCase",
+      "type": "object"
     }
   },
   "additionalProperties": false,
   "properties": {
-    "bundle_manifests": {
-      "maxItems": 3,
-      "minItems": 3,
-      "prefixItems": [
-        {
-          "$ref": "#/$defs/Stage2BundleManifest"
-        },
-        {
-          "$ref": "#/$defs/Stage2BundleManifest"
-        },
-        {
-          "$ref": "#/$defs/Stage2BundleManifest"
-        }
-      ],
-      "title": "Bundle Manifests",
-      "type": "array"
+    "aggregate_validation_result": {
+      "$ref": "#/$defs/Stage2AggregateValidationResult"
     },
-    "component_identities": {
+    "classification": {
+      "$ref": "#/$defs/Stage2ExperimentClassification"
+    },
+    "comparisons": {
       "items": {
-        "$ref": "#/$defs/AttestedComponentIdentity"
+        "$ref": "#/$defs/Stage2CrossRestartComparison"
       },
-      "maxItems": 15,
-      "minItems": 15,
-      "title": "Component Identities",
+      "maxItems": 16,
+      "minItems": 16,
+      "title": "Comparisons",
       "type": "array"
-    },
-    "cuda_execution": {
-      "$ref": "#/$defs/CudaBackedExecutionAttestation"
     },
     "evidence_scope": {
-      "const": "FUTURE_REAL_RUNTIME",
-      "title": "Evidence Scope",
-      "type": "string"
+      "$ref": "#/$defs/Stage2EvidenceScope"
     },
     "execution_lock": {
       "$ref": "#/$defs/RuntimePackageExecutionLockAttestation"
+    },
+    "experiment_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "experiment_metric_availability": {
+      "$ref": "#/$defs/Stage2MetricAvailabilitySummary"
+    },
+    "identity_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Identity Sha256",
+      "type": "string"
     },
     "launch_spec": {
       "$ref": "#/$defs/Stage2LaunchSpec"
@@ -2904,53 +3762,32 @@
     "linux_environment": {
       "$ref": "#/$defs/LinuxEnvironmentManifest"
     },
+    "measurement_protocol_version": {
+      "const": "0.3.0",
+      "title": "Measurement Protocol Version",
+      "type": "string"
+    },
     "nvidia_resources": {
       "$ref": "#/$defs/NvidiaT4ResourceAttestation"
-    },
-    "parsed_stream_evidence": {
-      "$ref": "#/$defs/Stage2RequestEvidence"
-    },
-    "per_request_metrics": {
-      "$ref": "#/$defs/PerRequestMetricsAttestation"
-    },
-    "prometheus_measurements": {
-      "maxItems": 3,
-      "minItems": 3,
-      "prefixItems": [
-        {
-          "$ref": "#/$defs/PrometheusMeasurementAttestation"
-        },
-        {
-          "$ref": "#/$defs/PrometheusMeasurementAttestation"
-        },
-        {
-          "$ref": "#/$defs/PrometheusMeasurementAttestation"
-        }
-      ],
-      "title": "Prometheus Measurements",
-      "type": "array"
     },
     "public_safety": {
       "$ref": "#/$defs/PublicSafetyAttestation"
     },
-    "request_identity": {
-      "$ref": "#/$defs/RequestIdentityAttestation"
-    },
-    "runtime_controls": {
+    "repetitions": {
       "maxItems": 3,
       "minItems": 3,
       "prefixItems": [
         {
-          "$ref": "#/$defs/Stage2RuntimeControlEvidence"
+          "$ref": "#/$defs/Stage2RepetitionAttestation"
         },
         {
-          "$ref": "#/$defs/Stage2RuntimeControlEvidence"
+          "$ref": "#/$defs/Stage2RepetitionAttestation"
         },
         {
-          "$ref": "#/$defs/Stage2RuntimeControlEvidence"
+          "$ref": "#/$defs/Stage2RepetitionAttestation"
         }
       ],
-      "title": "Runtime Controls",
+      "title": "Repetitions",
       "type": "array"
     },
     "schema_version": {
@@ -2958,32 +3795,36 @@
       "title": "Schema Version",
       "type": "string"
     },
-    "server_restarts": {
-      "$ref": "#/$defs/ServerRestartAttestation"
-    },
     "snapshot_manifest": {
       "$ref": "#/$defs/ModelTokenizerSnapshotManifest"
+    },
+    "summary": {
+      "$ref": "#/$defs/Stage2ExperimentSummary"
+    },
+    "workload": {
+      "$ref": "#/$defs/Stage2ExperimentWorkload"
     }
   },
   "required": [
     "schema_version",
+    "measurement_protocol_version",
+    "experiment_id",
     "evidence_scope",
-    "parsed_stream_evidence",
-    "request_identity",
-    "per_request_metrics",
-    "prometheus_measurements",
-    "runtime_controls",
+    "classification",
+    "workload",
     "launch_spec",
     "snapshot_manifest",
     "execution_lock",
     "linux_environment",
     "nvidia_resources",
-    "cuda_execution",
-    "server_restarts",
-    "bundle_manifests",
     "public_safety",
-    "component_identities"
+    "repetitions",
+    "comparisons",
+    "experiment_metric_availability",
+    "aggregate_validation_result",
+    "summary",
+    "identity_sha256"
   ],
-  "title": "FutureRealRuntimeAttestation",
+  "title": "Stage2ExperimentAttestation",
   "type": "object"
 }

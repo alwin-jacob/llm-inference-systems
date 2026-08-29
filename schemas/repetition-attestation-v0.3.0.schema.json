@@ -1,0 +1,2187 @@
+{
+  "$defs": {
+    "BundleFileEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "size"
+      ],
+      "title": "BundleFileEntry",
+      "type": "object"
+    },
+    "CancellationClassification": {
+      "enum": [
+        "SERVER_ABORT_ACKNOWLEDGED_AND_DRAINED",
+        "UNKNOWN_ACKNOWLEDGEMENT",
+        "LATER_COMPLETION",
+        "RESIDUAL_WORK_TIMEOUT",
+        "TERMINAL_UNKNOWN",
+        "ID_CORRELATION_FAILURE"
+      ],
+      "title": "CancellationClassification",
+      "type": "string"
+    },
+    "CancellationProbe": {
+      "additionalProperties": false,
+      "properties": {
+        "client_close_offset_ns": {
+          "minimum": 0,
+          "title": "Client Close Offset Ns",
+          "type": "integer"
+        },
+        "cooldown_snapshots": {
+          "items": {
+            "$ref": "#/$defs/PrometheusSnapshot"
+          },
+          "minItems": 2,
+          "title": "Cooldown Snapshots",
+          "type": "array"
+        },
+        "dispatch_offset_ns": {
+          "minimum": 0,
+          "title": "Dispatch Offset Ns",
+          "type": "integer"
+        },
+        "drain_snapshots": {
+          "items": {
+            "$ref": "#/$defs/PrometheusSnapshot"
+          },
+          "maxItems": 10,
+          "minItems": 10,
+          "title": "Drain Snapshots",
+          "type": "array"
+        },
+        "first_generation_token": {
+          "$ref": "#/$defs/FirstGenerationTokenEvidence"
+        },
+        "identity_chain": {
+          "$ref": "#/$defs/RequestIdentityChain"
+        },
+        "later_retained_snapshots": {
+          "items": {
+            "$ref": "#/$defs/PrometheusSnapshot"
+          },
+          "title": "Later Retained Snapshots",
+          "type": "array"
+        },
+        "pre_dispatch_snapshots": {
+          "items": {
+            "$ref": "#/$defs/PrometheusSnapshot"
+          },
+          "maxItems": 10,
+          "minItems": 10,
+          "title": "Pre Dispatch Snapshots",
+          "type": "array"
+        },
+        "raw_log_start_byte_offset": {
+          "minimum": 0,
+          "title": "Raw Log Start Byte Offset",
+          "type": "integer"
+        },
+        "residual_state": {
+          "$ref": "#/$defs/ResidualStateEvidence"
+        },
+        "stable_generation_snapshots": {
+          "items": {
+            "$ref": "#/$defs/PrometheusSnapshot"
+          },
+          "minItems": 2,
+          "title": "Stable Generation Snapshots",
+          "type": "array"
+        }
+      },
+      "required": [
+        "identity_chain",
+        "raw_log_start_byte_offset",
+        "dispatch_offset_ns",
+        "first_generation_token",
+        "client_close_offset_ns",
+        "pre_dispatch_snapshots",
+        "drain_snapshots",
+        "stable_generation_snapshots",
+        "cooldown_snapshots",
+        "later_retained_snapshots",
+        "residual_state"
+      ],
+      "title": "CancellationProbe",
+      "type": "object"
+    },
+    "CancellationResult": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted": {
+          "title": "Accepted",
+          "type": "boolean"
+        },
+        "auxiliary_counter_deltas": {
+          "items": {
+            "$ref": "#/$defs/CounterDelta"
+          },
+          "title": "Auxiliary Counter Deltas",
+          "type": "array"
+        },
+        "classification": {
+          "$ref": "#/$defs/CancellationClassification"
+        },
+        "evidence_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Evidence Identity Sha256",
+          "type": "string"
+        },
+        "finished_reason_deltas": {
+          "items": {
+            "$ref": "#/$defs/CounterDelta"
+          },
+          "title": "Finished Reason Deltas",
+          "type": "array"
+        },
+        "generation_token_delta": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CounterDelta"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observed_abort_delta": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Observed Abort Delta"
+        },
+        "prompt_token_delta": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CounterDelta"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "classification",
+        "accepted",
+        "evidence_identity_sha256",
+        "prompt_token_delta",
+        "generation_token_delta",
+        "finished_reason_deltas",
+        "auxiliary_counter_deltas",
+        "observed_abort_delta"
+      ],
+      "title": "CancellationResult",
+      "type": "object"
+    },
+    "CounterDelta": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "minimum": 0,
+          "title": "After",
+          "type": "number"
+        },
+        "before": {
+          "minimum": 0,
+          "title": "Before",
+          "type": "number"
+        },
+        "delta": {
+          "minimum": 0,
+          "title": "Delta",
+          "type": "number"
+        },
+        "labels": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Labels",
+          "type": "array"
+        },
+        "metric": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Metric",
+          "type": "string"
+        }
+      },
+      "required": [
+        "metric",
+        "labels",
+        "before",
+        "after",
+        "delta"
+      ],
+      "title": "CounterDelta",
+      "type": "object"
+    },
+    "CudaBackedExecutionAttestation": {
+      "additionalProperties": false,
+      "properties": {
+        "cuda_available": {
+          "const": true,
+          "title": "Cuda Available",
+          "type": "boolean"
+        },
+        "cuda_device_index": {
+          "const": 0,
+          "title": "Cuda Device Index",
+          "type": "integer"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "raw_execution_evidence_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Raw Execution Evidence Sha256",
+          "type": "string"
+        },
+        "runtime_visible_gpu_count": {
+          "const": 1,
+          "title": "Runtime Visible Gpu Count",
+          "type": "integer"
+        },
+        "server_process_identity": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Server Process Identity",
+          "type": "string"
+        },
+        "torch_version": {
+          "const": "2.13.0+cu129",
+          "title": "Torch Version",
+          "type": "string"
+        },
+        "vllm_version": {
+          "const": "0.28.0",
+          "title": "Vllm Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "torch_version",
+        "vllm_version",
+        "cuda_available",
+        "runtime_visible_gpu_count",
+        "cuda_device_index",
+        "server_process_identity",
+        "raw_execution_evidence_sha256",
+        "identity_sha256"
+      ],
+      "title": "CudaBackedExecutionAttestation",
+      "type": "object"
+    },
+    "FirstGenerationTokenEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "external_request_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "External Request Id",
+          "type": "string"
+        },
+        "observation_offset_ns": {
+          "minimum": 0,
+          "title": "Observation Offset Ns",
+          "type": "integer"
+        },
+        "output_token_ids": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Output Token Ids",
+          "type": "array"
+        },
+        "response_body_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Response Body Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "external_request_id",
+        "response_body_id",
+        "observation_offset_ns",
+        "output_token_ids"
+      ],
+      "title": "FirstGenerationTokenEvidence",
+      "type": "object"
+    },
+    "GpuMemorySample": {
+      "additionalProperties": false,
+      "properties": {
+        "allocated_bytes": {
+          "minimum": 0,
+          "title": "Allocated Bytes",
+          "type": "integer"
+        },
+        "observation_offset_ns": {
+          "minimum": 0,
+          "title": "Observation Offset Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "observation_offset_ns",
+        "allocated_bytes"
+      ],
+      "title": "GpuMemorySample",
+      "type": "object"
+    },
+    "ManifestBoundFile": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "size"
+      ],
+      "title": "ManifestBoundFile",
+      "type": "object"
+    },
+    "MetricAvailability": {
+      "additionalProperties": false,
+      "properties": {
+        "unavailable_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "GROUPED_TOKEN_EVENT",
+                "INSUFFICIENT_OUTPUT_TOKENS"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unavailable Reason"
+        },
+        "value_ns": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value Ns"
+        }
+      },
+      "required": [
+        "value_ns",
+        "unavailable_reason"
+      ],
+      "title": "MetricAvailability",
+      "type": "object"
+    },
+    "ProcessExitEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "exit_code": {
+          "const": 0,
+          "title": "Exit Code",
+          "type": "integer"
+        },
+        "observed_offset_ns": {
+          "minimum": 0,
+          "title": "Observed Offset Ns",
+          "type": "integer"
+        },
+        "process_identity": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Process Identity",
+          "type": "string"
+        },
+        "raw_evidence_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Raw Evidence Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "process_identity",
+        "exit_code",
+        "observed_offset_ns",
+        "raw_evidence_sha256"
+      ],
+      "title": "ProcessExitEvidence",
+      "type": "object"
+    },
+    "PrometheusSample": {
+      "additionalProperties": false,
+      "properties": {
+        "labels": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Labels",
+          "type": "array"
+        },
+        "name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "minimum": 0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "labels",
+        "value"
+      ],
+      "title": "PrometheusSample",
+      "type": "object"
+    },
+    "PrometheusSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "label_inventory": {
+          "additionalProperties": {
+            "items": {
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "title": "Label Inventory",
+          "type": "object"
+        },
+        "process_start_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Process Start Id",
+          "type": "string"
+        },
+        "raw_exposition": {
+          "title": "Raw Exposition",
+          "type": "string"
+        },
+        "raw_exposition_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Raw Exposition Sha256",
+          "type": "string"
+        },
+        "samples": {
+          "items": {
+            "$ref": "#/$defs/PrometheusSample"
+          },
+          "title": "Samples",
+          "type": "array"
+        },
+        "scrape_monotonic_offset_ns": {
+          "minimum": 0,
+          "title": "Scrape Monotonic Offset Ns",
+          "type": "integer"
+        },
+        "scrape_wall_clock_utc": {
+          "format": "date-time",
+          "title": "Scrape Wall Clock Utc",
+          "type": "string"
+        }
+      },
+      "required": [
+        "process_start_id",
+        "scrape_wall_clock_utc",
+        "scrape_monotonic_offset_ns",
+        "raw_exposition",
+        "raw_exposition_sha256",
+        "samples",
+        "label_inventory"
+      ],
+      "title": "PrometheusSnapshot",
+      "type": "object"
+    },
+    "RawLogRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_end": {
+          "exclusiveMinimum": 0,
+          "title": "Byte End",
+          "type": "integer"
+        },
+        "byte_start": {
+          "minimum": 0,
+          "title": "Byte Start",
+          "type": "integer"
+        },
+        "observation_offset_ns": {
+          "minimum": 0,
+          "title": "Observation Offset Ns",
+          "type": "integer"
+        },
+        "raw_record": {
+          "title": "Raw Record",
+          "type": "string"
+        },
+        "raw_record_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Raw Record Sha256",
+          "type": "string"
+        },
+        "record_ordinal": {
+          "minimum": 0,
+          "title": "Record Ordinal",
+          "type": "integer"
+        },
+        "source_stream_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Source Stream Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_stream_id",
+        "record_ordinal",
+        "byte_start",
+        "byte_end",
+        "observation_offset_ns",
+        "raw_record",
+        "raw_record_sha256"
+      ],
+      "title": "RawLogRecord",
+      "type": "object"
+    },
+    "RequestIdentityAttestation": {
+      "additionalProperties": false,
+      "properties": {
+        "identity_chain": {
+          "$ref": "#/$defs/RequestIdentityChain"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity_chain",
+        "identity_sha256"
+      ],
+      "title": "RequestIdentityAttestation",
+      "type": "object"
+    },
+    "RequestIdentityChain": {
+      "additionalProperties": false,
+      "properties": {
+        "external_abort_log": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RawLogRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "external_base_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "title": "External Base Id",
+          "type": "string"
+        },
+        "internal_abort_log": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RawLogRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "internal_engine_id": {
+          "title": "Internal Engine Id",
+          "type": "string"
+        },
+        "request_add_log": {
+          "$ref": "#/$defs/RawLogRecord"
+        },
+        "request_received_log": {
+          "$ref": "#/$defs/RawLogRecord"
+        },
+        "response_body_id": {
+          "title": "Response Body Id",
+          "type": "string"
+        },
+        "serving_item_id": {
+          "title": "Serving Item Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "external_base_id",
+        "response_body_id",
+        "serving_item_id",
+        "internal_engine_id",
+        "request_received_log",
+        "request_add_log",
+        "external_abort_log",
+        "internal_abort_log"
+      ],
+      "title": "RequestIdentityChain",
+      "type": "object"
+    },
+    "ResidualStateEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "active_request_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Active Request Ids",
+          "type": "array"
+        },
+        "observation_offset_ns": {
+          "minimum": 0,
+          "title": "Observation Offset Ns",
+          "type": "integer"
+        },
+        "project_process_ids": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Project Process Ids",
+          "type": "array"
+        },
+        "raw_process_inventory": {
+          "title": "Raw Process Inventory",
+          "type": "string"
+        },
+        "raw_process_inventory_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Raw Process Inventory Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation_offset_ns",
+        "raw_process_inventory",
+        "raw_process_inventory_sha256",
+        "active_request_ids",
+        "project_process_ids"
+      ],
+      "title": "ResidualStateEvidence",
+      "type": "object"
+    },
+    "RuntimePhase": {
+      "enum": [
+        "LIVE_RESOURCE_AUDIT",
+        "ENVIRONMENT_LOCK_VERIFICATION",
+        "OFFLINE_SNAPSHOT_VERIFICATION",
+        "RUNTIME_PROCESS_START",
+        "MODEL_WEIGHT_LOAD",
+        "ENGINE_READINESS_HEALTH",
+        "JIT_COMPILATION_STATE",
+        "CUDA_GRAPH_STATE",
+        "ALLOCATOR_KV_STABILIZATION",
+        "EXCLUDED_STABILIZATION_REQUESTS",
+        "EXCLUDED_SHAPE_WARMUPS",
+        "CANCELLATION_PROBE_DRAIN",
+        "STEADY_STATE_GATE",
+        "MEASURED_WINDOW",
+        "FINAL_METRICS_DRAIN",
+        "SHUTDOWN",
+        "NO_RESIDUAL_PROCESS_VERIFICATION"
+      ],
+      "title": "RuntimePhase",
+      "type": "string"
+    },
+    "RuntimePhaseRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "ended_offset_ns": {
+          "minimum": 0,
+          "title": "Ended Offset Ns",
+          "type": "integer"
+        },
+        "evidence_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Evidence Identity Sha256",
+          "type": "string"
+        },
+        "evidence_kind": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Evidence Kind",
+          "type": "string"
+        },
+        "evidence_references": {
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence References",
+          "type": "array"
+        },
+        "passed": {
+          "const": true,
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "phase": {
+          "$ref": "#/$defs/RuntimePhase"
+        },
+        "post_warmup_jit_observed": {
+          "default": false,
+          "title": "Post Warmup Jit Observed",
+          "type": "boolean"
+        },
+        "started_offset_ns": {
+          "minimum": 0,
+          "title": "Started Offset Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "phase",
+        "started_offset_ns",
+        "ended_offset_ns",
+        "passed",
+        "evidence_kind",
+        "evidence_identity_sha256",
+        "evidence_references"
+      ],
+      "title": "RuntimePhaseRecord",
+      "type": "object"
+    },
+    "ServerRestartIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "launch_spec_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Launch Spec Identity Sha256",
+          "type": "string"
+        },
+        "output_bundle_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Output Bundle Identity Sha256",
+          "type": "string"
+        },
+        "repetition_index": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "title": "Repetition Index",
+          "type": "integer"
+        },
+        "server_process_identity": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Server Process Identity",
+          "type": "string"
+        },
+        "worker_process_identities": {
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Worker Process Identities",
+          "type": "array"
+        }
+      },
+      "required": [
+        "repetition_index",
+        "server_process_identity",
+        "worker_process_identities",
+        "launch_spec_identity_sha256",
+        "output_bundle_identity_sha256"
+      ],
+      "title": "ServerRestartIdentity",
+      "type": "object"
+    },
+    "Stage2BundleManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at_utc": {
+          "format": "date-time",
+          "title": "Created At Utc",
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/BundleFileEntry"
+          },
+          "minItems": 1,
+          "title": "Files",
+          "type": "array"
+        },
+        "measurement_protocol_version": {
+          "const": "0.3.0",
+          "title": "Measurement Protocol Version",
+          "type": "string"
+        },
+        "reconstruction_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Reconstruction Sha256",
+          "type": "string"
+        },
+        "repetition_index": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Repetition Index",
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "0.3.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_commit": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Source Commit",
+          "type": "string"
+        },
+        "state": {
+          "const": "COMMITTED",
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "measurement_protocol_version",
+        "state",
+        "repetition_index",
+        "source_commit",
+        "created_at_utc",
+        "files",
+        "reconstruction_sha256"
+      ],
+      "title": "Stage2BundleManifest",
+      "type": "object"
+    },
+    "Stage2MeasuredRequestAttestation": {
+      "additionalProperties": false,
+      "properties": {
+        "attestation_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Attestation Sha256",
+          "type": "string"
+        },
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "external_request_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "External Request Id",
+          "type": "string"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/Stage2RequestLifecycle"
+        },
+        "metric_availability": {
+          "$ref": "#/$defs/Stage2MetricAvailability"
+        },
+        "raw_evidence": {
+          "$ref": "#/$defs/Stage2RequestRawEvidence"
+        },
+        "repetition_index": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "title": "Repetition Index",
+          "type": "integer"
+        },
+        "repetition_manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Repetition Manifest Sha256",
+          "type": "string"
+        },
+        "request_evidence": {
+          "$ref": "#/$defs/Stage2RequestEvidence"
+        },
+        "request_identity": {
+          "$ref": "#/$defs/RequestIdentityAttestation"
+        },
+        "schema_version": {
+          "const": "0.3.0",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "repetition_index",
+        "case_id",
+        "external_request_id",
+        "request_evidence",
+        "request_identity",
+        "lifecycle",
+        "raw_evidence",
+        "metric_availability",
+        "repetition_manifest_sha256",
+        "attestation_sha256"
+      ],
+      "title": "Stage2MeasuredRequestAttestation",
+      "type": "object"
+    },
+    "Stage2MetricAvailability": {
+      "additionalProperties": false,
+      "properties": {
+        "client_generation_tpot_advancement_allowed": {
+          "title": "Client Generation Tpot Advancement Allowed",
+          "type": "boolean"
+        },
+        "client_generation_tpot_available": {
+          "title": "Client Generation Tpot Available",
+          "type": "boolean"
+        },
+        "server_generation_time_advancement_allowed": {
+          "title": "Server Generation Time Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_generation_time_available": {
+          "title": "Server Generation Time Available",
+          "type": "boolean"
+        },
+        "server_mean_itl_advancement_allowed": {
+          "title": "Server Mean Itl Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_mean_itl_available": {
+          "title": "Server Mean Itl Available",
+          "type": "boolean"
+        },
+        "server_queue_time_advancement_allowed": {
+          "title": "Server Queue Time Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_queue_time_available": {
+          "title": "Server Queue Time Available",
+          "type": "boolean"
+        },
+        "server_tokens_per_second_advancement_allowed": {
+          "title": "Server Tokens Per Second Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_tokens_per_second_available": {
+          "title": "Server Tokens Per Second Available",
+          "type": "boolean"
+        },
+        "server_ttft_advancement_allowed": {
+          "title": "Server Ttft Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_ttft_available": {
+          "title": "Server Ttft Available",
+          "type": "boolean"
+        },
+        "token_observation_itl_advancement_allowed": {
+          "title": "Token Observation Itl Advancement Allowed",
+          "type": "boolean"
+        },
+        "token_observation_itl_available": {
+          "title": "Token Observation Itl Available",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "server_ttft_available",
+        "server_generation_time_available",
+        "server_queue_time_available",
+        "server_mean_itl_available",
+        "server_tokens_per_second_available",
+        "client_generation_tpot_available",
+        "token_observation_itl_available",
+        "server_ttft_advancement_allowed",
+        "server_generation_time_advancement_allowed",
+        "server_queue_time_advancement_allowed",
+        "server_mean_itl_advancement_allowed",
+        "server_tokens_per_second_advancement_allowed",
+        "client_generation_tpot_advancement_allowed",
+        "token_observation_itl_advancement_allowed"
+      ],
+      "title": "Stage2MetricAvailability",
+      "type": "object"
+    },
+    "Stage2MetricAvailabilitySummary": {
+      "additionalProperties": false,
+      "properties": {
+        "client_generation_tpot_advancement_allowed": {
+          "title": "Client Generation Tpot Advancement Allowed",
+          "type": "boolean"
+        },
+        "client_generation_tpot_available_count": {
+          "minimum": 0,
+          "title": "Client Generation Tpot Available Count",
+          "type": "integer"
+        },
+        "server_generation_time_advancement_allowed": {
+          "title": "Server Generation Time Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_generation_time_available_count": {
+          "minimum": 0,
+          "title": "Server Generation Time Available Count",
+          "type": "integer"
+        },
+        "server_mean_itl_advancement_allowed": {
+          "title": "Server Mean Itl Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_mean_itl_available_count": {
+          "minimum": 0,
+          "title": "Server Mean Itl Available Count",
+          "type": "integer"
+        },
+        "server_queue_time_advancement_allowed": {
+          "title": "Server Queue Time Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_queue_time_available_count": {
+          "minimum": 0,
+          "title": "Server Queue Time Available Count",
+          "type": "integer"
+        },
+        "server_tokens_per_second_advancement_allowed": {
+          "title": "Server Tokens Per Second Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_tokens_per_second_available_count": {
+          "minimum": 0,
+          "title": "Server Tokens Per Second Available Count",
+          "type": "integer"
+        },
+        "server_ttft_advancement_allowed": {
+          "title": "Server Ttft Advancement Allowed",
+          "type": "boolean"
+        },
+        "server_ttft_available_count": {
+          "minimum": 0,
+          "title": "Server Ttft Available Count",
+          "type": "integer"
+        },
+        "token_observation_itl_advancement_allowed": {
+          "title": "Token Observation Itl Advancement Allowed",
+          "type": "boolean"
+        },
+        "token_observation_itl_available_count": {
+          "minimum": 0,
+          "title": "Token Observation Itl Available Count",
+          "type": "integer"
+        },
+        "total_request_count": {
+          "maximum": 48,
+          "minimum": 1,
+          "title": "Total Request Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total_request_count",
+        "server_ttft_available_count",
+        "server_generation_time_available_count",
+        "server_queue_time_available_count",
+        "server_mean_itl_available_count",
+        "server_tokens_per_second_available_count",
+        "client_generation_tpot_available_count",
+        "token_observation_itl_available_count",
+        "server_ttft_advancement_allowed",
+        "server_generation_time_advancement_allowed",
+        "server_queue_time_advancement_allowed",
+        "server_mean_itl_advancement_allowed",
+        "server_tokens_per_second_advancement_allowed",
+        "client_generation_tpot_advancement_allowed",
+        "token_observation_itl_advancement_allowed"
+      ],
+      "title": "Stage2MetricAvailabilitySummary",
+      "type": "object"
+    },
+    "Stage2PerRequestMetrics": {
+      "additionalProperties": false,
+      "properties": {
+        "generation_time_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Generation Time Ms"
+        },
+        "mean_itl_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mean Itl Ms"
+        },
+        "queue_time_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Queue Time Ms"
+        },
+        "time_to_first_token_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Time To First Token Ms"
+        },
+        "tokens_per_second": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tokens Per Second"
+        }
+      },
+      "required": [
+        "time_to_first_token_ms",
+        "generation_time_ms",
+        "queue_time_ms",
+        "mean_itl_ms",
+        "tokens_per_second"
+      ],
+      "title": "Stage2PerRequestMetrics",
+      "type": "object"
+    },
+    "Stage2ProcessKind": {
+      "enum": [
+        "ONLINE_SNAPSHOT_DOWNLOAD",
+        "OFFLINE_TOKENIZER_VERIFICATION",
+        "OFFLINE_VLLM_RESTART_1",
+        "OFFLINE_VLLM_RESTART_2",
+        "OFFLINE_VLLM_RESTART_3"
+      ],
+      "title": "Stage2ProcessKind",
+      "type": "string"
+    },
+    "Stage2ProcessOperation": {
+      "additionalProperties": false,
+      "properties": {
+        "exact_network_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Exact Network Source"
+        },
+        "exits_after_operation": {
+          "title": "Exits After Operation",
+          "type": "boolean"
+        },
+        "local_files_only": {
+          "title": "Local Files Only",
+          "type": "boolean"
+        },
+        "repository_id": {
+          "anyOf": [
+            {
+              "const": "Qwen/Qwen2.5-0.5B-Instruct",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Repository Id"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "const": "7ae557604adf67be50417f59c2c2f167def9a775",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Revision"
+        },
+        "token_false": {
+          "title": "Token False",
+          "type": "boolean"
+        },
+        "verified_local_snapshot_path": {
+          "title": "Verified Local Snapshot Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "token_false",
+        "local_files_only",
+        "repository_id",
+        "revision",
+        "exact_network_source",
+        "verified_local_snapshot_path",
+        "exits_after_operation"
+      ],
+      "title": "Stage2ProcessOperation",
+      "type": "object"
+    },
+    "Stage2ProcessRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "absent_environment_variables": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Absent Environment Variables",
+          "type": "array"
+        },
+        "environment": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Environment",
+          "type": "object"
+        },
+        "environment_capture_offset_ns": {
+          "minimum": 0,
+          "title": "Environment Capture Offset Ns",
+          "type": "integer"
+        },
+        "first_relevant_import_offset_ns": {
+          "exclusiveMinimum": 0,
+          "title": "First Relevant Import Offset Ns",
+          "type": "integer"
+        },
+        "operation": {
+          "$ref": "#/$defs/Stage2ProcessOperation"
+        },
+        "process_identity": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Process Identity",
+          "type": "string"
+        },
+        "process_kind": {
+          "$ref": "#/$defs/Stage2ProcessKind"
+        },
+        "process_start_offset_ns": {
+          "minimum": 0,
+          "title": "Process Start Offset Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "process_kind",
+        "process_identity",
+        "process_start_offset_ns",
+        "environment_capture_offset_ns",
+        "first_relevant_import_offset_ns",
+        "environment",
+        "absent_environment_variables",
+        "operation"
+      ],
+      "title": "Stage2ProcessRecord",
+      "type": "object"
+    },
+    "Stage2RepetitionCudaAttestation": {
+      "additionalProperties": false,
+      "properties": {
+        "environment_resource_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Environment Resource Identity Sha256",
+          "type": "string"
+        },
+        "execution": {
+          "$ref": "#/$defs/CudaBackedExecutionAttestation"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "raw_evidence_files": {
+          "items": {
+            "$ref": "#/$defs/ManifestBoundFile"
+          },
+          "minItems": 1,
+          "title": "Raw Evidence Files",
+          "type": "array"
+        },
+        "repetition_index": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "title": "Repetition Index",
+          "type": "integer"
+        },
+        "repetition_manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Repetition Manifest Sha256",
+          "type": "string"
+        },
+        "runtime_control_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Runtime Control Sha256",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.3.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "server_process_identity": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Server Process Identity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "repetition_index",
+        "server_process_identity",
+        "runtime_control_sha256",
+        "repetition_manifest_sha256",
+        "environment_resource_identity_sha256",
+        "execution",
+        "raw_evidence_files",
+        "identity_sha256"
+      ],
+      "title": "Stage2RepetitionCudaAttestation",
+      "type": "object"
+    },
+    "Stage2RequestEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "client_generation_tpot": {
+          "$ref": "#/$defs/MetricAvailability"
+        },
+        "disagreements": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Disagreements",
+          "type": "array"
+        },
+        "external_request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "title": "External Request Id",
+          "type": "string"
+        },
+        "final_output_token_ids": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 32,
+          "minItems": 32,
+          "title": "Final Output Token Ids",
+          "type": "array"
+        },
+        "finish_reason": {
+          "const": "length",
+          "title": "Finish Reason",
+          "type": "string"
+        },
+        "fixture_identity_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Fixture Identity Sha256"
+        },
+        "internal_engine_request_id": {
+          "title": "Internal Engine Request Id",
+          "type": "string"
+        },
+        "local_output_token_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Local Output Token Count"
+        },
+        "local_prompt_token_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Local Prompt Token Count"
+        },
+        "output_text": {
+          "title": "Output Text",
+          "type": "string"
+        },
+        "output_text_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Output Text Sha256",
+          "type": "string"
+        },
+        "request_identity_chain_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Request Identity Chain Sha256",
+          "type": "string"
+        },
+        "response_request_id": {
+          "title": "Response Request Id",
+          "type": "string"
+        },
+        "returned_prompt_token_ids": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 64,
+          "minItems": 64,
+          "title": "Returned Prompt Token Ids",
+          "type": "array"
+        },
+        "sent_prompt_token_ids": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 64,
+          "minItems": 64,
+          "title": "Sent Prompt Token Ids",
+          "type": "array"
+        },
+        "server_per_request_metrics": {
+          "$ref": "#/$defs/Stage2PerRequestMetrics"
+        },
+        "serving_item_request_id": {
+          "title": "Serving Item Request Id",
+          "type": "string"
+        },
+        "stream_output_gap_ns": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Stream Output Gap Ns",
+          "type": "array"
+        },
+        "terminal_event_carried_token_ids": {
+          "title": "Terminal Event Carried Token Ids",
+          "type": "boolean"
+        },
+        "timing": {
+          "$ref": "#/$defs/Stage2TimingRecord"
+        },
+        "token_events": {
+          "items": {
+            "$ref": "#/$defs/Stage2TokenEvent"
+          },
+          "minItems": 1,
+          "title": "Token Events",
+          "type": "array"
+        },
+        "token_observation_itl": {
+          "$ref": "#/$defs/MetricAvailability"
+        },
+        "usage": {
+          "$ref": "#/$defs/Stage2Usage"
+        }
+      },
+      "required": [
+        "fixture_identity_sha256",
+        "request_identity_chain_sha256",
+        "external_request_id",
+        "response_request_id",
+        "serving_item_request_id",
+        "internal_engine_request_id",
+        "sent_prompt_token_ids",
+        "returned_prompt_token_ids",
+        "token_events",
+        "final_output_token_ids",
+        "finish_reason",
+        "terminal_event_carried_token_ids",
+        "usage",
+        "local_prompt_token_count",
+        "local_output_token_count",
+        "server_per_request_metrics",
+        "disagreements",
+        "output_text",
+        "output_text_sha256",
+        "timing",
+        "client_generation_tpot",
+        "token_observation_itl",
+        "stream_output_gap_ns"
+      ],
+      "title": "Stage2RequestEvidence",
+      "type": "object"
+    },
+    "Stage2RequestLifecycle": {
+      "additionalProperties": false,
+      "properties": {
+        "dispatch_offset_ns": {
+          "minimum": 0,
+          "title": "Dispatch Offset Ns",
+          "type": "integer"
+        },
+        "measurement_phase_end_ns": {
+          "exclusiveMinimum": 0,
+          "title": "Measurement Phase End Ns",
+          "type": "integer"
+        },
+        "measurement_phase_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Measurement Phase Identity Sha256",
+          "type": "string"
+        },
+        "measurement_phase_start_ns": {
+          "minimum": 0,
+          "title": "Measurement Phase Start Ns",
+          "type": "integer"
+        },
+        "terminal_offset_ns": {
+          "exclusiveMinimum": 0,
+          "title": "Terminal Offset Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dispatch_offset_ns",
+        "terminal_offset_ns",
+        "measurement_phase_start_ns",
+        "measurement_phase_end_ns",
+        "measurement_phase_identity_sha256"
+      ],
+      "title": "Stage2RequestLifecycle",
+      "type": "object"
+    },
+    "Stage2RequestRawEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "lifecycle": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "parsed_sse_events": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "raw_response_body": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "request_body": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "request_headers": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "response_headers": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "server_logs": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "server_metrics": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "terminal_boundary": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        "token_usage_reconciliation": {
+          "$ref": "#/$defs/ManifestBoundFile"
+        }
+      },
+      "required": [
+        "request_body",
+        "request_headers",
+        "response_headers",
+        "raw_response_body",
+        "parsed_sse_events",
+        "terminal_boundary",
+        "server_logs",
+        "server_metrics",
+        "lifecycle",
+        "token_usage_reconciliation"
+      ],
+      "title": "Stage2RequestRawEvidence",
+      "type": "object"
+    },
+    "Stage2RuntimeControlEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "cancellation_probe": {
+          "$ref": "#/$defs/CancellationProbe"
+        },
+        "cancellation_result": {
+          "$ref": "#/$defs/CancellationResult"
+        },
+        "final_metric_scrape": {
+          "$ref": "#/$defs/PrometheusSnapshot"
+        },
+        "gpu_memory_samples": {
+          "items": {
+            "$ref": "#/$defs/GpuMemorySample"
+          },
+          "maxItems": 5,
+          "minItems": 5,
+          "title": "Gpu Memory Samples",
+          "type": "array"
+        },
+        "gpu_memory_tolerance_bytes": {
+          "minimum": 0,
+          "title": "Gpu Memory Tolerance Bytes",
+          "type": "integer"
+        },
+        "measured_client_slot_assignments": {
+          "items": {
+            "enum": [
+              0,
+              1
+            ],
+            "type": "integer"
+          },
+          "maxItems": 16,
+          "minItems": 16,
+          "title": "Measured Client Slot Assignments",
+          "type": "array"
+        },
+        "measured_request_count": {
+          "const": 16,
+          "title": "Measured Request Count",
+          "type": "integer"
+        },
+        "measured_request_ids": {
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 16,
+          "title": "Measured Request Ids",
+          "type": "array"
+        },
+        "phases": {
+          "items": {
+            "$ref": "#/$defs/RuntimePhaseRecord"
+          },
+          "title": "Phases",
+          "type": "array"
+        },
+        "post_warmup_jit_event_hashes": {
+          "items": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Post Warmup Jit Event Hashes",
+          "type": "array"
+        },
+        "prefix_cache_hit_delta": {
+          "$ref": "#/$defs/CounterDelta"
+        },
+        "prefix_cache_query_delta": {
+          "$ref": "#/$defs/CounterDelta"
+        },
+        "process_records": {
+          "items": {
+            "$ref": "#/$defs/Stage2ProcessRecord"
+          },
+          "title": "Process Records",
+          "type": "array"
+        },
+        "quiet_interval_end_offset_ns": {
+          "minimum": 0,
+          "title": "Quiet Interval End Offset Ns",
+          "type": "integer"
+        },
+        "quiet_interval_start_offset_ns": {
+          "minimum": 0,
+          "title": "Quiet Interval Start Offset Ns",
+          "type": "integer"
+        },
+        "repetition_index": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Repetition Index",
+          "type": "integer"
+        },
+        "requested_client_concurrency": {
+          "const": 2,
+          "title": "Requested Client Concurrency",
+          "type": "integer"
+        },
+        "residual_active_request_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Residual Active Request Ids",
+          "type": "array"
+        },
+        "residual_process_ids": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Residual Process Ids",
+          "type": "array"
+        },
+        "residual_verification_evidence_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Residual Verification Evidence Sha256",
+          "type": "string"
+        },
+        "residual_verification_offset_ns": {
+          "minimum": 0,
+          "title": "Residual Verification Offset Ns",
+          "type": "integer"
+        },
+        "shutdown_processes": {
+          "items": {
+            "$ref": "#/$defs/ProcessExitEvidence"
+          },
+          "minItems": 1,
+          "title": "Shutdown Processes",
+          "type": "array"
+        },
+        "stabilization_request_count": {
+          "const": 3,
+          "title": "Stabilization Request Count",
+          "type": "integer"
+        },
+        "stabilization_request_ids": {
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "title": "Stabilization Request Ids",
+          "type": "array"
+        },
+        "steady_state_snapshots": {
+          "items": {
+            "$ref": "#/$defs/PrometheusSnapshot"
+          },
+          "maxItems": 10,
+          "minItems": 10,
+          "title": "Steady State Snapshots",
+          "type": "array"
+        },
+        "workload_shape_warmup_count": {
+          "const": 4,
+          "title": "Workload Shape Warmup Count",
+          "type": "integer"
+        },
+        "workload_shape_warmup_request_ids": {
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "title": "Workload Shape Warmup Request Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "repetition_index",
+        "phases",
+        "process_records",
+        "gpu_memory_samples",
+        "gpu_memory_tolerance_bytes",
+        "stabilization_request_count",
+        "stabilization_request_ids",
+        "workload_shape_warmup_count",
+        "workload_shape_warmup_request_ids",
+        "cancellation_probe",
+        "cancellation_result",
+        "steady_state_snapshots",
+        "prefix_cache_query_delta",
+        "prefix_cache_hit_delta",
+        "post_warmup_jit_event_hashes",
+        "quiet_interval_start_offset_ns",
+        "quiet_interval_end_offset_ns",
+        "measured_request_count",
+        "measured_request_ids",
+        "requested_client_concurrency",
+        "measured_client_slot_assignments",
+        "final_metric_scrape",
+        "shutdown_processes",
+        "residual_process_ids",
+        "residual_active_request_ids",
+        "residual_verification_offset_ns",
+        "residual_verification_evidence_sha256"
+      ],
+      "title": "Stage2RuntimeControlEvidence",
+      "type": "object"
+    },
+    "Stage2TimingRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "dispatch_offset_ns": {
+          "minimum": 0,
+          "title": "Dispatch Offset Ns",
+          "type": "integer"
+        },
+        "first_output_token_offset_ns": {
+          "minimum": 0,
+          "title": "First Output Token Offset Ns",
+          "type": "integer"
+        },
+        "first_response_body_bytes_offset_ns": {
+          "minimum": 0,
+          "title": "First Response Body Bytes Offset Ns",
+          "type": "integer"
+        },
+        "generation_terminal_offset_ns": {
+          "minimum": 0,
+          "title": "Generation Terminal Offset Ns",
+          "type": "integer"
+        },
+        "protocol_terminal_offset_ns": {
+          "minimum": 0,
+          "title": "Protocol Terminal Offset Ns",
+          "type": "integer"
+        },
+        "response_headers_offset_ns": {
+          "minimum": 0,
+          "title": "Response Headers Offset Ns",
+          "type": "integer"
+        },
+        "transport_terminal_offset_ns": {
+          "minimum": 0,
+          "title": "Transport Terminal Offset Ns",
+          "type": "integer"
+        },
+        "usage_terminal_offset_ns": {
+          "minimum": 0,
+          "title": "Usage Terminal Offset Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dispatch_offset_ns",
+        "response_headers_offset_ns",
+        "first_response_body_bytes_offset_ns",
+        "first_output_token_offset_ns",
+        "generation_terminal_offset_ns",
+        "usage_terminal_offset_ns",
+        "protocol_terminal_offset_ns",
+        "transport_terminal_offset_ns"
+      ],
+      "title": "Stage2TimingRecord",
+      "type": "object"
+    },
+    "Stage2TokenEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "finish_reason": {
+          "anyOf": [
+            {
+              "const": "length",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Finish Reason"
+        },
+        "observation_offset_ns": {
+          "minimum": 0,
+          "title": "Observation Offset Ns",
+          "type": "integer"
+        },
+        "output_token_ids": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Output Token Ids",
+          "type": "array"
+        },
+        "prompt_token_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Token Ids"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation_offset_ns",
+        "output_token_ids",
+        "text",
+        "finish_reason"
+      ],
+      "title": "Stage2TokenEvent",
+      "type": "object"
+    },
+    "Stage2Usage": {
+      "additionalProperties": false,
+      "properties": {
+        "completion_tokens": {
+          "const": 32,
+          "title": "Completion Tokens",
+          "type": "integer"
+        },
+        "prompt_tokens": {
+          "const": 64,
+          "title": "Prompt Tokens",
+          "type": "integer"
+        },
+        "total_tokens": {
+          "const": 96,
+          "title": "Total Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens"
+      ],
+      "title": "Stage2Usage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "cancellation_client_stream_file": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "cancellation_result_file": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "cuda_execution": {
+      "$ref": "#/$defs/Stage2RepetitionCudaAttestation"
+    },
+    "identity_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Identity Sha256",
+      "type": "string"
+    },
+    "measured_requests": {
+      "items": {
+        "$ref": "#/$defs/Stage2MeasuredRequestAttestation"
+      },
+      "maxItems": 16,
+      "minItems": 16,
+      "title": "Measured Requests",
+      "type": "array"
+    },
+    "metric_availability_summary": {
+      "$ref": "#/$defs/Stage2MetricAvailabilitySummary"
+    },
+    "observed_max_active_concurrency": {
+      "const": 2,
+      "title": "Observed Max Active Concurrency",
+      "type": "integer"
+    },
+    "positive_duration_overlap_observed": {
+      "const": true,
+      "title": "Positive Duration Overlap Observed",
+      "type": "boolean"
+    },
+    "repetition_index": {
+      "enum": [
+        1,
+        2,
+        3
+      ],
+      "title": "Repetition Index",
+      "type": "integer"
+    },
+    "repetition_manifest": {
+      "$ref": "#/$defs/Stage2BundleManifest"
+    },
+    "repetition_manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Repetition Manifest Sha256",
+      "type": "string"
+    },
+    "requested_client_concurrency": {
+      "const": 2,
+      "title": "Requested Client Concurrency",
+      "type": "integer"
+    },
+    "runtime_control": {
+      "$ref": "#/$defs/Stage2RuntimeControlEvidence"
+    },
+    "runtime_control_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Runtime Control Sha256",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.3.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "server_restart": {
+      "$ref": "#/$defs/ServerRestartIdentity"
+    }
+  },
+  "required": [
+    "schema_version",
+    "repetition_index",
+    "runtime_control",
+    "runtime_control_sha256",
+    "server_restart",
+    "repetition_manifest",
+    "repetition_manifest_sha256",
+    "cancellation_result_file",
+    "cancellation_client_stream_file",
+    "cuda_execution",
+    "measured_requests",
+    "requested_client_concurrency",
+    "observed_max_active_concurrency",
+    "positive_duration_overlap_observed",
+    "metric_availability_summary",
+    "identity_sha256"
+  ],
+  "title": "Stage2RepetitionAttestation",
+  "type": "object"
+}

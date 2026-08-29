@@ -380,8 +380,14 @@ class AttestedComponentIdentity(StrictModel):
 
 
 class FutureRealRuntimeAttestation(StrictModel):
+    """Legacy request/component-shape graph retained at fixture scope only.
+
+    Final future-runtime classification is owned exclusively by the cardinality-complete
+    ``Stage2ExperimentAttestation`` boundary.
+    """
+
     schema_version: Literal["0.3.0"]
-    evidence_scope: Literal[Stage2EvidenceScope.FUTURE_REAL_RUNTIME]
+    evidence_scope: Literal[Stage2EvidenceScope.TEST_FIXTURE_ONLY]
     parsed_stream_evidence: Stage2RequestEvidence
     request_identity: RequestIdentityAttestation
     per_request_metrics: PerRequestMetricsAttestation

@@ -43,12 +43,16 @@ Stage 2A adds a separate `0.3.0` protocol layer exercised only by CPU fixtures:
 5. `stage2_control.py` derives cancellation from raw logs and raw Prometheus snapshots and requires
    the 17 ordered phase-specific evidence records, memory/steady-state gates, exact excluded and
    measured counts, final drain, complete shutdown, and no-residual verification;
-6. `stage2_attestation.py` keeps parsing evidence-neutral, assigns fixture scope separately, and
-   requires all 15 cross-bound future real-runtime component identities together;
-7. `stage2_bundle.py` manages inspectable staging state, durable raw and derived evidence,
+6. `stage2_attestation.py` keeps parsing evidence-neutral and retains request/component-shaped
+   attestations at fixture scope;
+7. `stage2_experiment.py` assembles the only final future-runtime boundary: exactly 48 measured
+   request attestations in three repetitions, ten distinct manifest-bound raw files per request,
+   cancellation and CUDA evidence per restart, lifecycle-derived concurrency, 16 comparisons,
+   derived availability/eligibility, aggregate validation, and pure directory reconstruction;
+8. `stage2_bundle.py` manages inspectable staging state, durable raw and derived evidence,
    public-safety checks, reconstruction, manifest-last commit, directory durability, and tamper
    validation; and
-8. `stage2_fixture_server.py` scripts compatible response, log, and complete five-field metric
+9. `stage2_fixture_server.py` scripts compatible response, log, and complete five-field metric
    shapes on a server fixed
    to `127.0.0.1:0`.
 
@@ -57,3 +61,13 @@ GPU path, or execution-lock installer. Future execution fields remain non-execut
 requirements. A resolved-model-implementation record remains distinct from the runtime package
 name and requires runtime-reported or directly observed provenance. The separate execution lock
 cannot enter the ordinary development dependency graph.
+
+The aggregate experiment root inventories exact canonical bytes for shared environment/resource,
+NVIDIA isolation, execution lock plus resolver/install/reviewed-lock raw evidence, snapshot plus
+read-only verification evidence, launch, safety, workload, all three repetition
+manifests, three CUDA attestations, three cancellation results, all 16 comparisons, availability,
+summary, aggregate validation, and final attestation records. Repetition and aggregate manifests
+must be written strictly last; reconstruction rejects missing, changed, symlinked, traversing,
+case-colliding, or unlisted files. Each of the ten per-request raw records is reconstructed against
+the exact request identity, parsed stream, metrics, lifecycle, and token/usage values before the
+terminal aggregate manifest can be published.
