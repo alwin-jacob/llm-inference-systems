@@ -39,7 +39,6 @@ from llm_inference_systems.stage1_contracts import (
     Stage1RunConfiguration,
     Stage1WorkloadDefinition,
 )
-from llm_inference_systems.stage2_attestation import FutureRealRuntimeAttestation
 from llm_inference_systems.stage2_contracts import (
     Stage2BundleManifest,
     Stage2CompletionRequest,
@@ -47,6 +46,12 @@ from llm_inference_systems.stage2_contracts import (
     Stage2RunConfiguration,
 )
 from llm_inference_systems.stage2_control import Stage2RuntimeControlEvidence
+from llm_inference_systems.stage2_experiment import (
+    Stage2AggregateExperimentManifest,
+    Stage2ExperimentAttestation,
+    Stage2MeasuredRequestAttestation,
+    Stage2RepetitionAttestation,
+)
 from llm_inference_systems.stage2_runtime import (
     ModelTokenizerSnapshotManifest,
     Stage2LaunchSpec,
@@ -65,7 +70,10 @@ VALIDATION_MODELS: dict[str, type[BaseModel]] = {
     "validate-stage2-launch-spec": Stage2LaunchSpec,
     "validate-stage2-snapshot-manifest": ModelTokenizerSnapshotManifest,
     "validate-stage2-runtime-control": Stage2RuntimeControlEvidence,
-    "validate-stage2-real-runtime-attestation": FutureRealRuntimeAttestation,
+    "validate-stage2-measured-request-attestation": Stage2MeasuredRequestAttestation,
+    "validate-stage2-repetition-attestation": Stage2RepetitionAttestation,
+    "validate-stage2-aggregate-experiment-manifest": Stage2AggregateExperimentManifest,
+    "validate-stage2-real-runtime-attestation": Stage2ExperimentAttestation,
 }
 
 

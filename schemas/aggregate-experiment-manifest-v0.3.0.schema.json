@@ -1,0 +1,272 @@
+{
+  "$defs": {
+    "AggregateRootState": {
+      "enum": [
+        "INCOMPLETE",
+        "INVALID",
+        "COMMITTED"
+      ],
+      "title": "AggregateRootState",
+      "type": "string"
+    },
+    "BundleFileEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "size"
+      ],
+      "title": "BundleFileEntry",
+      "type": "object"
+    },
+    "ManifestBoundFile": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "size"
+      ],
+      "title": "ManifestBoundFile",
+      "type": "object"
+    },
+    "Stage2EvidenceScope": {
+      "enum": [
+        "TEST_FIXTURE_ONLY",
+        "FUTURE_REAL_RUNTIME"
+      ],
+      "title": "Stage2EvidenceScope",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "aggregate_validation_result": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "cancellation_result_files": {
+      "maxItems": 3,
+      "minItems": 3,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        {
+          "$ref": "#/$defs/ManifestBoundFile"
+        }
+      ],
+      "title": "Cancellation Result Files",
+      "type": "array"
+    },
+    "created_at_utc": {
+      "format": "date-time",
+      "title": "Created At Utc",
+      "type": "string"
+    },
+    "cuda_execution_attestation_files": {
+      "maxItems": 3,
+      "minItems": 3,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        {
+          "$ref": "#/$defs/ManifestBoundFile"
+        }
+      ],
+      "title": "Cuda Execution Attestation Files",
+      "type": "array"
+    },
+    "evidence_scope": {
+      "$ref": "#/$defs/Stage2EvidenceScope"
+    },
+    "execution_lock_snapshot": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "experiment_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "experiment_summary": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "failure_reason": {
+      "anyOf": [
+        {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Failure Reason"
+    },
+    "files": {
+      "items": {
+        "$ref": "#/$defs/BundleFileEntry"
+      },
+      "minItems": 1,
+      "title": "Files",
+      "type": "array"
+    },
+    "final_attestation": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "launch_specification": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "measurement_protocol_version": {
+      "const": "0.3.0",
+      "title": "Measurement Protocol Version",
+      "type": "string"
+    },
+    "metric_availability_summary": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "model_tokenizer_snapshot_manifest": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "nvidia_isolation_evidence": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "nvidia_isolation_raw_evidence": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "public_safety_raw_scan_evidence": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "public_safety_result": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "repetition_manifest_files": {
+      "maxItems": 3,
+      "minItems": 3,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        {
+          "$ref": "#/$defs/ManifestBoundFile"
+        },
+        {
+          "$ref": "#/$defs/ManifestBoundFile"
+        }
+      ],
+      "title": "Repetition Manifest Files",
+      "type": "array"
+    },
+    "resource_environment_manifest": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "resource_environment_raw_evidence": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "reviewed_execution_lock": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "runtime_installed_distribution_inventory": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "runtime_resolver_lock_evidence": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "schema_version": {
+      "const": "0.3.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "semantic_comparison_files": {
+      "items": {
+        "$ref": "#/$defs/ManifestBoundFile"
+      },
+      "maxItems": 16,
+      "minItems": 16,
+      "title": "Semantic Comparison Files",
+      "type": "array"
+    },
+    "shared_workload_definition": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "snapshot_read_only_verification_evidence": {
+      "$ref": "#/$defs/ManifestBoundFile"
+    },
+    "state": {
+      "$ref": "#/$defs/AggregateRootState"
+    }
+  },
+  "required": [
+    "schema_version",
+    "measurement_protocol_version",
+    "experiment_id",
+    "state",
+    "failure_reason",
+    "evidence_scope",
+    "created_at_utc",
+    "files",
+    "resource_environment_manifest",
+    "resource_environment_raw_evidence",
+    "nvidia_isolation_evidence",
+    "nvidia_isolation_raw_evidence",
+    "execution_lock_snapshot",
+    "runtime_resolver_lock_evidence",
+    "runtime_installed_distribution_inventory",
+    "reviewed_execution_lock",
+    "model_tokenizer_snapshot_manifest",
+    "snapshot_read_only_verification_evidence",
+    "launch_specification",
+    "public_safety_result",
+    "public_safety_raw_scan_evidence",
+    "shared_workload_definition",
+    "repetition_manifest_files",
+    "cuda_execution_attestation_files",
+    "cancellation_result_files",
+    "semantic_comparison_files",
+    "metric_availability_summary",
+    "experiment_summary",
+    "aggregate_validation_result",
+    "final_attestation"
+  ],
+  "title": "Stage2AggregateExperimentManifest",
+  "type": "object"
+}

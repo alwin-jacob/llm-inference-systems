@@ -415,7 +415,7 @@ def test_fixture_attestation_can_produce_only_test_fixture_boundary() -> None:
 
 def test_complete_synthetic_real_runtime_attestation_validates_structurally() -> None:
     attestation = make_real_runtime_attestation()
-    assert attestation.evidence_scope is Stage2EvidenceScope.FUTURE_REAL_RUNTIME
+    assert attestation.evidence_scope is Stage2EvidenceScope.TEST_FIXTURE_ONLY
     assert tuple(item.component for item in attestation.component_identities) == COMPONENT_ORDER
     assert all(len(item.identity_sha256) == 64 for item in attestation.component_identities)
     assert tuple(control.repetition_index for control in attestation.runtime_controls) == (1, 2, 3)

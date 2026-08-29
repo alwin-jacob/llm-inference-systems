@@ -129,7 +129,10 @@ def make_request_evidence(
     fixture_identity_sha256: str | None,
     external_id: str = "stage2-fixture-001",
     base_offset_ns: int = 0,
+    output_token_ids: tuple[int, ...] = tuple(range(32)),
 ) -> Stage2RequestEvidence:
+    if len(output_token_ids) != 32:
+        raise ValueError("Stage 2 fixture request requires exactly 32 output token IDs")
     fixture_marked = fixture_identity_sha256 is not None
     validator = Stage2StreamValidator(
         external_base_id=external_id,
@@ -138,20 +141,20 @@ def make_request_evidence(
         fixture_identity_sha256=fixture_identity_sha256,
     )
     validator.accept_response_headers(external_id, base_offset_ns + 10)
-    for token in range(32):
+    for event_index, token in enumerate(output_token_ids):
         choice: dict[str, object] = {
             "index": 0,
             "text": (
                 f"<fixture-{token}>" if fixture_marked else f"<synthetic-future-shape-{token}>"
             ),
             "token_ids": [token],
-            "finish_reason": "length" if token == 31 else None,
+            "finish_reason": "length" if event_index == 31 else None,
         }
-        if token == 0:
+        if event_index == 0:
             choice["prompt_token_ids"] = list(PROMPT)
         validator.feed(
             _data({"id": f"cmpl-{external_id}", "choices": [choice]}),
-            base_offset_ns + 20 + token,
+            base_offset_ns + 20 + event_index,
         )
     validator.feed(
         _data(
@@ -266,6 +269,7 @@ def make_cancellation_probe(
     abort_delta: int = 1,
     process_start_id: str = "fixture-process",
     fixture_marked: bool = True,
+    external_id: str = "E_cancel",
 ) -> CancellationProbe:
     second = 1_000_000_000
     pre = tuple(
@@ -308,7 +312,7 @@ def make_cancellation_probe(
     raw_inventory = "project_processes=[]\nactive_requests=[]\n"
     return CancellationProbe(
         identity_chain=make_log_chain(
-            "E_cancel",
+            external_id,
             cancellation=True,
             fixture_marked=fixture_marked,
             first_observation_offset_ns=base_offset_ns + second + 1,
@@ -317,8 +321,8 @@ def make_cancellation_probe(
         raw_log_start_byte_offset=0,
         dispatch_offset_ns=base_offset_ns + second,
         first_generation_token=FirstGenerationTokenEvidence(
-            external_request_id="E_cancel",
-            response_body_id="cmpl-E_cancel",
+            external_request_id=external_id,
+            response_body_id=f"cmpl-{external_id}",
             observation_offset_ns=base_offset_ns + 1_100_000_000,
             output_token_ids=(1000,),
         ),
@@ -417,6 +421,7 @@ def make_runtime_control(
         base_offset_ns=110_000_000_000,
         process_start_id=server_process_identity,
         fixture_marked=not future_shape,
+        external_id=f"E_r{repetition_index}_cancel",
     )
     cancellation_result = evaluate_cancellation(cancellation_probe)
     steady = tuple(
@@ -997,7 +1002,7 @@ def make_real_runtime_attestation() -> FutureRealRuntimeAttestation:
     }
     return FutureRealRuntimeAttestation(
         schema_version="0.3.0",
-        evidence_scope=Stage2EvidenceScope.FUTURE_REAL_RUNTIME,
+        evidence_scope=Stage2EvidenceScope.TEST_FIXTURE_ONLY,
         parsed_stream_evidence=parsed,
         request_identity=request_identity,
         per_request_metrics=metrics,

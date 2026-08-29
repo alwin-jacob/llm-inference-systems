@@ -28,7 +28,7 @@ def test_all_generated_schemas_are_byte_synchronized() -> None:
 
 
 def test_schema_filenames_contain_contract_version() -> None:
-    assert len(SCHEMA_MODELS) == 19
+    assert len(SCHEMA_MODELS) == 23
     assert all(
         any(f"v{version}.schema.json" in filename for version in ("0.1.0", "0.2.0", "0.3.0"))
         for filename in SCHEMA_MODELS
@@ -113,7 +113,7 @@ def test_cli_schema_check_uses_committed_generated_files(
 ) -> None:
     assert cli_main(["schema-check"]) == 0
     assert json.loads(capsys.readouterr().out) == {
-        "schema_count": 19,
+        "schema_count": 23,
         "status": "synchronized",
     }
 

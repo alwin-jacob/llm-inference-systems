@@ -25,6 +25,9 @@ facts describe a local validation context, not an inference or benchmark environ
 Stage 2A remains within the same local CPU-fixture boundary. It adds no installed runtime, model,
 tokenizer, CUDA package, GPU package, or external endpoint. Its separate, unexecuted Linux/CUDA lock
 describes a future provider gate but does not assert that such a provider was allocated or audited.
+The complete three-repetition fixture includes CUDA and NVIDIA attestation *shapes* only; its
+aggregate root is explicitly `SYNTHETIC_PROTOCOL_SHAPE_ONLY` and cannot convert configured resource
+fields into observed hardware evidence.
 
 The future fixed gate requires Linux x86-64, at least four logical CPUs, at least 28,000,000,000
 bytes of memory, a filesystem of at least 19,000,000,000 bytes, at least 14,000,000,000 initially

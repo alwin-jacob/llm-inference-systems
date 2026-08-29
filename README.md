@@ -54,15 +54,21 @@ status or public résumé wording advances.
   usage terminal requires the exact five-field typed metrics object, including explicit nulls.
 - Manifest-last `INCOMPLETE`/`INVALID`/`COMMITTED` repetition bundles, exact raw reconstruction,
   three-restart semantic comparison, and aggregate-commit gating.
+- A cardinality-complete experiment boundary requiring exactly three committed repetitions,
+  16 measured-request attestations per repetition, three accepted cancellation probes, three
+  restart-specific CUDA attestation shapes, lifecycle-derived concurrency, 16 cross-restart
+  comparisons, derived metric eligibility, raw-to-summary reconstruction, and one manifest-last
+  terminal aggregate root. Semantic mismatch is retained only as an `INVALID` root and can never
+  become `COMMITTED`.
 - A CPU-only Stage 2A fixture server fixed to `127.0.0.1:0`, plus generated `0.3.0` schemas and a
   verifier that proves historical Stage 0/1 bytes and ordinary dependency boundaries remain
   unchanged.
 
-Parsing and reconciliation are evidence-neutral. `FixtureAttestation` alone assigns
-`TEST_FIXTURE_ONLY`; the separate future real-runtime attestation cannot validate unless all 15
-typed component identities validate together. Complete synthetic attestation fixtures prove only
-the contract shape and never establish runtime, model, tokenizer, Linux/NVIDIA, CUDA, GPU, Kaggle,
-or performance evidence.
+Parsing and reconciliation are evidence-neutral. Request/component attestation remains fixture
+scope; only the complete experiment validator can assign a future real-runtime boundary. Its CPU
+fixture constructs the full 3 × 16 graph but classifies it only as
+`SYNTHETIC_PROTOCOL_SHAPE_ONLY` under `TEST_FIXTURE_ONLY`. It never establishes runtime, model,
+tokenizer, Linux/NVIDIA, CUDA, GPU, Kaggle, or performance evidence.
 
 Client concurrency is a load-generator property. A configured or observed server batch size is
 a separate field and is never inferred from client concurrency.

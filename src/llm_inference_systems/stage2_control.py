@@ -116,8 +116,8 @@ class CancellationClassification(StrEnum):
 
 
 class FirstGenerationTokenEvidence(StrictModel):
-    external_request_id: Literal["E_cancel"]
-    response_body_id: Literal["cmpl-E_cancel"]
+    external_request_id: Identifier
+    response_body_id: Identifier
     observation_offset_ns: NonNegativeInt
     output_token_ids: tuple[NonNegativeInt, ...] = Field(min_length=1)
 
@@ -291,9 +291,8 @@ def _all_selected_counters_stable(snapshots: tuple[PrometheusSnapshot, ...]) -> 
 def evaluate_cancellation(probe: CancellationProbe) -> CancellationResult:
     chain = probe.identity_chain
     if (
-        chain.external_base_id != "E_cancel"
-        or chain.response_body_id != "cmpl-E_cancel"
-        or chain.serving_item_id != "cmpl-E_cancel-0"
+        chain.response_body_id != f"cmpl-{chain.external_base_id}"
+        or chain.serving_item_id != f"cmpl-{chain.external_base_id}-0"
     ):
         return _invalid_cancellation(probe, CancellationClassification.ID_CORRELATION_FAILURE)
     if chain.external_abort_log is None or chain.internal_abort_log is None:
@@ -511,6 +510,14 @@ class Stage2RuntimeControlEvidence(StrictModel):
         )
         if any(len(values) != len(set(values)) for values in identity_groups):
             raise ValueError("excluded and measured request identities must be unique")
+        all_request_ids = (
+            *self.stabilization_request_ids,
+            *self.workload_shape_warmup_request_ids,
+            self.cancellation_probe.identity_chain.external_base_id,
+            *self.measured_request_ids,
+        )
+        if len(all_request_ids) != len(set(all_request_ids)):
+            raise ValueError("excluded, cancellation, and measured request IDs must be disjoint")
         if set(self.measured_client_slot_assignments) != {0, 1}:
             raise ValueError("measured request identities must exercise both requested clients")
         if evaluate_cancellation(self.cancellation_probe) != self.cancellation_result:

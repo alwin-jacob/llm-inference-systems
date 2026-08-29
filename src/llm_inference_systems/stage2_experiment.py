@@ -1,0 +1,2033 @@
+"""Cardinality-complete Stage 2 experiment attestation and aggregate reconstruction.
+
+Stage 2A exercises these contracts with synthetic CPU fixtures only.  This module
+contains no runtime launcher, downloader, model/tokenizer loader, or GPU code.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+from datetime import timedelta
+from enum import StrEnum
+from pathlib import Path, PurePosixPath
+from typing import Annotated, Final, Literal, Self, cast
+
+from pydantic import AwareDatetime, Field, model_validator
+
+from llm_inference_systems.canonical import canonical_json_bytes, sha256_identity
+from llm_inference_systems.contracts import (
+    Identifier,
+    NonNegativeInt,
+    PositiveInt,
+    Sha256,
+    StrictModel,
+)
+from llm_inference_systems.stage2_attestation import (
+    CudaBackedExecutionAttestation,
+    LinuxEnvironmentManifest,
+    NvidiaT4ResourceAttestation,
+    PublicSafetyAttestation,
+    RequestIdentityAttestation,
+    RuntimePackageExecutionLockAttestation,
+    ServerRestartIdentity,
+)
+from llm_inference_systems.stage2_bundle import Stage2BundleError, validate_committed_bundle
+from llm_inference_systems.stage2_contracts import (
+    BundleFileEntry,
+    BundleState,
+    MetricAvailability,
+    Stage2BundleManifest,
+    Stage2EvidenceScope,
+    Stage2PerRequestMetrics,
+    Stage2RequestEvidence,
+    Stage2TimingRecord,
+    Stage2TokenEvent,
+    Stage2Usage,
+)
+from llm_inference_systems.stage2_control import (
+    AggregateComparisonState,
+    CancellationResult,
+    RestartComparison,
+    RestartSemanticRecord,
+    Stage2ControlError,
+    Stage2RuntimeControlEvidence,
+    bundle_manifest_sha256,
+    compare_three_restarts,
+    validate_aggregate_commit,
+)
+from llm_inference_systems.stage2_runtime import (
+    LAUNCH_ABSENT_ENVIRONMENT_VARIABLES,
+    OFFLINE_RUNTIME_ENVIRONMENT,
+    ModelTokenizerSnapshotManifest,
+    Stage2LaunchSpec,
+)
+
+STAGE2_EXPERIMENT_CASE_IDS: Final = tuple(f"stage2-case-v1-{index:02d}" for index in range(1, 17))
+AGGREGATE_MANIFEST_PATH: Final = "aggregate-experiment-manifest.json"
+
+_AGGREGATE_SENSITIVE_PATTERNS: Final = (
+    re.compile(re.escape("-----BEGIN " + "PRIVATE KEY-----"), re.IGNORECASE),
+    re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bhf_[A-Za-z0-9]{20,}\b"),
+    re.compile(
+        r"(?im)(?:^|[\"'])"
+        r"(?:aws_secret_access_key|api_key|client_secret|access_token|refresh_token|"
+        r"proxy_password|HF_TOKEN|HUGGING_FACE_HUB_TOKEN|HUGGINGFACE_HUB_TOKEN|"
+        r"HUGGINGFACEHUB_API_TOKEN)"
+        r"[\"']?\s*(?:=|:)\s*[\"']?\S+"
+    ),
+    re.compile(r"(?im)(?:^|[,{])\s*[\"']?(?:proxy-)?authorization[\"']?\s*:\s*[\"']?\S+"),
+    re.compile(r"(?im)(?:^|[,{])\s*[\"']?(?:cookie|set-cookie)[\"']?\s*:\s*[\"']?\S+"),
+    re.compile(r"(?i)\bhttps?://[^\s/:@]+:[^\s/@]+@[^\s/]+"),
+    re.compile(r"(?i)(?<![A-Za-z0-9._-])/(?:Users|home)/[A-Za-z0-9._-]+"),
+    re.compile(r"(?i)(?:~|/[^\s\"']+)?/\.cache/(?:huggingface|torch|vllm)(?:/|\b)"),
+    re.compile(r"(?i)\bGPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b"),
+    re.compile(r"(?i)\b[A-Za-z0-9][A-Za-z0-9.-]*\.(?:corp|internal|lan|local)\b"),
+    re.compile(r"(?i)\b(?:account|notebook)[_-]?id\s*(?:=|:)\s*[\"']?\S+"),
+    re.compile(("sam" + "sung") + r"[^\n]{0,80}(?:claim|ledger|control[-_ ]?plane)", re.I),
+)
+
+_FIXTURE_VALUE_MARKERS: Final = (
+    "test_fixture_only",
+    "synthetic_protocol_shape_only",
+    "synthetic_future_shape_only",
+    "synthetic-future-shape",
+    "synthetic-shape",
+    "<fixture-",
+    "stage2-fixture",
+)
+
+REQUEST_EVIDENCE_FIELDS: Final = (
+    "request_body",
+    "request_headers",
+    "response_headers",
+    "raw_response_body",
+    "parsed_sse_events",
+    "terminal_boundary",
+    "server_logs",
+    "server_metrics",
+    "lifecycle",
+    "token_usage_reconciliation",
+)
+
+
+class Stage2ExperimentError(ValueError):
+    """Raised when a complete experiment cannot be reconstructed or committed."""
+
+
+def _contains_fixture_value(value: object) -> bool:
+    if isinstance(value, StrictModel):
+        return _contains_fixture_value(value.model_dump(mode="python"))
+    if isinstance(value, dict):
+        return any(_contains_fixture_value(item) for item in value.values())
+    if isinstance(value, (tuple, list)):
+        return any(_contains_fixture_value(item) for item in value)
+    if isinstance(value, str):
+        normalized = value.casefold()
+        return any(marker in normalized for marker in _FIXTURE_VALUE_MARKERS)
+    return False
+
+
+def _raw_payload_contains_fixture_value(data: bytes) -> bool:
+    try:
+        value = json.loads(data)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        try:
+            value = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+    return _contains_fixture_value(value)
+
+
+def _safe_relative_path(value: str) -> PurePosixPath:
+    path = PurePosixPath(value)
+    if (
+        value != path.as_posix()
+        or path.is_absolute()
+        or not path.parts
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise ValueError("experiment evidence path must be normalized and relative")
+    return path
+
+
+class ManifestBoundFile(StrictModel):
+    path: str
+    sha256: Sha256
+    size: NonNegativeInt
+
+    @model_validator(mode="after")
+    def validate_path(self) -> Self:
+        _safe_relative_path(self.path)
+        return self
+
+
+class Stage2RequestRawEvidence(StrictModel):
+    request_body: ManifestBoundFile
+    request_headers: ManifestBoundFile
+    response_headers: ManifestBoundFile
+    raw_response_body: ManifestBoundFile
+    parsed_sse_events: ManifestBoundFile
+    terminal_boundary: ManifestBoundFile
+    server_logs: ManifestBoundFile
+    server_metrics: ManifestBoundFile
+    lifecycle: ManifestBoundFile
+    token_usage_reconciliation: ManifestBoundFile
+
+    @model_validator(mode="after")
+    def validate_distinct_files(self) -> Self:
+        paths = tuple(getattr(self, field).path for field in REQUEST_EVIDENCE_FIELDS)
+        if len(paths) != len(set(paths)) or len({path.casefold() for path in paths}) != len(paths):
+            raise ValueError("measured-request raw evidence paths must be distinct")
+        return self
+
+    def files(self) -> tuple[ManifestBoundFile, ...]:
+        return tuple(getattr(self, field) for field in REQUEST_EVIDENCE_FIELDS)
+
+
+class Stage2RequestLifecycle(StrictModel):
+    dispatch_offset_ns: NonNegativeInt
+    terminal_offset_ns: PositiveInt
+    measurement_phase_start_ns: NonNegativeInt
+    measurement_phase_end_ns: PositiveInt
+    measurement_phase_identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_interval(self) -> Self:
+        if not (
+            self.measurement_phase_start_ns
+            <= self.dispatch_offset_ns
+            < self.terminal_offset_ns
+            <= self.measurement_phase_end_ns
+        ):
+            raise ValueError("measured lifecycle must be a positive interval inside its phase")
+        return self
+
+
+class Stage2MetricAvailability(StrictModel):
+    server_ttft_available: bool
+    server_generation_time_available: bool
+    server_queue_time_available: bool
+    server_mean_itl_available: bool
+    server_tokens_per_second_available: bool
+    client_generation_tpot_available: bool
+    token_observation_itl_available: bool
+    server_ttft_advancement_allowed: bool
+    server_generation_time_advancement_allowed: bool
+    server_queue_time_advancement_allowed: bool
+    server_mean_itl_advancement_allowed: bool
+    server_tokens_per_second_advancement_allowed: bool
+    client_generation_tpot_advancement_allowed: bool
+    token_observation_itl_advancement_allowed: bool
+
+    @model_validator(mode="after")
+    def validate_eligibility(self) -> Self:
+        pairs = (
+            (self.server_ttft_available, self.server_ttft_advancement_allowed),
+            (
+                self.server_generation_time_available,
+                self.server_generation_time_advancement_allowed,
+            ),
+            (self.server_queue_time_available, self.server_queue_time_advancement_allowed),
+            (self.server_mean_itl_available, self.server_mean_itl_advancement_allowed),
+            (
+                self.server_tokens_per_second_available,
+                self.server_tokens_per_second_advancement_allowed,
+            ),
+            (
+                self.client_generation_tpot_available,
+                self.client_generation_tpot_advancement_allowed,
+            ),
+            (
+                self.token_observation_itl_available,
+                self.token_observation_itl_advancement_allowed,
+            ),
+        )
+        if any(available != allowed for available, allowed in pairs):
+            raise ValueError("metric advancement eligibility must be derived from availability")
+        return self
+
+
+def derive_metric_availability(
+    metrics: Stage2PerRequestMetrics,
+    evidence: Stage2RequestEvidence,
+) -> Stage2MetricAvailability:
+    values = (
+        metrics.time_to_first_token_ms is not None,
+        metrics.generation_time_ms is not None,
+        metrics.queue_time_ms is not None,
+        metrics.mean_itl_ms is not None,
+        metrics.tokens_per_second is not None,
+        evidence.client_generation_tpot.value_ns is not None,
+        evidence.token_observation_itl.value_ns is not None,
+    )
+    return Stage2MetricAvailability(
+        server_ttft_available=values[0],
+        server_generation_time_available=values[1],
+        server_queue_time_available=values[2],
+        server_mean_itl_available=values[3],
+        server_tokens_per_second_available=values[4],
+        client_generation_tpot_available=values[5],
+        token_observation_itl_available=values[6],
+        server_ttft_advancement_allowed=values[0],
+        server_generation_time_advancement_allowed=values[1],
+        server_queue_time_advancement_allowed=values[2],
+        server_mean_itl_advancement_allowed=values[3],
+        server_tokens_per_second_advancement_allowed=values[4],
+        client_generation_tpot_advancement_allowed=values[5],
+        token_observation_itl_advancement_allowed=values[6],
+    )
+
+
+class Stage2MetricAvailabilitySummary(StrictModel):
+    total_request_count: Annotated[int, Field(ge=1, le=48)]
+    server_ttft_available_count: NonNegativeInt
+    server_generation_time_available_count: NonNegativeInt
+    server_queue_time_available_count: NonNegativeInt
+    server_mean_itl_available_count: NonNegativeInt
+    server_tokens_per_second_available_count: NonNegativeInt
+    client_generation_tpot_available_count: NonNegativeInt
+    token_observation_itl_available_count: NonNegativeInt
+    server_ttft_advancement_allowed: bool
+    server_generation_time_advancement_allowed: bool
+    server_queue_time_advancement_allowed: bool
+    server_mean_itl_advancement_allowed: bool
+    server_tokens_per_second_advancement_allowed: bool
+    client_generation_tpot_advancement_allowed: bool
+    token_observation_itl_advancement_allowed: bool
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> Self:
+        count_fields = (
+            "server_ttft_available_count",
+            "server_generation_time_available_count",
+            "server_queue_time_available_count",
+            "server_mean_itl_available_count",
+            "server_tokens_per_second_available_count",
+            "client_generation_tpot_available_count",
+            "token_observation_itl_available_count",
+        )
+        allowed_fields = (
+            "server_ttft_advancement_allowed",
+            "server_generation_time_advancement_allowed",
+            "server_queue_time_advancement_allowed",
+            "server_mean_itl_advancement_allowed",
+            "server_tokens_per_second_advancement_allowed",
+            "client_generation_tpot_advancement_allowed",
+            "token_observation_itl_advancement_allowed",
+        )
+        for count_field, allowed_field in zip(count_fields, allowed_fields, strict=True):
+            count = getattr(self, count_field)
+            if count > self.total_request_count:
+                raise ValueError("metric-availability count exceeds the request population")
+            if getattr(self, allowed_field) != (count == self.total_request_count):
+                raise ValueError("metric advancement must require complete population availability")
+        return self
+
+
+def derive_metric_availability_summary(
+    requests: tuple[Stage2MeasuredRequestAttestation, ...],
+) -> Stage2MetricAvailabilitySummary:
+    count = len(requests)
+    if count not in {16, 48}:
+        raise ValueError("availability summaries apply only to 16 or 48 measured requests")
+    fields = (
+        "server_ttft_available",
+        "server_generation_time_available",
+        "server_queue_time_available",
+        "server_mean_itl_available",
+        "server_tokens_per_second_available",
+        "client_generation_tpot_available",
+        "token_observation_itl_available",
+    )
+    counts = {
+        field: sum(bool(getattr(request.metric_availability, field)) for request in requests)
+        for field in fields
+    }
+    return Stage2MetricAvailabilitySummary(
+        total_request_count=count,
+        server_ttft_available_count=counts[fields[0]],
+        server_generation_time_available_count=counts[fields[1]],
+        server_queue_time_available_count=counts[fields[2]],
+        server_mean_itl_available_count=counts[fields[3]],
+        server_tokens_per_second_available_count=counts[fields[4]],
+        client_generation_tpot_available_count=counts[fields[5]],
+        token_observation_itl_available_count=counts[fields[6]],
+        server_ttft_advancement_allowed=counts[fields[0]] == count,
+        server_generation_time_advancement_allowed=counts[fields[1]] == count,
+        server_queue_time_advancement_allowed=counts[fields[2]] == count,
+        server_mean_itl_advancement_allowed=counts[fields[3]] == count,
+        server_tokens_per_second_advancement_allowed=counts[fields[4]] == count,
+        client_generation_tpot_advancement_allowed=counts[fields[5]] == count,
+        token_observation_itl_advancement_allowed=counts[fields[6]] == count,
+    )
+
+
+class Stage2MeasuredRequestAttestation(StrictModel):
+    schema_version: Literal["0.3.0"]
+    repetition_index: Literal[1, 2, 3]
+    case_id: Identifier
+    external_request_id: Identifier
+    request_evidence: Stage2RequestEvidence
+    request_identity: RequestIdentityAttestation
+    lifecycle: Stage2RequestLifecycle
+    raw_evidence: Stage2RequestRawEvidence
+    metric_availability: Stage2MetricAvailability
+    repetition_manifest_sha256: Sha256
+    attestation_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_request(self) -> Self:
+        if self.case_id not in STAGE2_EXPERIMENT_CASE_IDS:
+            raise ValueError("measured request uses an undeclared Stage 2 case ID")
+        evidence = self.request_evidence
+        chain = self.request_identity.identity_chain
+        if (
+            self.external_request_id != evidence.external_request_id
+            or chain.external_base_id != self.external_request_id
+            or chain.response_body_id != evidence.response_request_id
+            or chain.serving_item_id != evidence.serving_item_request_id
+            or chain.internal_engine_id != evidence.internal_engine_request_id
+            or self.request_identity.identity_sha256 != evidence.request_identity_chain_sha256
+        ):
+            raise ValueError("measured request identity chain does not reconcile")
+        if (
+            self.lifecycle.dispatch_offset_ns != evidence.timing.dispatch_offset_ns
+            or self.lifecycle.terminal_offset_ns != evidence.timing.transport_terminal_offset_ns
+        ):
+            raise ValueError("measured lifecycle differs from parsed terminal evidence")
+        expected_availability = derive_metric_availability(
+            evidence.server_per_request_metrics,
+            evidence,
+        )
+        if self.metric_availability != expected_availability:
+            raise ValueError("metric availability was not derived from request evidence")
+        if self.attestation_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"attestation_sha256"})
+        ):
+            raise ValueError("measured-request attestation identity does not reconstruct")
+        return self
+
+
+def build_request_raw_evidence_payloads(
+    *,
+    repetition_index: Literal[1, 2, 3],
+    case_id: str,
+    external_request_id: str,
+    request_evidence: Stage2RequestEvidence,
+    request_identity: RequestIdentityAttestation,
+    lifecycle: Stage2RequestLifecycle,
+    evidence_scope: Stage2EvidenceScope,
+) -> dict[str, bytes]:
+    """Derive exact canonical raw-record bytes from one measured request.
+
+    The fixture writer and the filesystem reconstructor share this function so a
+    retained raw reference cannot be swapped between requests or detached from
+    the parsed request evidence that it supports.
+    """
+
+    evidence = request_evidence
+    common = {
+        "schema_version": "0.3.0",
+        "evidence_scope": evidence_scope,
+        "repetition_index": repetition_index,
+        "case_id": case_id,
+        "external_request_id": external_request_id,
+    }
+    content: dict[str, object] = {
+        "request_body": {
+            "external_request_id": external_request_id,
+            "fixture_identity_sha256": evidence.fixture_identity_sha256,
+            "sent_prompt_token_ids": evidence.sent_prompt_token_ids,
+        },
+        "request_headers": {
+            "x_request_id": external_request_id,
+            "request_identity_chain_sha256": evidence.request_identity_chain_sha256,
+        },
+        "response_headers": {
+            "internal_engine_request_id": evidence.internal_engine_request_id,
+            "response_request_id": evidence.response_request_id,
+            "serving_item_request_id": evidence.serving_item_request_id,
+        },
+        "raw_response_body": {
+            "done_terminal": "[DONE]",
+            "stream_events": evidence.token_events,
+            "usage_terminal": {
+                "server_per_request_metrics": evidence.server_per_request_metrics,
+                "usage": evidence.usage,
+            },
+        },
+        "parsed_sse_events": {"token_events": evidence.token_events},
+        "terminal_boundary": {
+            "finish_reason": evidence.finish_reason,
+            "terminal_event_carried_token_ids": evidence.terminal_event_carried_token_ids,
+            "timing": evidence.timing,
+        },
+        "server_logs": request_identity,
+        "server_metrics": evidence.server_per_request_metrics,
+        "lifecycle": lifecycle,
+        "token_usage_reconciliation": {
+            "client_generation_tpot": evidence.client_generation_tpot,
+            "disagreements": evidence.disagreements,
+            "final_output_token_ids": evidence.final_output_token_ids,
+            "finish_reason": evidence.finish_reason,
+            "local_output_token_count": evidence.local_output_token_count,
+            "local_prompt_token_count": evidence.local_prompt_token_count,
+            "output_text": evidence.output_text,
+            "output_text_sha256": evidence.output_text_sha256,
+            "returned_prompt_token_ids": evidence.returned_prompt_token_ids,
+            "sent_prompt_token_ids": evidence.sent_prompt_token_ids,
+            "stream_output_gap_ns": evidence.stream_output_gap_ns,
+            "token_observation_itl": evidence.token_observation_itl,
+            "usage": evidence.usage,
+        },
+    }
+    return {
+        field: canonical_json_bytes({**common, "evidence_kind": field, "content": content[field]})
+        + b"\n"
+        for field in REQUEST_EVIDENCE_FIELDS
+    }
+
+
+def request_raw_evidence_payloads(
+    request: Stage2MeasuredRequestAttestation,
+    evidence_scope: Stage2EvidenceScope,
+) -> dict[str, bytes]:
+    return build_request_raw_evidence_payloads(
+        repetition_index=request.repetition_index,
+        case_id=request.case_id,
+        external_request_id=request.external_request_id,
+        request_evidence=request.request_evidence,
+        request_identity=request.request_identity,
+        lifecycle=request.lifecycle,
+        evidence_scope=evidence_scope,
+    )
+
+
+def reconstruct_request_from_raw_evidence(
+    raw_payloads: dict[str, bytes],
+    evidence_scope: Stage2EvidenceScope,
+) -> tuple[
+    Literal[1, 2, 3],
+    str,
+    str,
+    Stage2RequestEvidence,
+    RequestIdentityAttestation,
+    Stage2RequestLifecycle,
+]:
+    """Parse ten retained request records into the typed request boundary."""
+
+    if set(raw_payloads) != set(REQUEST_EVIDENCE_FIELDS):
+        raise Stage2ExperimentError("measured request raw evidence set is incomplete")
+    parsed: dict[str, dict[str, object]] = {}
+    for field, data in raw_payloads.items():
+        try:
+            value = json.loads(data)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise Stage2ExperimentError("measured request raw evidence is not JSON") from error
+        if not isinstance(value, dict) or data != canonical_json_bytes(value) + b"\n":
+            raise Stage2ExperimentError("measured request raw evidence is not canonical JSON")
+        if (
+            value.get("schema_version") != "0.3.0"
+            or value.get("evidence_scope") != evidence_scope
+            or value.get("evidence_kind") != field
+            or not isinstance(value.get("content"), dict)
+        ):
+            raise Stage2ExperimentError("measured request raw evidence envelope differs")
+        parsed[field] = value
+    metadata = tuple(
+        (
+            value.get("repetition_index"),
+            value.get("case_id"),
+            value.get("external_request_id"),
+        )
+        for value in parsed.values()
+    )
+    if len(set(metadata)) != 1:
+        raise Stage2ExperimentError("measured request raw evidence identities differ")
+    repetition_index, case_id, external_request_id = metadata[0]
+    if (
+        repetition_index not in {1, 2, 3}
+        or not isinstance(case_id, str)
+        or not isinstance(external_request_id, str)
+    ):
+        raise Stage2ExperimentError("measured request raw evidence identity is invalid")
+
+    def content(field: str) -> dict[str, object]:
+        return cast(dict[str, object], parsed[field]["content"])
+
+    body = content("request_body")
+    request_headers = content("request_headers")
+    response_headers = content("response_headers")
+    raw_response = content("raw_response_body")
+    parsed_events = cast(list[object], content("parsed_sse_events")["token_events"])
+    terminal = content("terminal_boundary")
+    reconciliation = content("token_usage_reconciliation")
+    identity = RequestIdentityAttestation.model_validate_json(
+        canonical_json_bytes(content("server_logs"))
+    )
+    lifecycle = Stage2RequestLifecycle.model_validate_json(
+        canonical_json_bytes(content("lifecycle"))
+    )
+    metrics = Stage2PerRequestMetrics.model_validate_json(
+        canonical_json_bytes(content("server_metrics"))
+    )
+    timing = Stage2TimingRecord.model_validate_json(canonical_json_bytes(terminal["timing"]))
+    token_events = tuple(
+        Stage2TokenEvent.model_validate_json(canonical_json_bytes(item)) for item in parsed_events
+    )
+    usage = Stage2Usage.model_validate_json(canonical_json_bytes(reconciliation["usage"]))
+    client_tpot = MetricAvailability.model_validate_json(
+        canonical_json_bytes(reconciliation["client_generation_tpot"])
+    )
+    observation_itl = MetricAvailability.model_validate_json(
+        canonical_json_bytes(reconciliation["token_observation_itl"])
+    )
+    if (
+        body.get("external_request_id") != external_request_id
+        or request_headers.get("x_request_id") != external_request_id
+        or request_headers.get("request_identity_chain_sha256") != identity.identity_sha256
+        or terminal.get("finish_reason") != reconciliation.get("finish_reason")
+        or reconciliation.get("sent_prompt_token_ids") != body.get("sent_prompt_token_ids")
+    ):
+        raise Stage2ExperimentError(
+            "request identity, terminal, or token raw records contradict one another"
+        )
+    if (
+        raw_response.get("done_terminal") != "[DONE]"
+        or raw_response.get("stream_events") != parsed_events
+        or raw_response.get("usage_terminal")
+        != {
+            "server_per_request_metrics": content("server_metrics"),
+            "usage": reconciliation["usage"],
+        }
+    ):
+        raise Stage2ExperimentError("raw response body does not reconstruct parsed stream records")
+    evidence = Stage2RequestEvidence.model_validate_json(
+        canonical_json_bytes(
+            {
+                "fixture_identity_sha256": body["fixture_identity_sha256"],
+                "request_identity_chain_sha256": request_headers["request_identity_chain_sha256"],
+                "external_request_id": body["external_request_id"],
+                "response_request_id": response_headers["response_request_id"],
+                "serving_item_request_id": response_headers["serving_item_request_id"],
+                "internal_engine_request_id": response_headers["internal_engine_request_id"],
+                "sent_prompt_token_ids": body["sent_prompt_token_ids"],
+                "returned_prompt_token_ids": reconciliation["returned_prompt_token_ids"],
+                "token_events": token_events,
+                "final_output_token_ids": reconciliation["final_output_token_ids"],
+                "finish_reason": reconciliation["finish_reason"],
+                "terminal_event_carried_token_ids": terminal["terminal_event_carried_token_ids"],
+                "usage": usage,
+                "local_prompt_token_count": reconciliation["local_prompt_token_count"],
+                "local_output_token_count": reconciliation["local_output_token_count"],
+                "server_per_request_metrics": metrics,
+                "disagreements": reconciliation["disagreements"],
+                "output_text": reconciliation["output_text"],
+                "output_text_sha256": reconciliation["output_text_sha256"],
+                "timing": timing,
+                "client_generation_tpot": client_tpot,
+                "token_observation_itl": observation_itl,
+                "stream_output_gap_ns": reconciliation["stream_output_gap_ns"],
+            }
+        )
+    )
+    return (
+        repetition_index,
+        case_id,
+        external_request_id,
+        evidence,
+        identity,
+        lifecycle,
+    )
+
+
+def scoped_raw_evidence_bytes(
+    *,
+    evidence_kind: str,
+    evidence_scope: Stage2EvidenceScope,
+    content: object,
+) -> bytes:
+    return (
+        canonical_json_bytes(
+            {
+                "schema_version": "0.3.0",
+                "evidence_scope": evidence_scope,
+                "evidence_kind": evidence_kind,
+                "content": content,
+            }
+        )
+        + b"\n"
+    )
+
+
+def environment_raw_evidence_bytes(
+    environment: LinuxEnvironmentManifest,
+    evidence_scope: Stage2EvidenceScope,
+) -> bytes:
+    return scoped_raw_evidence_bytes(
+        evidence_kind="resource_environment",
+        evidence_scope=evidence_scope,
+        content=environment.model_dump(
+            mode="python",
+            exclude={"environment_evidence_sha256", "identity_sha256"},
+        ),
+    )
+
+
+def nvidia_raw_evidence_bytes(
+    resources: NvidiaT4ResourceAttestation,
+    evidence_scope: Stage2EvidenceScope,
+) -> bytes:
+    return scoped_raw_evidence_bytes(
+        evidence_kind="nvidia_isolation",
+        evidence_scope=evidence_scope,
+        content=resources.model_dump(
+            mode="python",
+            exclude={"isolation_evidence_sha256", "identity_sha256"},
+        ),
+    )
+
+
+def execution_lock_raw_evidence_bytes(
+    execution_lock: RuntimePackageExecutionLockAttestation,
+    evidence_scope: Stage2EvidenceScope,
+) -> tuple[bytes, bytes]:
+    shared = execution_lock.model_dump(
+        mode="python",
+        exclude={
+            "resolver_lock_sha256",
+            "installed_distribution_inventory_sha256",
+            "identity_sha256",
+        },
+    )
+    return (
+        scoped_raw_evidence_bytes(
+            evidence_kind="runtime_resolver_lock",
+            evidence_scope=evidence_scope,
+            content=shared,
+        ),
+        scoped_raw_evidence_bytes(
+            evidence_kind="installed_distribution_inventory",
+            evidence_scope=evidence_scope,
+            content={
+                "installed": execution_lock.installed,
+                "packages": tuple(
+                    {"package": item.package, "version": item.version}
+                    for item in execution_lock.artifacts
+                ),
+            },
+        ),
+    )
+
+
+def snapshot_read_only_raw_evidence_bytes(
+    snapshot: ModelTokenizerSnapshotManifest,
+    evidence_scope: Stage2EvidenceScope,
+) -> bytes:
+    return scoped_raw_evidence_bytes(
+        evidence_kind="snapshot_read_only_verification",
+        evidence_scope=evidence_scope,
+        content=snapshot.read_only_transition.model_dump(
+            mode="python", exclude={"verification_evidence_sha256"}
+        ),
+    )
+
+
+def public_safety_raw_evidence_bytes(
+    public_safety: PublicSafetyAttestation,
+    evidence_scope: Stage2EvidenceScope,
+) -> bytes:
+    return scoped_raw_evidence_bytes(
+        evidence_kind="public_safety_scan",
+        evidence_scope=evidence_scope,
+        content={
+            "finding_count": public_safety.finding_count,
+            "passed": public_safety.passed,
+            "scan_inventory_sha256": public_safety.scan_inventory_sha256,
+        },
+    )
+
+
+def build_cancellation_client_stream_raw_evidence_bytes(
+    *,
+    repetition_index: Literal[1, 2, 3],
+    external_request_id: str,
+    evidence_scope: Stage2EvidenceScope,
+) -> bytes:
+    return scoped_raw_evidence_bytes(
+        evidence_kind="cancellation_client_stream",
+        evidence_scope=evidence_scope,
+        content={
+            "repetition_index": repetition_index,
+            "external_request_id": external_request_id,
+            "transport_closed": True,
+        },
+    )
+
+
+def cancellation_client_stream_raw_evidence_bytes(
+    repetition: Stage2RepetitionAttestation,
+    evidence_scope: Stage2EvidenceScope,
+) -> bytes:
+    return build_cancellation_client_stream_raw_evidence_bytes(
+        repetition_index=repetition.repetition_index,
+        external_request_id=(
+            repetition.runtime_control.cancellation_probe.identity_chain.external_base_id
+        ),
+        evidence_scope=evidence_scope,
+    )
+
+
+def build_cuda_raw_evidence_bytes(
+    *,
+    repetition_index: Literal[1, 2, 3],
+    server_process_identity: str,
+    runtime_control_sha256: str,
+    environment_resource_identity_sha256: str,
+    execution: dict[str, object],
+    evidence_scope: Stage2EvidenceScope,
+    evidence_path: str,
+) -> bytes:
+    return scoped_raw_evidence_bytes(
+        evidence_kind="cuda_runtime_execution",
+        evidence_scope=evidence_scope,
+        content={
+            "evidence_path": evidence_path,
+            "environment_resource_identity_sha256": environment_resource_identity_sha256,
+            "execution": execution,
+            "repetition_index": repetition_index,
+            "runtime_control_sha256": runtime_control_sha256,
+            "server_process_identity": server_process_identity,
+        },
+    )
+
+
+def cuda_raw_evidence_bytes(
+    cuda: Stage2RepetitionCudaAttestation,
+    evidence_scope: Stage2EvidenceScope,
+    evidence_path: str,
+) -> bytes:
+    return build_cuda_raw_evidence_bytes(
+        repetition_index=cuda.repetition_index,
+        server_process_identity=cuda.server_process_identity,
+        runtime_control_sha256=cuda.runtime_control_sha256,
+        environment_resource_identity_sha256=cuda.environment_resource_identity_sha256,
+        execution=cuda.execution.model_dump(
+            mode="python", exclude={"raw_execution_evidence_sha256", "identity_sha256"}
+        ),
+        evidence_scope=evidence_scope,
+        evidence_path=evidence_path,
+    )
+
+
+class Stage2RepetitionCudaAttestation(StrictModel):
+    schema_version: Literal["0.3.0"]
+    repetition_index: Literal[1, 2, 3]
+    server_process_identity: Identifier
+    runtime_control_sha256: Sha256
+    repetition_manifest_sha256: Sha256
+    environment_resource_identity_sha256: Sha256
+    execution: CudaBackedExecutionAttestation
+    raw_evidence_files: tuple[ManifestBoundFile, ...] = Field(min_length=1)
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_cuda(self) -> Self:
+        if self.execution.server_process_identity != self.server_process_identity:
+            raise ValueError("CUDA evidence is not bound to its repetition server process")
+        paths = tuple(item.path for item in self.raw_evidence_files)
+        if len(paths) != len(set(paths)) or len({path.casefold() for path in paths}) != len(paths):
+            raise ValueError("CUDA raw-evidence paths must be unique")
+        if self.execution.raw_execution_evidence_sha256 not in {
+            item.sha256 for item in self.raw_evidence_files
+        }:
+            raise ValueError("CUDA execution raw hash is not bound to a retained evidence file")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("repetition CUDA attestation identity does not reconstruct")
+        return self
+
+
+def _manifest_file_map(manifest: Stage2BundleManifest) -> dict[str, BundleFileEntry]:
+    paths = tuple(entry.path for entry in manifest.files)
+    if len({path.casefold() for path in paths}) != len(paths):
+        raise ValueError("repetition manifest contains a case-collision ambiguity")
+    return {entry.path: entry for entry in manifest.files}
+
+
+def reconstruct_experiment_repetition(raw: dict[str, bytes]) -> dict[str, bytes]:
+    """Derive the committed repetition summary solely from retained raw files."""
+
+    paths = tuple(sorted(raw))
+    if not paths or any(not path.startswith("raw/") for path in paths):
+        raise Stage2ExperimentError("repetition reconstruction requires only retained raw files")
+    request_paths = tuple(path for path in paths if path.startswith("raw/requests/"))
+    request_groups: dict[str, set[str]] = {}
+    for path in request_paths:
+        parts = PurePosixPath(path).parts
+        if len(parts) != 4 or not parts[3].endswith(".json"):
+            raise Stage2ExperimentError("request raw path does not match the fixed layout")
+        request_groups.setdefault(parts[2], set()).add(parts[3].removesuffix(".json"))
+    if len(request_groups) != 16 or any(
+        fields != set(REQUEST_EVIDENCE_FIELDS) for fields in request_groups.values()
+    ):
+        raise Stage2ExperimentError("repetition raw inventory lacks the exact 16-by-10 request set")
+    summary = {
+        "schema_version": "0.3.0",
+        "evidence_kind": "repetition_raw_reconstruction",
+        "raw_file_count": len(paths),
+        "measured_request_count": len(request_groups),
+        "request_raw_file_count": len(request_paths),
+        "raw_inventory_sha256": sha256_identity(
+            {path: hashlib.sha256(raw[path]).hexdigest() for path in paths}
+        ),
+    }
+    return {"derived/repetition-raw-summary.json": canonical_json_bytes(summary) + b"\n"}
+
+
+def _reference_is_in_manifest(
+    reference: ManifestBoundFile,
+    files: dict[str, BundleFileEntry],
+) -> bool:
+    entry = files.get(reference.path)
+    return entry is not None and (entry.sha256, entry.size) == (reference.sha256, reference.size)
+
+
+def _derive_observed_concurrency(
+    requests: tuple[Stage2MeasuredRequestAttestation, ...],
+) -> tuple[int, bool]:
+    events = sorted(
+        (
+            *((request.lifecycle.dispatch_offset_ns, 1) for request in requests),
+            *((request.lifecycle.terminal_offset_ns, -1) for request in requests),
+        ),
+        key=lambda event: (event[0], 0 if event[1] == -1 else 1),
+    )
+    active = 0
+    maximum = 0
+    overlap = False
+    previous_time: int | None = None
+    for timestamp, delta in events:
+        if previous_time is not None and timestamp > previous_time and active >= 2:
+            overlap = True
+        active += delta
+        if active < 0:
+            raise ValueError("measured lifecycle terminal precedes dispatch")
+        maximum = max(maximum, active)
+        previous_time = timestamp
+    if active != 0:
+        raise ValueError("measured lifecycle events do not close")
+    return maximum, overlap
+
+
+class Stage2RepetitionAttestation(StrictModel):
+    schema_version: Literal["0.3.0"]
+    repetition_index: Literal[1, 2, 3]
+    runtime_control: Stage2RuntimeControlEvidence
+    runtime_control_sha256: Sha256
+    server_restart: ServerRestartIdentity
+    repetition_manifest: Stage2BundleManifest
+    repetition_manifest_sha256: Sha256
+    cancellation_result_file: ManifestBoundFile
+    cancellation_client_stream_file: ManifestBoundFile
+    cuda_execution: Stage2RepetitionCudaAttestation
+    measured_requests: tuple[Stage2MeasuredRequestAttestation, ...] = Field(
+        min_length=16, max_length=16
+    )
+    requested_client_concurrency: Literal[2]
+    observed_max_active_concurrency: Literal[2]
+    positive_duration_overlap_observed: Literal[True]
+    metric_availability_summary: Stage2MetricAvailabilitySummary
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_repetition(self) -> Self:
+        manifest = self.repetition_manifest
+        expected_manifest_sha = bundle_manifest_sha256(manifest)
+        if (
+            self.runtime_control.repetition_index != self.repetition_index
+            or self.server_restart.repetition_index != self.repetition_index
+            or manifest.repetition_index != self.repetition_index
+            or self.cuda_execution.repetition_index != self.repetition_index
+        ):
+            raise ValueError("repetition component indexes differ")
+        if self.runtime_control_sha256 != sha256_identity(self.runtime_control):
+            raise ValueError("runtime-control identity does not reconstruct")
+        if self.repetition_manifest_sha256 != expected_manifest_sha:
+            raise ValueError("repetition-manifest canonical byte identity differs")
+        if self.server_restart.output_bundle_identity_sha256 != expected_manifest_sha:
+            raise ValueError("server restart is not bound to its repetition manifest")
+        expected_server = self.server_restart.server_process_identity
+        runtime_server = self.runtime_control.process_records[self.repetition_index + 1]
+        if expected_server != runtime_server.process_identity:
+            raise ValueError("server restart differs from the runtime-control server process")
+        if (
+            self.cuda_execution.server_process_identity != expected_server
+            or self.cuda_execution.runtime_control_sha256 != self.runtime_control_sha256
+            or self.cuda_execution.repetition_manifest_sha256 != expected_manifest_sha
+        ):
+            raise ValueError("CUDA attestation is detached from repetition control or manifest")
+        requests = self.measured_requests
+        if tuple(request.case_id for request in requests) != STAGE2_EXPERIMENT_CASE_IDS:
+            raise ValueError("repetition requires the exact ordered 16-case set")
+        request_ids = tuple(request.external_request_id for request in requests)
+        if len(request_ids) != len(set(request_ids)):
+            raise ValueError("measured external request IDs must be unique")
+        if set(request_ids) != set(self.runtime_control.measured_request_ids):
+            raise ValueError("measured-request attestations and runtime control IDs differ")
+        cancellation_id = self.runtime_control.cancellation_probe.identity_chain.external_base_id
+        all_ids = (
+            *self.runtime_control.stabilization_request_ids,
+            *self.runtime_control.workload_shape_warmup_request_ids,
+            cancellation_id,
+            *request_ids,
+        )
+        if len(all_ids) != len(set(all_ids)):
+            raise ValueError("excluded, cancellation, and measured request IDs must be disjoint")
+        measured_phase = next(
+            phase for phase in self.runtime_control.phases if phase.phase.value == "MEASURED_WINDOW"
+        )
+        for request in requests:
+            if (
+                request.repetition_index != self.repetition_index
+                or request.repetition_manifest_sha256 != expected_manifest_sha
+                or request.lifecycle.measurement_phase_start_ns != measured_phase.started_offset_ns
+                or request.lifecycle.measurement_phase_end_ns != measured_phase.ended_offset_ns
+                or request.lifecycle.measurement_phase_identity_sha256
+                != measured_phase.evidence_identity_sha256
+            ):
+                raise ValueError("measured request is detached from repetition or measured phase")
+        maximum, overlap = _derive_observed_concurrency(requests)
+        if maximum != 2 or not overlap:
+            raise ValueError("lifecycle evidence must derive exact positive concurrency two")
+        if self.metric_availability_summary != derive_metric_availability_summary(requests):
+            raise ValueError("repetition metric summary does not reconstruct")
+        files = _manifest_file_map(manifest)
+        references = [
+            self.cancellation_result_file,
+            self.cancellation_client_stream_file,
+            *self.cuda_execution.raw_evidence_files,
+            *(reference for request in requests for reference in request.raw_evidence.files()),
+        ]
+        phase_references = tuple(
+            ManifestBoundFile(
+                path=phase.evidence_references[0],
+                sha256=phase.evidence_identity_sha256,
+                size=files[phase.evidence_references[0]].size,
+            )
+            for phase in self.runtime_control.phases
+            if len(phase.evidence_references) == 1 and phase.evidence_references[0] in files
+        )
+        references.extend(phase_references)
+        if len(phase_references) != len(self.runtime_control.phases):
+            raise ValueError("every runtime phase requires one manifest-bound evidence file")
+        reference_paths = tuple(reference.path for reference in references)
+        if len(reference_paths) != len(set(reference_paths)):
+            raise ValueError("durable repetition evidence references a path more than once")
+        if any(not _reference_is_in_manifest(reference, files) for reference in references):
+            raise ValueError("durable evidence reference is absent from the repetition manifest")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("repetition attestation identity does not reconstruct")
+        return self
+
+
+class Stage2WorkloadCase(StrictModel):
+    case_id: Identifier
+    sent_prompt_token_ids: tuple[NonNegativeInt, ...] = Field(min_length=64, max_length=64)
+    sent_prompt_token_ids_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_prompt(self) -> Self:
+        if self.sent_prompt_token_ids_sha256 != sha256_identity(self.sent_prompt_token_ids):
+            raise ValueError("workload prompt-token identity does not reconstruct")
+        return self
+
+
+class Stage2ExperimentWorkload(StrictModel):
+    schema_version: Literal["0.3.0"]
+    workload_name: Literal["stage2-fixed-16-case-v1"]
+    cases: tuple[Stage2WorkloadCase, ...] = Field(min_length=16, max_length=16)
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_workload(self) -> Self:
+        if tuple(case.case_id for case in self.cases) != STAGE2_EXPERIMENT_CASE_IDS:
+            raise ValueError("workload requires the exact ordered versioned 16-case set")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("workload identity does not reconstruct")
+        return self
+
+
+class Stage2RestartSemanticAttestation(StrictModel):
+    repetition_index: Literal[1, 2, 3]
+    case_id: Identifier
+    measured_request_attestation_sha256: Sha256
+    sent_prompt_token_ids: tuple[int, ...] = Field(min_length=64, max_length=64)
+    returned_prompt_token_ids: tuple[int, ...] = Field(min_length=64, max_length=64)
+    output_token_ids: tuple[int, ...] = Field(min_length=32, max_length=32)
+    finish_reason: Literal["length"]
+    prompt_tokens: Literal[64]
+    completion_tokens: Literal[32]
+    total_tokens: Literal[96]
+    output_text_sha256: Sha256
+    repetition_manifest_sha256: Sha256
+
+    def as_restart_record(self) -> RestartSemanticRecord:
+        return RestartSemanticRecord(
+            repetition_index=self.repetition_index,
+            bundle_manifest_sha256=self.repetition_manifest_sha256,
+            case_id=self.case_id,
+            sent_prompt_token_ids=self.sent_prompt_token_ids,
+            returned_prompt_token_ids=self.returned_prompt_token_ids,
+            output_token_ids=self.output_token_ids,
+            finish_reason=self.finish_reason,
+            prompt_tokens=self.prompt_tokens,
+            completion_tokens=self.completion_tokens,
+            total_tokens=self.total_tokens,
+            output_text_sha256=self.output_text_sha256,
+            replacement_run=False,
+        )
+
+
+class Stage2CrossRestartComparison(StrictModel):
+    schema_version: Literal["0.3.0"]
+    case_id: Identifier
+    semantic_records: tuple[
+        Stage2RestartSemanticAttestation,
+        Stage2RestartSemanticAttestation,
+        Stage2RestartSemanticAttestation,
+    ]
+    comparison: RestartComparison
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_comparison(self) -> Self:
+        if self.case_id not in STAGE2_EXPERIMENT_CASE_IDS:
+            raise ValueError("comparison case ID is outside the declared workload")
+        if tuple(record.repetition_index for record in self.semantic_records) != (1, 2, 3):
+            raise ValueError("comparison requires exactly one record from each repetition")
+        if any(record.case_id != self.case_id for record in self.semantic_records):
+            raise ValueError("comparison record case IDs differ")
+        reconstructed = compare_three_restarts(
+            tuple(record.as_restart_record() for record in self.semantic_records)
+        )
+        if self.comparison != reconstructed:
+            raise ValueError("cross-restart comparison was not derived from semantic records")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("cross-restart comparison identity does not reconstruct")
+        return self
+
+
+class Stage2AggregateValidationResult(StrictModel):
+    state: Literal[
+        BundleState.COMMITTED,
+        AggregateComparisonState.INVALID_SEMANTIC_NONREPRODUCTION,
+    ]
+    aggregate_validator: Literal["validate_aggregate_commit"]
+    repetition_count: Literal[3]
+    measured_request_count: Literal[48]
+    comparison_count: Literal[16]
+    invalid_case_ids: tuple[Identifier, ...]
+    failure_reason: Literal["INVALID_SEMANTIC_NONREPRODUCTION"] | None
+    validated_input_sha256: Sha256
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        invalid = self.state is AggregateComparisonState.INVALID_SEMANTIC_NONREPRODUCTION
+        if invalid != bool(self.invalid_case_ids) or invalid != (self.failure_reason is not None):
+            raise ValueError("aggregate terminal state does not match retained semantic failures")
+        if self.invalid_case_ids != tuple(sorted(set(self.invalid_case_ids))):
+            raise ValueError("invalid semantic case IDs must be sorted and unique")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("aggregate validation-result identity does not reconstruct")
+        return self
+
+
+def derive_aggregate_validation_result(
+    repetitions: tuple[
+        Stage2RepetitionAttestation,
+        Stage2RepetitionAttestation,
+        Stage2RepetitionAttestation,
+    ],
+    comparisons: tuple[Stage2CrossRestartComparison, ...],
+) -> Stage2AggregateValidationResult:
+    manifests = tuple(repetition.repetition_manifest for repetition in repetitions)
+    case_records = tuple(
+        tuple(record.as_restart_record() for record in comparison.semantic_records)
+        for comparison in comparisons
+    )
+    comparison_records = tuple(comparison.comparison for comparison in comparisons)
+    invalid_case_ids = tuple(
+        comparison.case_id
+        for comparison in comparison_records
+        if comparison.state is AggregateComparisonState.INVALID_SEMANTIC_NONREPRODUCTION
+    )
+    if invalid_case_ids:
+        try:
+            validate_aggregate_commit(
+                manifests,
+                case_records,
+                comparison_records,
+                expected_case_ids=STAGE2_EXPERIMENT_CASE_IDS,
+            )
+        except Stage2ControlError as error:
+            if str(error) != "aggregate commit requires passing semantic comparison":
+                raise
+        else:
+            raise ValueError("semantic mismatch unexpectedly passed aggregate commit validation")
+        state: BundleState | AggregateComparisonState = (
+            AggregateComparisonState.INVALID_SEMANTIC_NONREPRODUCTION
+        )
+    else:
+        state = validate_aggregate_commit(
+            manifests,
+            case_records,
+            comparison_records,
+            expected_case_ids=STAGE2_EXPERIMENT_CASE_IDS,
+        )
+    values: dict[str, object] = {
+        "state": state,
+        "aggregate_validator": "validate_aggregate_commit",
+        "repetition_count": 3,
+        "measured_request_count": 48,
+        "comparison_count": 16,
+        "invalid_case_ids": invalid_case_ids,
+        "failure_reason": ("INVALID_SEMANTIC_NONREPRODUCTION" if invalid_case_ids else None),
+        "validated_input_sha256": sha256_identity(
+            {
+                "case_records": case_records,
+                "comparisons": comparison_records,
+                "expected_case_ids": STAGE2_EXPERIMENT_CASE_IDS,
+                "repetition_manifests": manifests,
+            }
+        ),
+    }
+    values["identity_sha256"] = sha256_identity(values)
+    return Stage2AggregateValidationResult.model_validate(values)
+
+
+class Stage2ExperimentClassification(StrEnum):
+    SYNTHETIC_PROTOCOL_SHAPE_ONLY = "SYNTHETIC_PROTOCOL_SHAPE_ONLY"
+    FUTURE_REAL_RUNTIME = "FUTURE_REAL_RUNTIME"
+
+
+class Stage2ExperimentSummary(StrictModel):
+    repetition_count: Literal[3]
+    measured_request_count: Literal[48]
+    cancellation_probe_count: Literal[3]
+    cuda_attestation_count: Literal[3]
+    semantic_comparison_count: Literal[16]
+    requested_client_concurrency: Literal[2]
+    observed_max_active_concurrency_per_repetition: tuple[Literal[2], Literal[2], Literal[2]]
+    fixture_or_protocol_shape_only: bool
+    runtime_claim_advancement_allowed: Literal[False]
+    performance_claim_advancement_allowed: Literal[False]
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("experiment summary identity does not reconstruct")
+        return self
+
+
+class Stage2ExperimentAttestation(StrictModel):
+    schema_version: Literal["0.3.0"]
+    measurement_protocol_version: Literal["0.3.0"]
+    experiment_id: Identifier
+    evidence_scope: Stage2EvidenceScope
+    classification: Stage2ExperimentClassification
+    workload: Stage2ExperimentWorkload
+    launch_spec: Stage2LaunchSpec
+    snapshot_manifest: ModelTokenizerSnapshotManifest
+    execution_lock: RuntimePackageExecutionLockAttestation
+    linux_environment: LinuxEnvironmentManifest
+    nvidia_resources: NvidiaT4ResourceAttestation
+    public_safety: PublicSafetyAttestation
+    repetitions: tuple[
+        Stage2RepetitionAttestation,
+        Stage2RepetitionAttestation,
+        Stage2RepetitionAttestation,
+    ]
+    comparisons: tuple[Stage2CrossRestartComparison, ...] = Field(min_length=16, max_length=16)
+    experiment_metric_availability: Stage2MetricAvailabilitySummary
+    aggregate_validation_result: Stage2AggregateValidationResult
+    summary: Stage2ExperimentSummary
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_experiment(self) -> Self:
+        fixture_scope = self.evidence_scope is Stage2EvidenceScope.TEST_FIXTURE_ONLY
+        if fixture_scope != (
+            self.classification is Stage2ExperimentClassification.SYNTHETIC_PROTOCOL_SHAPE_ONLY
+        ):
+            raise ValueError("fixture scope can produce only synthetic protocol-shape evidence")
+        if tuple(repetition.repetition_index for repetition in self.repetitions) != (1, 2, 3):
+            raise ValueError("experiment requires exactly three ordered repetitions")
+        server_processes = tuple(
+            repetition.server_restart.server_process_identity for repetition in self.repetitions
+        )
+        if len(set(server_processes)) != 3:
+            raise ValueError("experiment requires three distinct server restart processes")
+        if (
+            tuple(comparison.case_id for comparison in self.comparisons)
+            != STAGE2_EXPERIMENT_CASE_IDS
+        ):
+            raise ValueError("experiment requires exactly 16 ordered semantic comparisons")
+        all_requests = tuple(
+            request for repetition in self.repetitions for request in repetition.measured_requests
+        )
+        if len(all_requests) != 48:
+            raise ValueError("experiment requires exactly 48 measured-request attestations")
+        all_external_ids = tuple(
+            request_id
+            for repetition in self.repetitions
+            for request_id in (
+                *repetition.runtime_control.stabilization_request_ids,
+                *repetition.runtime_control.workload_shape_warmup_request_ids,
+                repetition.runtime_control.cancellation_probe.identity_chain.external_base_id,
+                *(request.external_request_id for request in repetition.measured_requests),
+            )
+        )
+        if len(all_external_ids) != len(set(all_external_ids)):
+            raise ValueError("all external request IDs must be globally unique across restarts")
+        workload_by_case = {case.case_id: case for case in self.workload.cases}
+        request_by_key = {
+            (request.repetition_index, request.case_id): request for request in all_requests
+        }
+        for request in all_requests:
+            if (
+                request.request_evidence.sent_prompt_token_ids
+                != workload_by_case[request.case_id].sent_prompt_token_ids
+            ):
+                raise ValueError("measured request prompt differs from shared workload definition")
+        for comparison in self.comparisons:
+            for record in comparison.semantic_records:
+                request = request_by_key[(record.repetition_index, record.case_id)]
+                evidence = request.request_evidence
+                if (
+                    record.measured_request_attestation_sha256 != request.attestation_sha256
+                    or record.repetition_manifest_sha256 != request.repetition_manifest_sha256
+                    or record.sent_prompt_token_ids != evidence.sent_prompt_token_ids
+                    or record.returned_prompt_token_ids != evidence.returned_prompt_token_ids
+                    or record.output_token_ids != evidence.final_output_token_ids
+                    or record.finish_reason != evidence.finish_reason
+                    or record.prompt_tokens != evidence.usage.prompt_tokens
+                    or record.completion_tokens != evidence.usage.completion_tokens
+                    or record.total_tokens != evidence.usage.total_tokens
+                    or record.output_text_sha256 != evidence.output_text_sha256
+                ):
+                    raise ValueError("semantic comparison is detached from measured request")
+        environment_resource_identity = sha256_identity(
+            {"linux": self.linux_environment, "nvidia": self.nvidia_resources}
+        )
+        if any(
+            repetition.cuda_execution.environment_resource_identity_sha256
+            != environment_resource_identity
+            for repetition in self.repetitions
+        ):
+            raise ValueError("CUDA attestations do not share the declared environment identity")
+        launch_identity = sha256_identity(self.launch_spec)
+        if any(
+            repetition.server_restart.launch_spec_identity_sha256 != launch_identity
+            for repetition in self.repetitions
+        ):
+            raise ValueError("server restarts are not bound to the exact launch specification")
+        if (
+            self.launch_spec.model_path != self.snapshot_manifest.snapshot_root_path
+            or self.launch_spec.tokenizer_path != self.snapshot_manifest.snapshot_root_path
+        ):
+            raise ValueError("launch paths are not bound to the verified snapshot root")
+        process_records = self.repetitions[0].runtime_control.process_records
+        if any(
+            repetition.runtime_control.process_records != process_records
+            for repetition in self.repetitions[1:]
+        ):
+            raise ValueError("repetition controls disagree on the retained process sequence")
+        if (
+            self.snapshot_manifest.download_process != process_records[0]
+            or self.snapshot_manifest.offline_tokenizer_verification_process != process_records[1]
+            or server_processes
+            != tuple(process.process_identity for process in process_records[2:])
+        ):
+            raise ValueError("snapshot and restart identities differ from the process sequence")
+        launch_environment = self.launch_spec.environment
+        expected_runtime_environment = {
+            **OFFLINE_RUNTIME_ENVIRONMENT,
+            "HF_HOME": launch_environment.hf_home,
+            "VLLM_CONFIG_ROOT": launch_environment.vllm_config_root,
+        }
+        if (
+            any(
+                process.environment != expected_runtime_environment
+                for process in process_records[2:]
+            )
+            or launch_environment.absent_variables != LAUNCH_ABSENT_ENVIRONMENT_VARIABLES
+        ):
+            raise ValueError("runtime processes differ from the exact launch environment")
+        if self.experiment_metric_availability != derive_metric_availability_summary(all_requests):
+            raise ValueError("experiment metric-availability summary does not reconstruct")
+        expected_aggregate = derive_aggregate_validation_result(
+            self.repetitions,
+            self.comparisons,
+        )
+        if self.aggregate_validation_result != expected_aggregate:
+            raise ValueError("aggregate validation path was omitted, bypassed, or altered")
+        expected_summary_values: dict[str, object] = {
+            "repetition_count": 3,
+            "measured_request_count": 48,
+            "cancellation_probe_count": 3,
+            "cuda_attestation_count": 3,
+            "semantic_comparison_count": 16,
+            "requested_client_concurrency": 2,
+            "observed_max_active_concurrency_per_repetition": (2, 2, 2),
+            "fixture_or_protocol_shape_only": fixture_scope,
+            "runtime_claim_advancement_allowed": False,
+            "performance_claim_advancement_allowed": False,
+        }
+        expected_summary_values["identity_sha256"] = sha256_identity(expected_summary_values)
+        if self.summary != Stage2ExperimentSummary.model_validate(expected_summary_values):
+            raise ValueError("experiment summary does not reconstruct")
+        if fixture_scope:
+            if any(
+                request.request_evidence.fixture_identity_sha256 is None for request in all_requests
+            ):
+                raise ValueError("synthetic protocol-shape evidence requires fixture identities")
+        else:
+            if _contains_fixture_value(self):
+                raise ValueError("synthetic or fixture evidence cannot receive a live boundary")
+            chains = (
+                *(request.request_identity.identity_chain for request in all_requests),
+                *(
+                    repetition.runtime_control.cancellation_probe.identity_chain
+                    for repetition in self.repetitions
+                ),
+            )
+            records = tuple(
+                record
+                for chain in chains
+                for record in (
+                    chain.request_received_log,
+                    chain.request_add_log,
+                    chain.external_abort_log,
+                    chain.internal_abort_log,
+                )
+                if record is not None
+            )
+            if any(
+                request.request_evidence.fixture_identity_sha256 is not None
+                or "fixture" in request.external_request_id.casefold()
+                or "<fixture-" in request.request_evidence.output_text.casefold()
+                for request in all_requests
+            ) or any(
+                "fixture" in record.source_stream_id.casefold()
+                or "TEST_FIXTURE_ONLY" in record.raw_record
+                for record in records
+            ):
+                raise ValueError("fixture evidence cannot receive a future real-runtime boundary")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("final experiment attestation identity does not reconstruct")
+        return self
+
+
+class AggregateRootState(StrEnum):
+    INCOMPLETE = "INCOMPLETE"
+    INVALID = "INVALID"
+    COMMITTED = "COMMITTED"
+
+
+class Stage2AggregateExperimentManifest(StrictModel):
+    schema_version: Literal["0.3.0"]
+    measurement_protocol_version: Literal["0.3.0"]
+    experiment_id: Identifier
+    state: AggregateRootState
+    failure_reason: Identifier | None
+    evidence_scope: Stage2EvidenceScope
+    created_at_utc: AwareDatetime
+    files: tuple[BundleFileEntry, ...] = Field(min_length=1)
+    resource_environment_manifest: ManifestBoundFile
+    resource_environment_raw_evidence: ManifestBoundFile
+    nvidia_isolation_evidence: ManifestBoundFile
+    nvidia_isolation_raw_evidence: ManifestBoundFile
+    execution_lock_snapshot: ManifestBoundFile
+    runtime_resolver_lock_evidence: ManifestBoundFile
+    runtime_installed_distribution_inventory: ManifestBoundFile
+    reviewed_execution_lock: ManifestBoundFile
+    model_tokenizer_snapshot_manifest: ManifestBoundFile
+    snapshot_read_only_verification_evidence: ManifestBoundFile
+    launch_specification: ManifestBoundFile
+    public_safety_result: ManifestBoundFile
+    public_safety_raw_scan_evidence: ManifestBoundFile
+    shared_workload_definition: ManifestBoundFile
+    repetition_manifest_files: tuple[
+        ManifestBoundFile,
+        ManifestBoundFile,
+        ManifestBoundFile,
+    ]
+    cuda_execution_attestation_files: tuple[
+        ManifestBoundFile,
+        ManifestBoundFile,
+        ManifestBoundFile,
+    ]
+    cancellation_result_files: tuple[
+        ManifestBoundFile,
+        ManifestBoundFile,
+        ManifestBoundFile,
+    ]
+    semantic_comparison_files: tuple[ManifestBoundFile, ...] = Field(min_length=16, max_length=16)
+    metric_availability_summary: ManifestBoundFile
+    experiment_summary: ManifestBoundFile
+    aggregate_validation_result: ManifestBoundFile
+    final_attestation: ManifestBoundFile
+
+    @model_validator(mode="after")
+    def validate_root(self) -> Self:
+        if self.created_at_utc.utcoffset() != timedelta(0):
+            raise ValueError("aggregate manifest timestamp must use UTC")
+        paths = tuple(entry.path for entry in self.files)
+        if (
+            paths != tuple(sorted(paths))
+            or len(paths) != len(set(paths))
+            or len({path.casefold() for path in paths}) != len(paths)
+        ):
+            raise ValueError("aggregate inventory must be sorted, unique, and collision-free")
+        if AGGREGATE_MANIFEST_PATH in paths:
+            raise ValueError("aggregate manifest cannot inventory itself")
+        if self.state in {AggregateRootState.COMMITTED, AggregateRootState.INVALID}:
+            if self.state is AggregateRootState.COMMITTED and self.failure_reason is not None:
+                raise ValueError("committed aggregate root cannot retain a failure reason")
+            if self.state is AggregateRootState.INVALID and self.failure_reason is None:
+                raise ValueError("invalid aggregate root requires a failure reason")
+            expected_paths = (
+                "shared/resource-environment-manifest.json",
+                "shared/raw/resource-environment-evidence.json",
+                "shared/nvidia-isolation-evidence.json",
+                "shared/raw/nvidia-isolation-evidence.json",
+                "shared/execution-lock-snapshot.json",
+                "shared/raw/runtime-resolver-lock.json",
+                "shared/raw/installed-distribution-inventory.json",
+                "shared/raw/reviewed-stage2-execution-lock.json",
+                "shared/model-tokenizer-snapshot-manifest.json",
+                "shared/raw/snapshot-read-only-verification.json",
+                "shared/launch-specification.json",
+                "shared/public-safety-result.json",
+                "shared/raw/public-safety-scan.json",
+                "shared/workload-definition.json",
+                *(f"repetition-{index:02d}/evidence-manifest.json" for index in (1, 2, 3)),
+                *(f"attestations/cuda-repetition-{index:02d}.json" for index in (1, 2, 3)),
+                *(f"repetition-{index:02d}/cancellation-result.json" for index in (1, 2, 3)),
+                *(f"comparisons/{case_id}.json" for case_id in STAGE2_EXPERIMENT_CASE_IDS),
+                "derived/metric-availability-summary.json",
+                "derived/experiment-summary.json",
+                "derived/aggregate-validation-result.json",
+                "derived/final-attestation.json",
+            )
+            references = (
+                self.resource_environment_manifest,
+                self.resource_environment_raw_evidence,
+                self.nvidia_isolation_evidence,
+                self.nvidia_isolation_raw_evidence,
+                self.execution_lock_snapshot,
+                self.runtime_resolver_lock_evidence,
+                self.runtime_installed_distribution_inventory,
+                self.reviewed_execution_lock,
+                self.model_tokenizer_snapshot_manifest,
+                self.snapshot_read_only_verification_evidence,
+                self.launch_specification,
+                self.public_safety_result,
+                self.public_safety_raw_scan_evidence,
+                self.shared_workload_definition,
+                *self.repetition_manifest_files,
+                *self.cuda_execution_attestation_files,
+                *self.cancellation_result_files,
+                *self.semantic_comparison_files,
+                self.metric_availability_summary,
+                self.experiment_summary,
+                self.aggregate_validation_result,
+                self.final_attestation,
+            )
+            if tuple(reference.path for reference in references) != expected_paths:
+                raise ValueError("aggregate root omits or substitutes a required durable file")
+            file_map = {entry.path: entry for entry in self.files}
+            if any(
+                reference.path not in file_map
+                or (reference.sha256, reference.size)
+                != (file_map[reference.path].sha256, file_map[reference.path].size)
+                for reference in references
+            ):
+                raise ValueError("aggregate root reference is not bound to its file inventory")
+        elif self.failure_reason is None:
+            raise ValueError("incomplete or invalid aggregate root requires an explicit reason")
+        return self
+
+
+class Stage2ReconstructedExperiment(StrictModel):
+    attestation: Stage2ExperimentAttestation
+    aggregate_manifest: Stage2AggregateExperimentManifest
+    aggregate_manifest_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_boundary(self) -> Self:
+        result_state = self.attestation.aggregate_validation_result.state
+        committed = result_state is BundleState.COMMITTED
+        if committed != (self.aggregate_manifest.state is AggregateRootState.COMMITTED):
+            raise ValueError(
+                "aggregate root state differs from the reconstructed validation result"
+            )
+        if not committed and (
+            self.aggregate_manifest.state is not AggregateRootState.INVALID
+            or self.aggregate_manifest.failure_reason != "INVALID_SEMANTIC_NONREPRODUCTION"
+        ):
+            raise ValueError("semantic nonreproduction requires a durable invalid aggregate root")
+        if (
+            self.aggregate_manifest.experiment_id != self.attestation.experiment_id
+            or self.aggregate_manifest.evidence_scope is not self.attestation.evidence_scope
+        ):
+            raise ValueError("aggregate root and final attestation identities differ")
+        expected = hashlib.sha256(canonical_json_bytes(self.aggregate_manifest) + b"\n").hexdigest()
+        if self.aggregate_manifest_sha256 != expected:
+            raise ValueError("aggregate manifest canonical byte identity differs")
+        return self
+
+
+def _path_has_symlink_component(root: Path, relative: PurePosixPath) -> bool:
+    current = root
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            return True
+    return False
+
+
+def _validate_file(root: Path, entry: BundleFileEntry | ManifestBoundFile) -> bytes:
+    relative = _safe_relative_path(entry.path)
+    if _path_has_symlink_component(root, relative):
+        raise Stage2ExperimentError("aggregate evidence cannot contain symlinks")
+    path = root.joinpath(*relative.parts)
+    if not path.is_file() or path.is_symlink():
+        raise Stage2ExperimentError("aggregate evidence reference is not a regular file")
+    data = path.read_bytes()
+    if len(data) != entry.size or hashlib.sha256(data).hexdigest() != entry.sha256:
+        raise Stage2ExperimentError("aggregate evidence file size or SHA-256 differs")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise Stage2ExperimentError("aggregate evidence must be public-safe UTF-8 text") from error
+    if any(pattern.search(text) for pattern in _AGGREGATE_SENSITIVE_PATTERNS):
+        raise Stage2ExperimentError("aggregate evidence contains prohibited private material")
+    return data
+
+
+def _validate_aggregate_inventory(
+    root: Path,
+    manifest: Stage2AggregateExperimentManifest,
+) -> dict[str, bytes]:
+    if not root.is_dir() or root.is_symlink():
+        raise Stage2ExperimentError("aggregate directory is missing or unsafe")
+    all_paths = tuple(root.rglob("*"))
+    if any(path.is_symlink() for path in all_paths):
+        raise Stage2ExperimentError("aggregate directory cannot contain symlinks")
+    actual_files = tuple(
+        sorted(path.relative_to(root).as_posix() for path in all_paths if path.is_file())
+    )
+    expected_files = (*tuple(entry.path for entry in manifest.files), AGGREGATE_MANIFEST_PATH)
+    if actual_files != tuple(sorted(expected_files)):
+        raise Stage2ExperimentError("aggregate file inventory is incomplete or unexpected")
+    if len({path.casefold() for path in actual_files}) != len(actual_files):
+        raise Stage2ExperimentError("aggregate directory contains a case-collision ambiguity")
+    files = {entry.path: _validate_file(root, entry) for entry in manifest.files}
+    if manifest.evidence_scope is Stage2EvidenceScope.FUTURE_REAL_RUNTIME and any(
+        _raw_payload_contains_fixture_value(data) for data in files.values()
+    ):
+        raise Stage2ExperimentError("fixture-marked raw evidence cannot receive live scope")
+    return files
+
+
+def _validate_repetition_bundle_directory(
+    root: Path,
+    repetition_index: int,
+    manifest: Stage2BundleManifest,
+) -> None:
+    directory = root / f"repetition-{repetition_index:02d}"
+    if not directory.is_dir() or directory.is_symlink():
+        raise Stage2ExperimentError("repetition bundle directory is missing or unsafe")
+    paths = tuple(directory.rglob("*"))
+    if any(path.is_symlink() for path in paths):
+        raise Stage2ExperimentError("repetition bundle cannot contain symlinks")
+    actual = tuple(
+        sorted(path.relative_to(directory).as_posix() for path in paths if path.is_file())
+    )
+    expected = tuple(
+        sorted((*tuple(entry.path for entry in manifest.files), "evidence-manifest.json"))
+    )
+    if actual != expected:
+        raise Stage2ExperimentError("repetition manifest inventory is incomplete or unexpected")
+    manifest_path = directory / "evidence-manifest.json"
+    manifest_mtime = manifest_path.stat().st_mtime_ns
+    for entry in manifest.files:
+        _validate_file(directory, entry)
+        if (directory / entry.path).stat().st_mtime_ns >= manifest_mtime:
+            raise Stage2ExperimentError("repetition manifest was not written strictly last")
+    try:
+        validate_committed_bundle(directory, reconstruct_experiment_repetition)
+    except Stage2BundleError as error:
+        raise Stage2ExperimentError(
+            "repetition manifest does not satisfy committed raw reconstruction"
+        ) from error
+
+
+def write_aggregate_manifest_last(
+    root: Path,
+    manifest: Stage2AggregateExperimentManifest,
+) -> Path:
+    if manifest.state is AggregateRootState.INCOMPLETE:
+        raise Stage2ExperimentError("an incomplete aggregate manifest cannot be finalized")
+    if not root.is_dir() or root.is_symlink():
+        raise Stage2ExperimentError("aggregate directory is missing or unsafe")
+    manifest_path = root / AGGREGATE_MANIFEST_PATH
+    if manifest_path.exists() or manifest_path.is_symlink():
+        raise Stage2ExperimentError("aggregate manifest already exists")
+    all_paths = tuple(root.rglob("*"))
+    if any(path.is_symlink() for path in all_paths):
+        raise Stage2ExperimentError("aggregate directory cannot contain symlinks")
+    actual = tuple(
+        sorted(path.relative_to(root).as_posix() for path in all_paths if path.is_file())
+    )
+    expected = tuple(entry.path for entry in manifest.files)
+    if actual != expected:
+        raise Stage2ExperimentError("aggregate inventory differs before manifest-last commit")
+    files = {entry.path: _validate_file(root, entry) for entry in manifest.files}
+    if manifest.evidence_scope is Stage2EvidenceScope.FUTURE_REAL_RUNTIME and any(
+        _raw_payload_contains_fixture_value(payload) for payload in files.values()
+    ):
+        raise Stage2ExperimentError("fixture-marked raw evidence cannot receive live scope")
+    attestation = _validate_terminal_graph(root, manifest, files)
+    data = canonical_json_bytes(manifest) + b"\n"
+    Stage2ReconstructedExperiment(
+        attestation=attestation,
+        aggregate_manifest=manifest,
+        aggregate_manifest_sha256=hashlib.sha256(data).hexdigest(),
+    )
+    temporary = root / f".{AGGREGATE_MANIFEST_PATH}.tmp-{os.getpid()}"
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(manifest_path)
+        descriptor = os.open(root, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return manifest_path
+
+
+def _parse_model[ModelT: StrictModel](
+    data: bytes,
+    model: type[ModelT],
+    *,
+    label: str,
+) -> ModelT:
+    try:
+        parsed = model.model_validate_json(data)
+    except ValueError as error:
+        raise Stage2ExperimentError(f"{label} is invalid") from error
+    if data != canonical_json_bytes(parsed) + b"\n":
+        raise Stage2ExperimentError(f"{label} is not exact canonical JSON bytes")
+    return parsed
+
+
+def _require_exact_raw(actual: bytes, expected: bytes, *, label: str) -> None:
+    if actual != expected:
+        raise Stage2ExperimentError(f"{label} does not reconstruct from retained raw evidence")
+
+
+def _validate_terminal_graph(
+    root: Path,
+    manifest: Stage2AggregateExperimentManifest,
+    files: dict[str, bytes],
+) -> Stage2ExperimentAttestation:
+    attestation = _parse_model(
+        files[manifest.final_attestation.path],
+        Stage2ExperimentAttestation,
+        label="final experiment attestation",
+    )
+    if (
+        manifest.experiment_id != attestation.experiment_id
+        or manifest.evidence_scope is not attestation.evidence_scope
+    ):
+        raise Stage2ExperimentError("aggregate root differs from the final attestation boundary")
+    if (
+        _parse_model(
+            files[manifest.resource_environment_manifest.path],
+            LinuxEnvironmentManifest,
+            label="resource/environment manifest",
+        )
+        != attestation.linux_environment
+    ):
+        raise Stage2ExperimentError("resource/environment manifest differs from final attestation")
+    if (
+        manifest.resource_environment_raw_evidence.sha256
+        != attestation.linux_environment.environment_evidence_sha256
+    ):
+        raise Stage2ExperimentError("environment raw hash has no matching aggregate file")
+    _require_exact_raw(
+        files[manifest.resource_environment_raw_evidence.path],
+        environment_raw_evidence_bytes(attestation.linux_environment, attestation.evidence_scope),
+        label="resource/environment evidence",
+    )
+    if (
+        _parse_model(
+            files[manifest.nvidia_isolation_evidence.path],
+            NvidiaT4ResourceAttestation,
+            label="NVIDIA isolation evidence",
+        )
+        != attestation.nvidia_resources
+    ):
+        raise Stage2ExperimentError("NVIDIA isolation evidence differs from final attestation")
+    if (
+        manifest.nvidia_isolation_raw_evidence.sha256
+        != attestation.nvidia_resources.isolation_evidence_sha256
+    ):
+        raise Stage2ExperimentError("hardware raw hash has no matching aggregate file")
+    _require_exact_raw(
+        files[manifest.nvidia_isolation_raw_evidence.path],
+        nvidia_raw_evidence_bytes(attestation.nvidia_resources, attestation.evidence_scope),
+        label="NVIDIA isolation evidence",
+    )
+    if (
+        manifest.public_safety_raw_scan_evidence.sha256
+        != attestation.public_safety.raw_scan_evidence_sha256
+    ):
+        raise Stage2ExperimentError("public-safety raw hash has no matching aggregate file")
+    shared_models: tuple[tuple[ManifestBoundFile, type[StrictModel], StrictModel, str], ...] = (
+        (
+            manifest.execution_lock_snapshot,
+            RuntimePackageExecutionLockAttestation,
+            attestation.execution_lock,
+            "execution-lock snapshot",
+        ),
+        (
+            manifest.model_tokenizer_snapshot_manifest,
+            ModelTokenizerSnapshotManifest,
+            attestation.snapshot_manifest,
+            "model/tokenizer snapshot manifest",
+        ),
+        (
+            manifest.launch_specification,
+            Stage2LaunchSpec,
+            attestation.launch_spec,
+            "launch specification",
+        ),
+        (
+            manifest.public_safety_result,
+            PublicSafetyAttestation,
+            attestation.public_safety,
+            "public-safety result",
+        ),
+        (
+            manifest.shared_workload_definition,
+            Stage2ExperimentWorkload,
+            attestation.workload,
+            "shared workload definition",
+        ),
+        (
+            manifest.metric_availability_summary,
+            Stage2MetricAvailabilitySummary,
+            attestation.experiment_metric_availability,
+            "metric-availability summary",
+        ),
+        (
+            manifest.experiment_summary,
+            Stage2ExperimentSummary,
+            attestation.summary,
+            "experiment summary",
+        ),
+        (
+            manifest.aggregate_validation_result,
+            Stage2AggregateValidationResult,
+            attestation.aggregate_validation_result,
+            "aggregate validation result",
+        ),
+    )
+    for reference, model, expected, label in shared_models:
+        if _parse_model(files[reference.path], model, label=label) != expected:
+            raise Stage2ExperimentError(f"{label} differs from final attestation")
+    resolver_raw, installed_raw = execution_lock_raw_evidence_bytes(
+        attestation.execution_lock, attestation.evidence_scope
+    )
+    runtime_raw = (
+        (
+            manifest.runtime_resolver_lock_evidence,
+            attestation.execution_lock.resolver_lock_sha256,
+            resolver_raw,
+            "runtime resolver lock",
+        ),
+        (
+            manifest.runtime_installed_distribution_inventory,
+            attestation.execution_lock.installed_distribution_inventory_sha256,
+            installed_raw,
+            "installed distribution inventory",
+        ),
+    )
+    for reference, expected_sha, expected_bytes, label in runtime_raw:
+        if reference.sha256 != expected_sha:
+            raise Stage2ExperimentError(f"{label} hash has no matching aggregate file")
+        _require_exact_raw(files[reference.path], expected_bytes, label=label)
+    if (
+        manifest.reviewed_execution_lock.sha256
+        != attestation.execution_lock.reviewed_protocol_lock_sha256
+    ):
+        raise Stage2ExperimentError("reviewed execution-lock hash has no matching aggregate file")
+    if (
+        manifest.snapshot_read_only_verification_evidence.sha256
+        != attestation.snapshot_manifest.read_only_transition.verification_evidence_sha256
+    ):
+        raise Stage2ExperimentError("snapshot verification hash has no matching aggregate file")
+    _require_exact_raw(
+        files[manifest.snapshot_read_only_verification_evidence.path],
+        snapshot_read_only_raw_evidence_bytes(
+            attestation.snapshot_manifest, attestation.evidence_scope
+        ),
+        label="snapshot read-only verification",
+    )
+    _require_exact_raw(
+        files[manifest.public_safety_raw_scan_evidence.path],
+        public_safety_raw_evidence_bytes(attestation.public_safety, attestation.evidence_scope),
+        label="public-safety scan",
+    )
+    if attestation.public_safety.scan_inventory_sha256 != sha256_identity(
+        tuple(repetition.repetition_manifest.files for repetition in attestation.repetitions)
+    ):
+        raise Stage2ExperimentError("public-safety pass is detached from repetition inventories")
+    for index, repetition in enumerate(attestation.repetitions):
+        if (
+            _parse_model(
+                files[manifest.repetition_manifest_files[index].path],
+                Stage2BundleManifest,
+                label="repetition manifest",
+            )
+            != repetition.repetition_manifest
+        ):
+            raise Stage2ExperimentError("repetition manifest differs from final attestation")
+        _validate_repetition_bundle_directory(root, index + 1, repetition.repetition_manifest)
+        if (
+            _parse_model(
+                files[manifest.cuda_execution_attestation_files[index].path],
+                Stage2RepetitionCudaAttestation,
+                label="CUDA execution attestation",
+            )
+            != repetition.cuda_execution
+        ):
+            raise Stage2ExperimentError("CUDA execution attestation differs from final attestation")
+        if (
+            _parse_model(
+                files[manifest.cancellation_result_files[index].path],
+                CancellationResult,
+                label="cancellation result",
+            )
+            != repetition.runtime_control.cancellation_result
+        ):
+            raise Stage2ExperimentError("cancellation result differs from final attestation")
+        prefix = f"repetition-{repetition.repetition_index:02d}/"
+        for request in repetition.measured_requests:
+            reconstructed_request = reconstruct_request_from_raw_evidence(
+                {
+                    field: files[prefix + getattr(request.raw_evidence, field).path]
+                    for field in REQUEST_EVIDENCE_FIELDS
+                },
+                attestation.evidence_scope,
+            )
+            if reconstructed_request != (
+                request.repetition_index,
+                request.case_id,
+                request.external_request_id,
+                request.request_evidence,
+                request.request_identity,
+                request.lifecycle,
+            ):
+                raise Stage2ExperimentError(
+                    f"measured request {request.external_request_id} does not reconstruct from raw"
+                )
+        _require_exact_raw(
+            files[prefix + repetition.cancellation_client_stream_file.path],
+            cancellation_client_stream_raw_evidence_bytes(repetition, attestation.evidence_scope),
+            label=f"repetition {repetition.repetition_index} cancellation client stream",
+        )
+        for reference in repetition.cuda_execution.raw_evidence_files:
+            _require_exact_raw(
+                files[prefix + reference.path],
+                cuda_raw_evidence_bytes(
+                    repetition.cuda_execution,
+                    attestation.evidence_scope,
+                    reference.path,
+                ),
+                label=f"repetition {repetition.repetition_index} CUDA execution",
+            )
+    parsed_comparisons = tuple(
+        _parse_model(
+            files[reference.path],
+            Stage2CrossRestartComparison,
+            label="semantic comparison",
+        )
+        for reference in manifest.semantic_comparison_files
+    )
+    if parsed_comparisons != attestation.comparisons:
+        raise Stage2ExperimentError("semantic comparisons differ from final attestation")
+    return attestation
+
+
+def reconstruct_experiment_attestation(root: Path) -> Stage2ReconstructedExperiment:
+    manifest_path = root / AGGREGATE_MANIFEST_PATH
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise Stage2ExperimentError("aggregate manifest is missing or unsafe")
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = _parse_model(
+        manifest_bytes,
+        Stage2AggregateExperimentManifest,
+        label="aggregate manifest",
+    )
+    if manifest.state is AggregateRootState.INCOMPLETE:
+        raise Stage2ExperimentError("aggregate root is incomplete")
+    files = _validate_aggregate_inventory(root, manifest)
+    manifest_mtime = manifest_path.stat().st_mtime_ns
+    if any((root / entry.path).stat().st_mtime_ns >= manifest_mtime for entry in manifest.files):
+        raise Stage2ExperimentError("aggregate manifest was not written strictly last")
+    attestation = _validate_terminal_graph(root, manifest, files)
+    return Stage2ReconstructedExperiment(
+        attestation=attestation,
+        aggregate_manifest=manifest,
+        aggregate_manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
+    )
+
+
+def semantic_nonreproduction_result(
+    comparison: Stage2CrossRestartComparison,
+) -> AggregateComparisonState:
+    """Expose the mandatory terminal state for a retained semantic mismatch."""
+
+    return comparison.comparison.state

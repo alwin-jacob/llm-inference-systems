@@ -27,6 +27,9 @@ authorized future real-runtime evidence run, while executing none of that runtim
   manifest-last bundle, three-restart, and tiny-sample reporting contracts;
 - CPU-only Stage 2A response/log/metric fixtures, separate uninstalled execution-lock metadata,
   historical Stage 0/1 byte-preservation verification, and generated `0.3.0` schemas.
+- one complete synthetic 16 × 3 experiment graph with manifest-bound per-request evidence,
+  lifecycle-derived concurrency, three cancellation and CUDA attestation shapes, 16 semantic
+  comparisons, derived metric eligibility, aggregate validation, and manifest-last reconstruction.
 
 ## Non-goals
 

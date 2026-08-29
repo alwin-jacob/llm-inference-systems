@@ -40,11 +40,14 @@ correlated abort chain, exact drain cadence, stable generation counter, cooldown
 abort counter, and no residual state. A terminal or counter from a non-abort reason is not accepted
 as cancellation success.
 
-A future real-runtime boundary is rejected when any one of its 15 typed component attestations or
-canonical component identities is missing, inconsistent, fixture-bound, or non-reconstructable.
-Phase names and `passed=true` without positive boundaries and phase-specific evidence are invalid;
-missing final drain, failed/incomplete server-and-worker shutdown, or residual state is invalid.
-Synthetic completeness demonstrates validator behavior only.
+A future real-runtime boundary is rejected unless the complete experiment exists: three ordered
+committed repetitions, exactly 16 declared measured requests per repetition, exact measured-ID set
+equality, globally disjoint external IDs, one accepted cancellation probe and one restart-specific
+CUDA attestation per repetition, positive lifecycle overlap deriving concurrency two, 16 complete
+cross-restart comparisons, a reconstructed aggregate-validation result, and a manifest-last
+aggregate root. Phase names and `passed=true` without positive boundaries and manifest-bound
+phase evidence are invalid; missing final drain, failed/incomplete server-and-worker shutdown, or
+residual state is invalid. Synthetic completeness demonstrates validator behavior only.
 
 Stage 2A bundles expose `INCOMPLETE`, `INVALID`, and `COMMITTED`. A crash before the final manifest
 remains inspectably incomplete. Durability-operation failure is recorded as invalid at the visible
@@ -52,3 +55,10 @@ staging or final bundle path, including failure after directory rename. Summarie
 non-committed bundles, and aggregate commit requires three validated, distinctly indexed bundle
 manifests plus semantic records bound to those manifest-file content hashes and a passing
 reconstructed comparison.
+
+An output-token mismatch is retained in a manifest-last `INVALID` aggregate root with reason
+`INVALID_SEMANTIC_NONREPRODUCTION`; it cannot become a committed aggregate, authorize pooled
+performance interpretation, select a replacement run, or advance a claim. Missing request files,
+orphan raw hashes, null-server-metric eligibility
+overrides, non-overlapping lifecycles, concurrency above two, or an aggregate manifest written
+before any inventoried byte are terminal validation failures.

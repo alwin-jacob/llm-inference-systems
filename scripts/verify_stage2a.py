@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import sys
+import tempfile
 from pathlib import Path
 
 from llm_inference_systems import __version__
@@ -16,6 +18,10 @@ from llm_inference_systems.stage2_contracts import (
     Stage2CompletionRequest,
     Stage2ExecutionLock,
     Stage2RunConfiguration,
+)
+from llm_inference_systems.stage2_experiment import (
+    STAGE2_EXPERIMENT_CASE_IDS,
+    reconstruct_experiment_attestation,
 )
 
 FROZEN_HASHES = {
@@ -169,6 +175,11 @@ def _declared_forbidden_dependencies(project_text: str) -> set[str]:
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
+    # Exact script execution places only scripts/ on sys.path. Add this repository
+    # root so the CPU-only test fixture builder is importable without installation.
+    sys.path.insert(0, str(root))
+    from tests.stage2_experiment_factories import write_synthetic_experiment_directory
+
     if __version__ != "0.3.0":
         raise AssertionError("current package version differs from 0.3.0")
     Stage2RunConfiguration.model_validate_json(
@@ -201,6 +212,35 @@ def main() -> int:
     _verify_frozen_bytes(root)
     _verify_import_boundary(root)
     _verify_ordinary_lock(root)
+    with tempfile.TemporaryDirectory(prefix="lis-stage2a-experiment-") as temporary:
+        aggregate = Path(temporary) / "aggregate"
+        write_synthetic_experiment_directory(aggregate)
+        reconstructed = reconstruct_experiment_attestation(aggregate)
+        invalid_aggregate = Path(temporary) / "invalid-aggregate"
+        invalid_manifest = write_synthetic_experiment_directory(
+            invalid_aggregate,
+            semantic_mismatch_case_id=STAGE2_EXPERIMENT_CASE_IDS[0],
+        )
+        invalid_reconstructed = reconstruct_experiment_attestation(invalid_aggregate)
+    experiment = reconstructed.attestation
+    if (
+        experiment.evidence_scope.value != "TEST_FIXTURE_ONLY"
+        or experiment.classification.value != "SYNTHETIC_PROTOCOL_SHAPE_ONLY"
+        or len(experiment.repetitions) != 3
+        or sum(len(item.measured_requests) for item in experiment.repetitions) != 48
+        or len(experiment.comparisons) != 16
+        or any(len(item.cuda_execution.raw_evidence_files) < 1 for item in experiment.repetitions)
+        or experiment.summary.runtime_claim_advancement_allowed
+        or experiment.summary.performance_claim_advancement_allowed
+    ):
+        raise AssertionError("complete Stage 2A synthetic experiment boundary differs")
+    if (
+        invalid_manifest.state.value != "INVALID"
+        or invalid_manifest.failure_reason != "INVALID_SEMANTIC_NONREPRODUCTION"
+        or invalid_reconstructed.attestation.aggregate_validation_result.invalid_case_ids
+        != (STAGE2_EXPERIMENT_CASE_IDS[0],)
+    ):
+        raise AssertionError("semantic mismatch did not retain a durable invalid aggregate")
     print(
         canonical_json(
             {
@@ -214,6 +254,12 @@ def main() -> int:
                 "protocol_version": "0.3.0",
                 "resolver_lock_claimed_complete": False,
                 "schema_count": len(SCHEMA_MODELS),
+                "synthetic_cuda_attestation_shape_count": 3,
+                "synthetic_measured_request_attestation_count": 48,
+                "synthetic_repetition_manifest_count": 3,
+                "synthetic_semantic_comparison_count": 16,
+                "synthetic_experiment_classification": experiment.classification,
+                "synthetic_semantic_mismatch_terminal_state": invalid_manifest.failure_reason,
                 "stage2a_execution_scope": "TEST_FIXTURE_ONLY",
                 "status": "verified",
                 "vllm_wheel_sha256": vllm_artifact.sha256,

@@ -198,9 +198,10 @@ published history. Stage 2B remains separately unauthorized.
 - Bound distinct phase controls, cancellation/drain evidence, same-process Prometheus windows,
   shutdown evidence, and manifest-byte identities to each of the three non-replaceable restarts;
   raw Prometheus text now reconstructs every retained parsed sample and label inventory.
-- Separated fixture attestation from a future real-runtime attestation requiring all 15 typed,
-  cross-bound component identities together. Complete synthetic objects remain shape-only fixture
-  tests and establish no runtime or hardware facts.
+- Separated fixture attestation from the then-current 15-component future-runtime shape. The later
+  experiment-attestation correction supersedes that request-level boundary with the complete
+  16 × 3 graph. Complete synthetic objects remain shape-only fixture tests and establish no
+  runtime or hardware facts.
 - Restored the exact approved GitHub vLLM release URL and retained its authorized hash while the
   inert execution lock remains blocked, uninstalled, unexecuted, resolver-incomplete, and explicit
   about the unresolved torchvision hash. The future-only complete lock shape requires the exact
@@ -215,3 +216,30 @@ published history. Stage 2B remains separately unauthorized.
 - The only external read was revision-specific Qwen API tree metadata used to define the allowlist.
   No binary, model, tokenizer content, runtime, GPU, CUDA, Kaggle, remote Git, paid-service, public
   claim, or claim-status action occurred.
+
+## 2026-08-28 — Controller-authorized experiment-attestation correction
+
+- Preserved the four existing local Stage 2A commits and added one integrated experiment boundary
+  requiring exactly 48 measured-request attestations across three full restart records.
+- Bound ten distinct raw request/body/header/SSE/log/metric/lifecycle/reconciliation files per
+  measured request to its committed repetition manifest, plus manifest-bound cancellation stream
+  and CUDA raw evidence per repetition.
+- Replaced slot-label inference with half-open lifecycle concurrency derivation, exact maximum two,
+  positive overlap, phase containment, and global request-ID disjointness.
+- Derived per-request, repetition, and experiment metric availability and advancement eligibility;
+  explicit null server metrics cannot be filled or overridden by client metrics.
+- Integrated the three-restart comparison and aggregate validator into the final model for all 16
+  cases. Semantic mismatch is retained in a manifest-last `INVALID` root with reason
+  `INVALID_SEMANTIC_NONREPRODUCTION`; it cannot become `COMMITTED`.
+- Added an atomic manifest-last aggregate root and pure directory reconstruction covering shared
+  environment, NVIDIA isolation, lock, snapshot, launch, safety, workload, three repetition
+  manifests, three CUDA attestations, three cancellation results, 16 comparisons, summaries, the
+  aggregate validation result, and final attestation.
+- Bound request raw bytes back to their exact parsed request, identity-chain, metrics, lifecycle,
+  and token/usage fields; bound resolver-lock, installed-distribution, reviewed-lock, snapshot
+  transition, environment, NVIDIA, CUDA, cancellation-stream, and safety raw bytes at the same
+  reconstructed boundary. Publication now validates the complete typed graph before writing the
+  terminal aggregate manifest.
+- Kept the complete CPU-generated 16 × 3 graph at `TEST_FIXTURE_ONLY` with classification
+  `SYNTHETIC_PROTOCOL_SHAPE_ONLY`. No runtime, model, tokenizer, CUDA, GPU, Kaggle, remote compute,
+  spend, claim, public wording, remote Git, or Stage 2B action occurred.
