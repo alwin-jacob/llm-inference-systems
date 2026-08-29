@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import errno
 import hashlib
 import json
@@ -101,8 +103,52 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def decoded_base64_evidence_texts(text: str) -> tuple[str, ...]:
+    """Decode canonical JSON `*_base64` evidence fields for safety inspection."""
+
+    documents: tuple[object, ...]
+    try:
+        documents = (json.loads(text),)
+    except json.JSONDecodeError:
+        documents = tuple(
+            value for line in text.splitlines() if line.strip() for value in _parse_json_line(line)
+        )
+    decoded: list[str] = []
+
+    def visit(item: object) -> None:
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if isinstance(key, str) and key.endswith("_base64") and isinstance(child, str):
+                    try:
+                        raw = base64.b64decode(child, validate=True)
+                    except (binascii.Error, ValueError):
+                        continue
+                    if base64.b64encode(raw).decode("ascii") == child:
+                        decoded.append(raw.decode("utf-8", errors="replace"))
+                visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+
+    for document in documents:
+        visit(document)
+    return tuple(decoded)
+
+
+def _parse_json_line(line: str) -> tuple[object, ...]:
+    try:
+        return (json.loads(line),)
+    except json.JSONDecodeError:
+        return ()
+
+
 def _require_public_safe_evidence(text: str) -> None:
-    if any(pattern.search(text) for pattern in _SENSITIVE_EVIDENCE_PATTERNS):
+    scan_texts = (text, *decoded_base64_evidence_texts(text))
+    if any(
+        pattern.search(scan_text)
+        for scan_text in scan_texts
+        for pattern in _SENSITIVE_EVIDENCE_PATTERNS
+    ):
         raise Stage2BundleError("durable Stage 2 evidence contains prohibited private material")
 
 

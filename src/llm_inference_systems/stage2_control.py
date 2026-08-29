@@ -22,6 +22,7 @@ from llm_inference_systems.stage2_contracts import (
     RUNTIME_PHASE_ORDER,
     BundleState,
     ProviderShape,
+    RawLogCapture,
     RequestIdentityChain,
     ResourceBudgetInputs,
     ResourceBudgetResult,
@@ -115,9 +116,11 @@ class CancellationClassification(StrEnum):
     ID_CORRELATION_FAILURE = "ID_CORRELATION_FAILURE"
 
 
-class FirstGenerationTokenEvidence(StrictModel):
+class FirstGenerationDeliveryEvidence(StrictModel):
     external_request_id: Identifier
     response_body_id: Identifier
+    generation_event_ordinal: NonNegativeInt
+    body_chunk_ordinal: NonNegativeInt
     observation_offset_ns: NonNegativeInt
     output_token_ids: tuple[NonNegativeInt, ...] = Field(min_length=1)
 
@@ -136,17 +139,41 @@ class ResidualStateEvidence(StrictModel):
         )
 
 
+class CancellationScrapeObservationEvidence(StrictModel):
+    phase: Literal["PRE_DISPATCH", "DRAIN", "STABLE_GENERATION", "COOLDOWN", "LATER"]
+    phase_ordinal: NonNegativeInt
+    scheduled_offset_ns: NonNegativeInt
+    request_dispatch_offset_ns: NonNegativeInt
+    response_completion_offset_ns: NonNegativeInt
+    snapshot_identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_observation(self) -> Self:
+        if not (
+            self.scheduled_offset_ns
+            <= self.request_dispatch_offset_ns
+            <= self.response_completion_offset_ns
+        ):
+            raise ValueError("cancellation scrape schedule/dispatch/completion order differs")
+        return self
+
+
 class CancellationProbe(StrictModel):
+    repetition_index: Annotated[int, Field(ge=1, le=3)]
+    server_process_identity: Identifier
     identity_chain: RequestIdentityChain
+    raw_log_capture: RawLogCapture
+    raw_log_capture_sha256: Sha256
     raw_log_start_byte_offset: NonNegativeInt
     dispatch_offset_ns: NonNegativeInt
-    first_generation_token: FirstGenerationTokenEvidence
+    first_generation_delivery: FirstGenerationDeliveryEvidence
     client_close_offset_ns: NonNegativeInt
     pre_dispatch_snapshots: tuple[PrometheusSnapshot, ...] = Field(min_length=10, max_length=10)
     drain_snapshots: tuple[PrometheusSnapshot, ...] = Field(min_length=10, max_length=10)
     stable_generation_snapshots: tuple[PrometheusSnapshot, ...] = Field(min_length=2)
     cooldown_snapshots: tuple[PrometheusSnapshot, ...] = Field(min_length=2)
     later_retained_snapshots: tuple[PrometheusSnapshot, ...]
+    scrape_observations: tuple[CancellationScrapeObservationEvidence, ...] = Field(min_length=52)
     residual_state: ResidualStateEvidence
 
 
@@ -237,12 +264,14 @@ def _snapshot_offsets(snapshots: tuple[PrometheusSnapshot, ...]) -> tuple[int, .
     return tuple(snapshot.scrape_monotonic_offset_ns for snapshot in snapshots)
 
 
+def _scheduled_offsets(
+    observations: tuple[CancellationScrapeObservationEvidence, ...],
+) -> tuple[int, ...]:
+    return tuple(observation.scheduled_offset_ns for observation in observations)
+
+
 def _spaced_at_least(snapshots: tuple[PrometheusSnapshot, ...], spacing_ns: int) -> bool:
     return all(right - left >= spacing_ns for left, right in pairwise(_snapshot_offsets(snapshots)))
-
-
-def _exact_cadence(snapshots: tuple[PrometheusSnapshot, ...], spacing_ns: int) -> bool:
-    return all(right - left == spacing_ns for left, right in pairwise(_snapshot_offsets(snapshots)))
 
 
 def _same_process(snapshots: tuple[PrometheusSnapshot, ...]) -> bool:
@@ -297,26 +326,42 @@ def evaluate_cancellation(probe: CancellationProbe) -> CancellationResult:
         return _invalid_cancellation(probe, CancellationClassification.ID_CORRELATION_FAILURE)
     if chain.external_abort_log is None or chain.internal_abort_log is None:
         return _invalid_cancellation(probe, CancellationClassification.UNKNOWN_ACKNOWLEDGEMENT)
+    from llm_inference_systems.stage2_protocol import (
+        Stage2ProtocolError,
+        correlate_request_logs,
+    )
+
+    try:
+        reconstructed_chain = correlate_request_logs(
+            chain.external_base_id,
+            probe.raw_log_capture.records,
+            cancellation=True,
+        )
+    except Stage2ProtocolError:
+        return _invalid_cancellation(probe, CancellationClassification.ID_CORRELATION_FAILURE)
     if (
-        chain.request_received_log.byte_start < probe.raw_log_start_byte_offset
-        or probe.first_generation_token.external_request_id != chain.external_base_id
-        or probe.first_generation_token.response_body_id != chain.response_body_id
+        reconstructed_chain != chain
+        or probe.raw_log_capture_sha256 != probe.raw_log_capture.raw_bytes_sha256
+        or probe.raw_log_capture.source_stream_id != f"{probe.server_process_identity}-raw-log"
+        or chain.request_received_log.byte_start < probe.raw_log_start_byte_offset
+        or probe.first_generation_delivery.external_request_id != chain.external_base_id
+        or probe.first_generation_delivery.response_body_id != chain.response_body_id
     ):
         return _invalid_cancellation(probe, CancellationClassification.ID_CORRELATION_FAILURE)
     if not (
         probe.dispatch_offset_ns
-        < probe.first_generation_token.observation_offset_ns
-        < probe.client_close_offset_ns
+        < probe.first_generation_delivery.observation_offset_ns
+        <= probe.client_close_offset_ns
     ):
         return _invalid_cancellation(probe, CancellationClassification.TERMINAL_UNKNOWN)
     if not (
         probe.dispatch_offset_ns
         <= chain.request_received_log.observation_offset_ns
         <= chain.request_add_log.observation_offset_ns
-        <= probe.first_generation_token.observation_offset_ns
-        < probe.client_close_offset_ns
-        <= chain.external_abort_log.observation_offset_ns
+        <= probe.first_generation_delivery.observation_offset_ns
+        <= probe.client_close_offset_ns
         <= chain.internal_abort_log.observation_offset_ns
+        <= chain.external_abort_log.observation_offset_ns
     ):
         return _invalid_cancellation(probe, CancellationClassification.TERMINAL_UNKNOWN)
 
@@ -327,10 +372,55 @@ def evaluate_cancellation(probe: CancellationProbe) -> CancellationResult:
     all_snapshots = (*pre, *drain, *stable, *cooldown, *probe.later_retained_snapshots)
     if len(pre) != 10 or len(drain) != 10:
         return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
-    if not _same_process(all_snapshots):
+    if not _same_process(all_snapshots) or any(
+        snapshot.process_start_id != probe.server_process_identity for snapshot in all_snapshots
+    ):
         return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
+    phase_snapshots = (
+        ("PRE_DISPATCH", pre),
+        ("DRAIN", drain),
+        ("STABLE_GENERATION", stable),
+        ("COOLDOWN", cooldown),
+        ("LATER", probe.later_retained_snapshots),
+    )
+    expected_observation_keys = tuple(
+        (phase, ordinal, sha256_identity(snapshot))
+        for phase, snapshots in phase_snapshots
+        for ordinal, snapshot in enumerate(snapshots)
+    )
+    actual_observation_keys = tuple(
+        (observation.phase, observation.phase_ordinal, observation.snapshot_identity_sha256)
+        for observation in probe.scrape_observations
+    )
     if (
-        not _spaced_at_least(pre, 100_000_000)
+        actual_observation_keys != expected_observation_keys
+        or any(
+            observation.response_completion_offset_ns != snapshot.scrape_monotonic_offset_ns
+            for observation, snapshot in zip(probe.scrape_observations, all_snapshots, strict=True)
+        )
+        or any(
+            not (
+                observation.scheduled_offset_ns
+                <= observation.request_dispatch_offset_ns
+                <= observation.response_completion_offset_ns
+            )
+            for observation in probe.scrape_observations
+        )
+        or _snapshot_offsets(all_snapshots) != tuple(sorted(_snapshot_offsets(all_snapshots)))
+    ):
+        return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
+    counts = tuple(len(snapshots) for _, snapshots in phase_snapshots)
+    boundaries = tuple(sum(counts[:index]) for index in range(len(counts) + 1))
+    pre_observations = probe.scrape_observations[boundaries[0] : boundaries[1]]
+    drain_observations = probe.scrape_observations[boundaries[1] : boundaries[2]]
+    stable_observations = probe.scrape_observations[boundaries[2] : boundaries[3]]
+    cooldown_observations = probe.scrape_observations[boundaries[3] : boundaries[4]]
+    if (
+        not all(
+            right - left >= 100_000_000
+            for left, right in pairwise(_scheduled_offsets(pre_observations))
+        )
+        or not _spaced_at_least(pre, 100_000_000)
         or pre[-1].scrape_monotonic_offset_ns >= probe.dispatch_offset_ns
     ):
         return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
@@ -341,19 +431,49 @@ def evaluate_cancellation(probe: CancellationProbe) -> CancellationResult:
         return _invalid_cancellation(probe, CancellationClassification.RESIDUAL_WORK_TIMEOUT)
     if (
         drain[0].scrape_monotonic_offset_ns < probe.client_close_offset_ns
-        or chain.internal_abort_log.observation_offset_ns > drain[0].scrape_monotonic_offset_ns
+        or chain.external_abort_log.observation_offset_ns > drain[0].scrape_monotonic_offset_ns
+        or not all(
+            right - left >= 100_000_000
+            for left, right in pairwise(_scheduled_offsets(drain_observations))
+        )
         or not _spaced_at_least(drain, 100_000_000)
         or stable[0].scrape_monotonic_offset_ns != drain[-1].scrape_monotonic_offset_ns
         or stable[0] != drain[-1]
+        or (
+            stable_observations[0].scheduled_offset_ns,
+            stable_observations[0].request_dispatch_offset_ns,
+            stable_observations[0].response_completion_offset_ns,
+        )
+        != (
+            drain_observations[-1].scheduled_offset_ns,
+            drain_observations[-1].request_dispatch_offset_ns,
+            drain_observations[-1].response_completion_offset_ns,
+        )
         or stable[-1].scrape_monotonic_offset_ns - stable[0].scrape_monotonic_offset_ns
         < 1_000_000_000
-        or not _exact_cadence(stable, 100_000_000)
+        or not all(
+            right - left == 100_000_000
+            for left, right in pairwise(_scheduled_offsets(stable_observations))
+        )
         or cooldown[0].scrape_monotonic_offset_ns != stable[-1].scrape_monotonic_offset_ns
+        or (
+            cooldown_observations[0].scheduled_offset_ns,
+            cooldown_observations[0].request_dispatch_offset_ns,
+            cooldown_observations[0].response_completion_offset_ns,
+        )
+        != (
+            stable_observations[-1].scheduled_offset_ns,
+            stable_observations[-1].request_dispatch_offset_ns,
+            stable_observations[-1].response_completion_offset_ns,
+        )
         or cooldown[-1].scrape_monotonic_offset_ns - cooldown[0].scrape_monotonic_offset_ns
         < 2_000_000_000
-        or not _exact_cadence(cooldown, 100_000_000)
+        or not all(
+            right - left == 100_000_000
+            for left, right in pairwise(_scheduled_offsets(cooldown_observations))
+        )
         or cooldown[-1].scrape_monotonic_offset_ns - probe.client_close_offset_ns > 10_000_000_000
-        or chain.internal_abort_log.observation_offset_ns > cooldown[-1].scrape_monotonic_offset_ns
+        or chain.external_abort_log.observation_offset_ns > cooldown[-1].scrape_monotonic_offset_ns
         or any(
             snapshot.scrape_monotonic_offset_ns <= cooldown[-1].scrape_monotonic_offset_ns
             for snapshot in probe.later_retained_snapshots
@@ -523,6 +643,12 @@ class Stage2RuntimeControlEvidence(StrictModel):
             raise ValueError("measured request identities must exercise both requested clients")
         if evaluate_cancellation(self.cancellation_probe) != self.cancellation_result:
             raise ValueError("cancellation result does not reconstruct from raw probe evidence")
+        expected_server = self.process_records[self.repetition_index + 1].process_identity
+        if (
+            self.cancellation_probe.repetition_index != self.repetition_index
+            or self.cancellation_probe.server_process_identity != expected_server
+        ):
+            raise ValueError("cancellation probe differs from its repetition or server process")
         if not self.cancellation_result.accepted:
             raise ValueError("runtime control requires an accepted isolated cancellation probe")
         steady = self.steady_state_snapshots

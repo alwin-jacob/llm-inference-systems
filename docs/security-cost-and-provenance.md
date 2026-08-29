@@ -18,7 +18,10 @@ content identity and integrity check. It is never a digital signature and provid
 or origin authentication.
 
 The safety scanner examines repository candidates for private paths, local environment labels,
-credential-shaped values, and prohibited private-source references. A passing scan is a scoped
+credential-shaped values, and prohibited private-source references. For JSON and record-oriented
+JSONL/text artifacts it also decodes canonical `*_base64` fields before applying the same checks,
+so encoded raw body, pending
+parser, header, log, or evidence bytes cannot bypass the scan. A passing scan is a scoped
 repository-content check, not a general security certification.
 
 Raw-body retention is authorized here only because the fixture body is project-authored synthetic

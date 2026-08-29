@@ -6,6 +6,8 @@ launch, or assert execution of vLLM, a tokenizer, a model, CUDA, or a GPU.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 from datetime import timedelta
 from enum import StrEnum
@@ -175,6 +177,46 @@ class RawLogRecord(StrictModel):
         return self
 
 
+class RawLogCapture(StrictModel):
+    """Complete bounded raw-log bytes and their lossless record inventory."""
+
+    source_stream_id: Identifier
+    exact_bytes_base64: str
+    decoded_byte_count: NonNegativeInt
+    raw_bytes_sha256: Sha256
+    records: tuple[RawLogRecord, ...] = Field(min_length=1)
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_capture(self) -> Self:
+        try:
+            exact = base64.b64decode(self.exact_bytes_base64, validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise ValueError("raw log capture is not canonical Base64") from error
+        if base64.b64encode(exact).decode("ascii") != self.exact_bytes_base64:
+            raise ValueError("raw log capture is not canonical Base64")
+        records = self.records
+        expected_exact = b"\n".join(record.raw_record.encode("utf-8") for record in records)
+        if (
+            len(exact) != self.decoded_byte_count
+            or hashlib.sha256(exact).hexdigest() != self.raw_bytes_sha256
+            or exact != expected_exact
+            or any(record.source_stream_id != self.source_stream_id for record in records)
+            or tuple(record.record_ordinal for record in records) != tuple(range(len(records)))
+            or records[0].byte_start != 0
+            or any(right.byte_start != left.byte_end + 1 for left, right in pairwise(records))
+            or records[-1].byte_end != len(exact)
+        ):
+            raise ValueError("raw log capture bytes and record inventory differ")
+        from llm_inference_systems.canonical import sha256_identity
+
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("raw log capture identity does not reconstruct")
+        return self
+
+
 class RequestIdentityChain(StrictModel):
     external_base_id: ExternalRequestId
     response_body_id: str
@@ -202,8 +244,8 @@ class RequestIdentityChain(StrictModel):
             for record in (
                 self.request_received_log,
                 self.request_add_log,
-                self.external_abort_log,
                 self.internal_abort_log,
+                self.external_abort_log,
             )
             if record is not None
         )

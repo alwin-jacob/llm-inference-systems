@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 from pathlib import Path
@@ -200,6 +201,32 @@ def test_private_material_cannot_enter_durable_bundle(
     with pytest.raises(Stage2BundleError, match="prohibited private material"):
         builder.write_raw("raw/evidence.log", (private_value + "\n").encode())
     assert not (builder.staging_path / "raw/evidence.log").exists()
+
+
+def test_base64_encoded_private_material_cannot_enter_durable_bundle(tmp_path: Path) -> None:
+    builder = _builder(tmp_path)
+    private_value = "/" + "Users/private-user/model-cache"
+    payload = canonical_json_bytes(
+        {"pending_bytes_base64": base64.b64encode(private_value.encode()).decode("ascii")}
+    )
+    with pytest.raises(Stage2BundleError, match="prohibited private material"):
+        builder.write_raw("raw/evidence.json", payload)
+    assert not (builder.staging_path / "raw/evidence.json").exists()
+
+
+def test_base64_encoded_private_material_cannot_enter_jsonl_bundle(tmp_path: Path) -> None:
+    builder = _builder(tmp_path)
+    private_value = "/" + "Users/private-user/model-cache"
+    encoded = base64.b64encode(private_value.encode()).decode("ascii")
+    payload = b"\n".join(
+        (
+            canonical_json_bytes({"kind": "TEST_FIXTURE_ONLY"}),
+            canonical_json_bytes({"pending_bytes_base64": encoded}),
+        )
+    )
+    with pytest.raises(Stage2BundleError, match="prohibited private material"):
+        builder.write_raw("raw/evidence.jsonl", payload)
+    assert not (builder.staging_path / "raw/evidence.jsonl").exists()
 
 
 def test_exact_reconstruction_mismatch_is_rejected(tmp_path: Path) -> None:

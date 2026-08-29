@@ -33,16 +33,23 @@ Stage 2A adds a separate `0.3.0` protocol layer exercised only by CPU fixtures:
 1. `stage2_contracts.py` defines strict future-runtime configuration, evidence, phase, resource,
    bundle, and execution-lock models;
 2. `stage2_protocol.py` constructs the exact completion request and validates request identity,
-   incremental SSE, injected per-frame acceptance time for coalesced transport chunks, four ordered
-   terminals, token IDs, usage, and timing without importing a serving runtime;
+   incremental SSE, injected per-frame acceptance time for completed requests, four ordered
+   terminals, token IDs, usage, and timing without importing a serving runtime. Its cancellation
+   capture retains whole body-read deliveries, assigns one observation time to every frame in a
+   coalesced read, preserves both raw trailing bytes and the parser's CRLF-normalized pending state,
+   and invokes and completes transport close only after a generation event is reconstructable;
 3. `stage2_prometheus.py` retains raw exposition and provenance, parses exact metric/label series,
    and derives same-process nondecreasing counter deltas;
 4. `stage2_runtime.py` defines the immutable launch identity, exact process-kind pre-import
    environments, pinned snapshot inventory/identity, read-only transition, and GPU-memory
    stability contracts;
-5. `stage2_control.py` derives cancellation from raw logs and raw Prometheus snapshots and requires
-   the 17 ordered phase-specific evidence records, memory/steady-state gates, exact excluded and
-   measured counts, final drain, complete shutdown, and no-residual verification;
+5. `stage2_control.py` derives cancellation from complete bounded raw-log bytes and raw Prometheus
+   snapshots, reruns unique correlation over every retained log record, binds the probe to its
+   repetition, server process, and raw-log capture, requires client close before the
+   pinned internal-engine then external-serving-item abort chain, and requires the 17 ordered
+   phase-specific evidence records, separate scrape schedule/HTTP dispatch/response-completion
+   clocks, memory/steady-state gates, exact excluded and measured counts, final drain, complete
+   shutdown, and no-residual verification;
 6. `stage2_attestation.py` keeps parsing evidence-neutral and retains request/component-shaped
    attestations at fixture scope;
 7. `stage2_experiment.py` assembles the only final future-runtime boundary: exactly 48 measured
@@ -54,9 +61,9 @@ Stage 2A adds a separate `0.3.0` protocol layer exercised only by CPU fixtures:
 8. `stage2_bundle.py` manages inspectable staging state, durable raw and derived evidence,
    public-safety checks, reconstruction, manifest-last commit, directory durability, and tamper
    validation; and
-9. `stage2_fixture_server.py` scripts compatible response, log, and complete five-field metric
-   shapes on a server fixed
-   to `127.0.0.1:0`.
+9. `stage2_fixture_server.py` scripts compatible response, pinned-order cancellation logs,
+   delivery/coalescing/trailing-fragment cases, forbidden terminal cases, cancellation counter
+   changes, and complete five-field metric shapes on a server fixed to `127.0.0.1:0`.
 
 The Stage 2A code does not expose a runtime launcher, model/tokenizer loader, arbitrary endpoint,
 GPU path, or execution-lock installer. Future execution fields remain non-executed protocol
