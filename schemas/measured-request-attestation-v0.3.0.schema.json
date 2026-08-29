@@ -1,29 +1,106 @@
 {
   "$defs": {
-    "ManifestBoundFile": {
+    "CollectorWireCaptureProvenance": {
       "additionalProperties": false,
       "properties": {
-        "path": {
-          "title": "Path",
+        "capture_kind": {
+          "const": "COLLECTOR_CAPTURE",
+          "title": "Capture Kind",
           "type": "string"
         },
-        "sha256": {
+        "classification": {
+          "const": "FUTURE_REAL_RUNTIME",
+          "title": "Classification",
+          "type": "string"
+        },
+        "collector_identity_sha256": {
           "pattern": "^[0-9a-f]{64}$",
-          "title": "Sha256",
+          "title": "Collector Identity Sha256",
           "type": "string"
         },
-        "size": {
-          "minimum": 0,
-          "title": "Size",
-          "type": "integer"
+        "environment_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Environment Identity Sha256",
+          "type": "string"
+        },
+        "evidence_scope": {
+          "const": "FUTURE_REAL_RUNTIME",
+          "title": "Evidence Scope",
+          "type": "string"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "model_snapshot_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Model Snapshot Identity Sha256",
+          "type": "string"
+        },
+        "server_process_identity": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Server Process Identity",
+          "type": "string"
         }
       },
       "required": [
-        "path",
-        "sha256",
-        "size"
+        "capture_kind",
+        "evidence_scope",
+        "classification",
+        "collector_identity_sha256",
+        "server_process_identity",
+        "model_snapshot_identity_sha256",
+        "environment_identity_sha256",
+        "identity_sha256"
       ],
-      "title": "ManifestBoundFile",
+      "title": "CollectorWireCaptureProvenance",
+      "type": "object"
+    },
+    "FixtureWireCaptureProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "capture_kind": {
+          "const": "FIXTURE_CONSTRUCTOR",
+          "title": "Capture Kind",
+          "type": "string"
+        },
+        "classification": {
+          "const": "SYNTHETIC_PROTOCOL_SHAPE_ONLY",
+          "title": "Classification",
+          "type": "string"
+        },
+        "evidence_scope": {
+          "const": "TEST_FIXTURE_ONLY",
+          "title": "Evidence Scope",
+          "type": "string"
+        },
+        "fixture_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Fixture Identity Sha256",
+          "type": "string"
+        },
+        "fixture_marker": {
+          "const": "TEST_FIXTURE_ONLY",
+          "title": "Fixture Marker",
+          "type": "string"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "capture_kind",
+        "evidence_scope",
+        "classification",
+        "fixture_marker",
+        "fixture_identity_sha256",
+        "identity_sha256"
+      ],
+      "title": "FixtureWireCaptureProvenance",
       "type": "object"
     },
     "MetricAvailability": {
@@ -194,6 +271,260 @@
       "title": "RequestIdentityChain",
       "type": "object"
     },
+    "Stage2CompletionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "add_special_tokens": {
+          "const": false,
+          "title": "Add Special Tokens",
+          "type": "boolean"
+        },
+        "echo": {
+          "const": false,
+          "title": "Echo",
+          "type": "boolean"
+        },
+        "ignore_eos": {
+          "const": true,
+          "title": "Ignore Eos",
+          "type": "boolean"
+        },
+        "max_tokens": {
+          "const": 32,
+          "title": "Max Tokens",
+          "type": "integer"
+        },
+        "min_tokens": {
+          "const": 32,
+          "title": "Min Tokens",
+          "type": "integer"
+        },
+        "model": {
+          "const": "qwen2.5-0.5b-instruct-stage2",
+          "title": "Model",
+          "type": "string"
+        },
+        "n": {
+          "const": 1,
+          "title": "N",
+          "type": "integer"
+        },
+        "prompt": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 64,
+          "minItems": 64,
+          "title": "Prompt",
+          "type": "array"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "return_token_ids": {
+          "const": true,
+          "title": "Return Token Ids",
+          "type": "boolean"
+        },
+        "seed": {
+          "const": 0,
+          "title": "Seed",
+          "type": "integer"
+        },
+        "stream": {
+          "const": true,
+          "title": "Stream",
+          "type": "boolean"
+        },
+        "stream_interval": {
+          "const": 1,
+          "title": "Stream Interval",
+          "type": "integer"
+        },
+        "stream_options": {
+          "$ref": "#/$defs/Stage2StreamOptions"
+        },
+        "temperature": {
+          "const": 0,
+          "title": "Temperature",
+          "type": "integer"
+        },
+        "top_p": {
+          "const": 1,
+          "title": "Top P",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model",
+        "prompt",
+        "request_id",
+        "stream",
+        "stream_options",
+        "return_token_ids",
+        "stream_interval",
+        "add_special_tokens",
+        "temperature",
+        "top_p",
+        "seed",
+        "n",
+        "max_tokens",
+        "min_tokens",
+        "ignore_eos",
+        "echo"
+      ],
+      "title": "Stage2CompletionRequest",
+      "type": "object"
+    },
+    "Stage2ExactRequestBodyCapture": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_count": {
+          "minimum": 0,
+          "title": "Byte Count",
+          "type": "integer"
+        },
+        "canonical_request": {
+          "$ref": "#/$defs/Stage2CompletionRequest"
+        },
+        "canonical_request_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Canonical Request Sha256",
+          "type": "string"
+        },
+        "exact_bytes_base64": {
+          "title": "Exact Bytes Base64",
+          "type": "string"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "request_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Request Identity Sha256",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "transmission_offset_ns": {
+          "minimum": 0,
+          "title": "Transmission Offset Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "exact_bytes_base64",
+        "byte_count",
+        "sha256",
+        "canonical_request",
+        "canonical_request_sha256",
+        "request_identity_sha256",
+        "transmission_offset_ns",
+        "identity_sha256"
+      ],
+      "title": "Stage2ExactRequestBodyCapture",
+      "type": "object"
+    },
+    "Stage2LosslessHeaderField": {
+      "additionalProperties": false,
+      "properties": {
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "name_base64": {
+          "title": "Name Base64",
+          "type": "string"
+        },
+        "name_byte_count": {
+          "minimum": 0,
+          "title": "Name Byte Count",
+          "type": "integer"
+        },
+        "name_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Name Sha256",
+          "type": "string"
+        },
+        "normalized_name": {
+          "title": "Normalized Name",
+          "type": "string"
+        },
+        "normalized_value": {
+          "title": "Normalized Value",
+          "type": "string"
+        },
+        "ordinal": {
+          "minimum": 0,
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "value_base64": {
+          "title": "Value Base64",
+          "type": "string"
+        },
+        "value_byte_count": {
+          "minimum": 0,
+          "title": "Value Byte Count",
+          "type": "integer"
+        },
+        "value_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Value Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ordinal",
+        "name_base64",
+        "value_base64",
+        "name_byte_count",
+        "value_byte_count",
+        "name_sha256",
+        "value_sha256",
+        "normalized_name",
+        "normalized_value",
+        "identity_sha256"
+      ],
+      "title": "Stage2LosslessHeaderField",
+      "type": "object"
+    },
+    "Stage2ManifestBoundFile": {
+      "additionalProperties": false,
+      "description": "Path/size/digest identity for evidence retained by a committed manifest.",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "size"
+      ],
+      "title": "Stage2ManifestBoundFile",
+      "type": "object"
+    },
     "Stage2MetricAvailability": {
       "additionalProperties": false,
       "properties": {
@@ -273,6 +604,63 @@
       "title": "Stage2MetricAvailability",
       "type": "object"
     },
+    "Stage2OrderedHeadersCapture": {
+      "additionalProperties": false,
+      "properties": {
+        "direction": {
+          "enum": [
+            "TRANSMITTED_REQUEST",
+            "RECEIVED_RESPONSE"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/Stage2LosslessHeaderField"
+          },
+          "minItems": 1,
+          "title": "Fields",
+          "type": "array"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "normalized_view": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Normalized View",
+          "type": "array"
+        },
+        "observation_offset_ns": {
+          "minimum": 0,
+          "title": "Observation Offset Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "direction",
+        "observation_offset_ns",
+        "fields",
+        "normalized_view",
+        "identity_sha256"
+      ],
+      "title": "Stage2OrderedHeadersCapture",
+      "type": "object"
+    },
     "Stage2PerRequestMetrics": {
       "additionalProperties": false,
       "properties": {
@@ -345,6 +733,98 @@
         "tokens_per_second"
       ],
       "title": "Stage2PerRequestMetrics",
+      "type": "object"
+    },
+    "Stage2RawResponseBodyChunk": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "completed_sse_frame_observation_offsets_ns": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Completed Sse Frame Observation Offsets Ns",
+          "type": "array"
+        },
+        "decoded_byte_count": {
+          "minimum": 0,
+          "title": "Decoded Byte Count",
+          "type": "integer"
+        },
+        "exact_bytes_base64": {
+          "title": "Exact Bytes Base64",
+          "type": "string"
+        },
+        "external_request_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "External Request Id",
+          "type": "string"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "inventory_manifest_path": {
+          "const": "raw_response_body.json",
+          "title": "Inventory Manifest Path",
+          "type": "string"
+        },
+        "observation_offset_ns": {
+          "minimum": 0,
+          "title": "Observation Offset Ns",
+          "type": "integer"
+        },
+        "ordinal": {
+          "minimum": 0,
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "repetition_index": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "title": "Repetition Index",
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "source_capture_provenance": {
+          "enum": [
+            "TEST_FIXTURE_ONLY_CPU_SCRIPTED_HTTP",
+            "FUTURE_RUNTIME_COLLECTOR_HTTP_BODY"
+          ],
+          "title": "Source Capture Provenance",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repetition_index",
+        "case_id",
+        "external_request_id",
+        "ordinal",
+        "observation_offset_ns",
+        "completed_sse_frame_observation_offsets_ns",
+        "exact_bytes_base64",
+        "decoded_byte_count",
+        "sha256",
+        "source_capture_provenance",
+        "inventory_manifest_path",
+        "identity_sha256"
+      ],
+      "title": "Stage2RawResponseBodyChunk",
       "type": "object"
     },
     "Stage2RequestEvidence": {
@@ -566,34 +1046,34 @@
       "additionalProperties": false,
       "properties": {
         "lifecycle": {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         "parsed_sse_events": {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         "raw_response_body": {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         "request_body": {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         "request_headers": {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         "response_headers": {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         "server_logs": {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         "server_metrics": {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         "terminal_boundary": {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         },
         "token_usage_reconciliation": {
-          "$ref": "#/$defs/ManifestBoundFile"
+          "$ref": "#/$defs/Stage2ManifestBoundFile"
         }
       },
       "required": [
@@ -609,6 +1089,110 @@
         "token_usage_reconciliation"
       ],
       "title": "Stage2RequestRawEvidence",
+      "type": "object"
+    },
+    "Stage2RequestWireCapture": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "external_request_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "External Request Id",
+          "type": "string"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "provenance": {
+          "discriminator": {
+            "mapping": {
+              "COLLECTOR_CAPTURE": "#/$defs/CollectorWireCaptureProvenance",
+              "FIXTURE_CONSTRUCTOR": "#/$defs/FixtureWireCaptureProvenance"
+            },
+            "propertyName": "capture_kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/FixtureWireCaptureProvenance"
+            },
+            {
+              "$ref": "#/$defs/CollectorWireCaptureProvenance"
+            }
+          ],
+          "title": "Provenance"
+        },
+        "repetition_index": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "title": "Repetition Index",
+          "type": "integer"
+        },
+        "request_body": {
+          "$ref": "#/$defs/Stage2ExactRequestBodyCapture"
+        },
+        "request_headers": {
+          "$ref": "#/$defs/Stage2OrderedHeadersCapture"
+        },
+        "response_body_chunks": {
+          "items": {
+            "$ref": "#/$defs/Stage2RawResponseBodyChunk"
+          },
+          "minItems": 1,
+          "title": "Response Body Chunks",
+          "type": "array"
+        },
+        "response_headers": {
+          "$ref": "#/$defs/Stage2OrderedHeadersCapture"
+        },
+        "schema_version": {
+          "const": "0.3.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "transport_close": {
+          "$ref": "#/$defs/Stage2TransportCloseCapture"
+        }
+      },
+      "required": [
+        "schema_version",
+        "repetition_index",
+        "case_id",
+        "external_request_id",
+        "provenance",
+        "request_body",
+        "request_headers",
+        "response_headers",
+        "response_body_chunks",
+        "transport_close",
+        "identity_sha256"
+      ],
+      "title": "Stage2RequestWireCapture",
+      "type": "object"
+    },
+    "Stage2StreamOptions": {
+      "additionalProperties": false,
+      "properties": {
+        "include_usage": {
+          "const": true,
+          "title": "Include Usage",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "include_usage"
+      ],
+      "title": "Stage2StreamOptions",
       "type": "object"
     },
     "Stage2TimingRecord": {
@@ -726,6 +1310,73 @@
       "title": "Stage2TokenEvent",
       "type": "object"
     },
+    "Stage2TransportCloseCapture": {
+      "additionalProperties": false,
+      "properties": {
+        "close_classification": {
+          "enum": [
+            "CLEAN_EOF",
+            "CLEAN_RESPONSE_CLOSE"
+          ],
+          "title": "Close Classification",
+          "type": "string"
+        },
+        "close_observation_offset_ns": {
+          "minimum": 0,
+          "title": "Close Observation Offset Ns",
+          "type": "integer"
+        },
+        "external_request_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "External Request Id",
+          "type": "string"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "post_close_byte_count": {
+          "const": 0,
+          "title": "Post Close Byte Count",
+          "type": "integer"
+        },
+        "post_close_event_count": {
+          "const": 0,
+          "title": "Post Close Event Count",
+          "type": "integer"
+        },
+        "raw_response_body_inventory_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Raw Response Body Inventory Sha256",
+          "type": "string"
+        },
+        "request_identity_chain_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Request Identity Chain Sha256",
+          "type": "string"
+        },
+        "response_close_completed": {
+          "const": true,
+          "title": "Response Close Completed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "external_request_id",
+        "close_classification",
+        "close_observation_offset_ns",
+        "response_close_completed",
+        "post_close_byte_count",
+        "post_close_event_count",
+        "raw_response_body_inventory_sha256",
+        "request_identity_chain_sha256",
+        "identity_sha256"
+      ],
+      "title": "Stage2TransportCloseCapture",
+      "type": "object"
+    },
     "Stage2Usage": {
       "additionalProperties": false,
       "properties": {
@@ -806,6 +1457,9 @@
       "const": "0.3.0",
       "title": "Schema Version",
       "type": "string"
+    },
+    "wire_capture": {
+      "$ref": "#/$defs/Stage2RequestWireCapture"
     }
   },
   "required": [
@@ -815,6 +1469,7 @@
     "external_request_id",
     "request_evidence",
     "request_identity",
+    "wire_capture",
     "lifecycle",
     "raw_evidence",
     "metric_availability",

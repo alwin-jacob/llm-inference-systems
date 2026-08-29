@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -25,9 +26,12 @@ from llm_inference_systems.stage2_experiment import (
     Stage2RepetitionCudaAttestation,
     Stage2RequestRawEvidence,
     _contains_fixture_value,
+    build_request_raw_evidence_payloads,
     derive_aggregate_validation_result,
     reconstruct_experiment_attestation,
+    reconstruct_experiment_repetition,
     reconstruct_request_from_raw_evidence,
+    replay_stage2_wire_capture,
     request_raw_evidence_payloads,
     semantic_nonreproduction_result,
     write_aggregate_manifest_last,
@@ -190,6 +194,134 @@ def test_request_hash_or_cancellation_stream_not_in_manifest_is_rejected() -> No
         Stage2RepetitionAttestation.model_validate(values)
 
 
+def test_repetition_structurally_requires_one_prometheus_measurement_attestation() -> None:
+    values = _attestation().repetitions[0].model_dump(mode="python")
+    values.pop("prometheus_measurement")
+    with pytest.raises(ValidationError):
+        Stage2RepetitionAttestation.model_validate(values)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["baseline_raw_exposition_file", "final_raw_exposition_file"],
+)
+def test_prometheus_raw_exposition_references_must_bind_to_repetition_manifest(
+    field: str,
+) -> None:
+    repetition = _attestation().repetitions[0]
+    measurement_values = repetition.prometheus_measurement.model_dump(mode="python")
+    measurement_values[field]["sha256"] = "0" * 64
+    measurement_values["evidence_sha256"] = sha256_identity(
+        measurement_values, omit_fields=frozenset({"evidence_sha256"})
+    )
+    measurement = type(repetition.prometheus_measurement).model_validate(measurement_values)
+    values = repetition.model_dump(mode="python")
+    values["prometheus_measurement"] = measurement
+    values["identity_sha256"] = sha256_identity(values, omit_fields=frozenset({"identity_sha256"}))
+    with pytest.raises(ValidationError, match="absent from the repetition manifest"):
+        Stage2RepetitionAttestation.model_validate(values)
+
+
+def test_prometheus_parsed_snapshots_cannot_exist_without_raw_exposition_references() -> None:
+    measurement = _attestation().repetitions[0].prometheus_measurement
+    values = measurement.model_dump(mode="python")
+    values.pop("baseline_raw_exposition_file")
+    with pytest.raises(ValidationError):
+        type(measurement).model_validate(values)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "value"),
+    [
+        ("server_process_identity", "other-process"),
+        ("served_model_label", "other-model"),
+        ("engine_label", "1"),
+        ("baseline_at_dispatch", None),
+        ("final_before_drain", None),
+        ("wrong_delta", None),
+    ],
+)
+def test_prometheus_measurement_rejects_process_phase_label_and_delta_drift(
+    mutation: str,
+    value: object,
+) -> None:
+    measurement = _attestation().repetitions[0].prometheus_measurement
+    values = measurement.model_dump(mode="python")
+    if mutation in {"server_process_identity", "served_model_label", "engine_label"}:
+        values[mutation] = value
+    elif mutation == "baseline_at_dispatch":
+        values["first_measured_request_dispatch_offset_ns"] = values["baseline_snapshot"][
+            "scrape_monotonic_offset_ns"
+        ]
+    elif mutation == "final_before_drain":
+        values["final_drain_boundary_offset_ns"] = (
+            values["final_snapshot"]["scrape_monotonic_offset_ns"] + 1
+        )
+    else:
+        values["counter_deltas"][0]["after"] += 1
+        values["counter_deltas"][0]["delta"] += 1
+    values["evidence_sha256"] = sha256_identity(values, omit_fields=frozenset({"evidence_sha256"}))
+    with pytest.raises(ValidationError):
+        type(measurement).model_validate(values)
+
+
+def test_prometheus_measurement_rejects_stale_scrape_gate_distance() -> None:
+    measurement = _attestation().repetitions[0].prometheus_measurement
+    values = measurement.model_dump(mode="python")
+    values["final_drain_boundary_offset_ns"] = (
+        values["final_snapshot"]["scrape_monotonic_offset_ns"] - 1_000_000_001
+    )
+    values["evidence_sha256"] = sha256_identity(values, omit_fields=frozenset({"evidence_sha256"}))
+    with pytest.raises(ValidationError, match="stale"):
+        type(measurement).model_validate(values)
+
+
+def test_prometheus_measurement_rejects_stale_baseline_scrape() -> None:
+    measurement = _attestation().repetitions[0].prometheus_measurement
+    values = measurement.model_dump(mode="python")
+    stale_offset = values["first_measured_request_dispatch_offset_ns"] - 1_000_000_001
+    values["measured_phase_start_offset_ns"] = stale_offset
+    values["baseline_snapshot"]["scrape_monotonic_offset_ns"] = stale_offset
+    baseline = type(measurement.baseline_snapshot).model_validate(values["baseline_snapshot"])
+    values["baseline_parsed_snapshot_file"]["sha256"] = hashlib.sha256(
+        canonical_json_bytes(baseline) + b"\n"
+    ).hexdigest()
+    values["evidence_sha256"] = sha256_identity(values, omit_fields=frozenset({"evidence_sha256"}))
+    with pytest.raises(ValidationError, match="stale"):
+        type(measurement).model_validate(values)
+
+
+def test_runtime_control_requires_drain_completion_before_final_scrape() -> None:
+    control = _attestation().repetitions[0].runtime_control
+    values = control.model_dump(mode="python")
+    values["final_drain_completed_offset_ns"] = values["final_metric_scrape"][
+        "scrape_monotonic_offset_ns"
+    ]
+    with pytest.raises(ValidationError, match="final drain completion"):
+        type(control).model_validate(values)
+
+
+@pytest.mark.parametrize("mutation", ["repetition", "scope"])
+def test_repetition_reconstruction_binds_raw_prometheus_capture_metadata(
+    mutation: str,
+) -> None:
+    _, repetition_payloads = make_experiment_attestation()
+    raw = {path: data for path, data in repetition_payloads[0].items() if path.startswith("raw/")}
+    path = "raw/prometheus/measured-window-baseline.json"
+    capture = json.loads(raw[path])
+    if mutation == "repetition":
+        capture["repetition_index"] = 2
+    else:
+        capture["evidence_scope"] = "FUTURE_REAL_RUNTIME"
+        capture["capture_source"] = "FUTURE_RUNTIME_PROMETHEUS_COLLECTOR"
+    capture["identity_sha256"] = sha256_identity(
+        capture, omit_fields=frozenset({"identity_sha256"})
+    )
+    raw[path] = canonical_json_bytes(capture) + b"\n"
+    with pytest.raises(Stage2ExperimentError, match="cross a repetition, evidence scope"):
+        reconstruct_experiment_repetition(raw)
+
+
 def test_missing_or_caller_overridden_metric_availability_is_rejected() -> None:
     request = _attestation().repetitions[0].measured_requests[0]
     values = request.model_dump(mode="python")
@@ -321,8 +453,282 @@ def test_request_raw_reconstruction_rejects_contradictory_retained_fields(
     changed = json.loads(raw[field])
     changed["content"][key] = contradiction
     raw[field] = canonical_json_bytes(changed) + b"\n"
-    with pytest.raises(Stage2ExperimentError, match="contradict"):
+    with pytest.raises(Stage2ExperimentError, match=r"wire|replay|invalid"):
         reconstruct_request_from_raw_evidence(raw, Stage2EvidenceScope.TEST_FIXTURE_ONLY)
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("temperature", 0.5),
+        ("max_tokens", 31),
+        ("include_usage", False),
+        ("return_token_ids", False),
+        ("stream_interval", 2),
+        ("add_special_tokens", True),
+        ("seed", 1),
+        ("n", 2),
+        ("min_tokens", 31),
+        ("ignore_eos", False),
+        ("echo", True),
+        ("model", "drifted-model"),
+        ("prompt", list(range(63))),
+    ],
+)
+def test_exact_request_body_bytes_reject_every_fixed_field_drift(
+    field: str,
+    replacement: object,
+) -> None:
+    request = _attestation().repetitions[0].measured_requests[0]
+    payloads = request_raw_evidence_payloads(request, Stage2EvidenceScope.TEST_FIXTURE_ONLY)
+    body_record = json.loads(payloads["request_body"])
+    exact = json.loads(base64.b64decode(body_record["content"]["exact_bytes_base64"]))
+    if field == "include_usage":
+        exact["stream_options"]["include_usage"] = replacement
+    else:
+        exact[field] = replacement
+    changed_bytes = canonical_json_bytes(exact)
+    body_record["content"]["exact_bytes_base64"] = base64.b64encode(changed_bytes).decode("ascii")
+    body_record["content"]["byte_count"] = len(changed_bytes)
+    body_record["content"]["sha256"] = hashlib.sha256(changed_bytes).hexdigest()
+    payloads["request_body"] = canonical_json_bytes(body_record) + b"\n"
+    with pytest.raises(Stage2ExperimentError):
+        reconstruct_request_from_raw_evidence(payloads, Stage2EvidenceScope.TEST_FIXTURE_ONLY)
+
+
+def test_exact_request_body_rejects_missing_unknown_and_duplicate_fields() -> None:
+    request = _attestation().repetitions[0].measured_requests[0]
+    for mutation in ("missing-include-usage", "unknown-field", "duplicate-field"):
+        payloads = request_raw_evidence_payloads(request, Stage2EvidenceScope.TEST_FIXTURE_ONLY)
+        body_record = json.loads(payloads["request_body"])
+        exact = json.loads(base64.b64decode(body_record["content"]["exact_bytes_base64"]))
+        if mutation == "missing-include-usage":
+            exact["stream_options"].pop("include_usage")
+        elif mutation == "unknown-field":
+            exact["unexpected"] = True
+        changed_bytes = canonical_json_bytes(exact)
+        if mutation == "duplicate-field":
+            changed_bytes = changed_bytes.replace(
+                b'"temperature":0', b'"temperature":0,"temperature":0'
+            )
+        body_record["content"]["exact_bytes_base64"] = base64.b64encode(changed_bytes).decode(
+            "ascii"
+        )
+        body_record["content"]["byte_count"] = len(changed_bytes)
+        body_record["content"]["sha256"] = hashlib.sha256(changed_bytes).hexdigest()
+        payloads["request_body"] = canonical_json_bytes(body_record) + b"\n"
+        with pytest.raises(Stage2ExperimentError):
+            reconstruct_request_from_raw_evidence(payloads, Stage2EvidenceScope.TEST_FIXTURE_ONLY)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing-request-body",
+        "request-id-mismatch",
+        "missing-content-type",
+        "ambiguous-content-type",
+        "missing-response-id",
+        "duplicate-response-id",
+        "response-id-mismatch",
+        "missing-chunks",
+        "reordered-chunks",
+        "duplicated-chunk",
+        "truncated-chunk",
+        "appended-chunk",
+        "altered-chunk",
+        "chunk-byte-count",
+        "chunk-sha256",
+        "parsed-events-mismatch",
+        "typed-evidence-mismatch",
+        "missing-transport-close",
+        "transport-close-before-done",
+    ],
+)
+def test_wire_replay_rejects_raw_and_derived_bypass_attempts(mutation: str) -> None:
+    request = _attestation().repetitions[0].measured_requests[0]
+    payloads = request_raw_evidence_payloads(request, Stage2EvidenceScope.TEST_FIXTURE_ONLY)
+    if mutation == "missing-request-body":
+        payloads.pop("request_body")
+    elif mutation in {"request-id-mismatch", "missing-content-type", "ambiguous-content-type"}:
+        record = json.loads(payloads["request_headers"])
+        fields = record["content"]["fields"]
+        if mutation == "request-id-mismatch":
+            fields[0]["normalized_value"] = "different-request"
+        elif mutation == "missing-content-type":
+            fields.pop()
+        else:
+            fields.append(fields[-1])
+        payloads["request_headers"] = canonical_json_bytes(record) + b"\n"
+    elif mutation in {"missing-response-id", "duplicate-response-id", "response-id-mismatch"}:
+        record = json.loads(payloads["response_headers"])
+        fields = record["content"]["fields"]
+        if mutation == "missing-response-id":
+            fields.clear()
+        elif mutation == "duplicate-response-id":
+            fields.append(fields[0])
+        else:
+            fields[0]["normalized_value"] = "different-request"
+        payloads["response_headers"] = canonical_json_bytes(record) + b"\n"
+    elif mutation in {
+        "missing-chunks",
+        "reordered-chunks",
+        "duplicated-chunk",
+        "truncated-chunk",
+        "appended-chunk",
+        "altered-chunk",
+        "chunk-byte-count",
+        "chunk-sha256",
+        "missing-transport-close",
+        "transport-close-before-done",
+    }:
+        record = json.loads(payloads["raw_response_body"])
+        chunks = record["content"]["response_body_chunks"]
+        if mutation == "missing-chunks":
+            chunks.clear()
+        elif mutation == "reordered-chunks":
+            chunks[0], chunks[1] = chunks[1], chunks[0]
+        elif mutation == "duplicated-chunk":
+            chunks.insert(1, chunks[0])
+        elif mutation == "truncated-chunk":
+            chunks.pop()
+        elif mutation == "appended-chunk":
+            chunks.append(chunks[-1])
+        elif mutation == "altered-chunk":
+            chunks[0]["exact_bytes_base64"] = "WA=="
+        elif mutation == "chunk-byte-count":
+            chunks[0]["decoded_byte_count"] += 1
+        elif mutation == "chunk-sha256":
+            chunks[0]["sha256"] = "0" * 64
+        elif mutation == "missing-transport-close":
+            record["content"].pop("transport_close")
+        else:
+            record["content"]["transport_close"]["close_observation_offset_ns"] = chunks[-1][
+                "observation_offset_ns"
+            ]
+        payloads["raw_response_body"] = canonical_json_bytes(record) + b"\n"
+    elif mutation == "parsed-events-mismatch":
+        record = json.loads(payloads["parsed_sse_events"])
+        record["content"]["events"][0]["data"] = "{}"
+        payloads["parsed_sse_events"] = canonical_json_bytes(record) + b"\n"
+    else:
+        record = json.loads(payloads["token_usage_reconciliation"])
+        record["content"]["typed_request_evidence"]["final_output_token_ids"][-1] = 999
+        payloads["token_usage_reconciliation"] = canonical_json_bytes(record) + b"\n"
+    with pytest.raises(Stage2ExperimentError):
+        reconstruct_request_from_raw_evidence(payloads, Stage2EvidenceScope.TEST_FIXTURE_ONLY)
+
+
+def test_fixture_wire_helper_cannot_emit_future_runtime_scope() -> None:
+    request = _attestation().repetitions[0].measured_requests[0]
+    with pytest.raises(Stage2ExperimentError, match="prohibited"):
+        request_raw_evidence_payloads(request, Stage2EvidenceScope.FUTURE_REAL_RUNTIME)
+
+
+@pytest.mark.parametrize(
+    "header_name",
+    [b"Authorization", b"X-Goog-Api-Key", b"Private-Token", b"X-Amz-Security-Token"],
+)
+def test_wire_headers_use_a_public_evidence_allowlist(header_name: bytes) -> None:
+    headers = _attestation().repetitions[0].measured_requests[0].wire_capture.request_headers
+    field_values: dict[str, object] = {
+        "ordinal": len(headers.fields),
+        "name_base64": base64.b64encode(header_name).decode("ascii"),
+        "value_base64": base64.b64encode(b"super-secret-value").decode("ascii"),
+        "name_byte_count": len(header_name),
+        "value_byte_count": len(b"super-secret-value"),
+        "name_sha256": hashlib.sha256(header_name).hexdigest(),
+        "value_sha256": hashlib.sha256(b"super-secret-value").hexdigest(),
+        "normalized_name": header_name.decode("ascii").casefold(),
+        "normalized_value": "super-secret-value",
+    }
+    field_values["identity_sha256"] = sha256_identity(field_values)
+    field = type(headers.fields[0]).model_validate(field_values)
+    values = headers.model_dump(mode="python")
+    values["fields"] = (*headers.fields, field)
+    values["normalized_view"] = (
+        *headers.normalized_view,
+        (field.normalized_name, field.normalized_value),
+    )
+    values["identity_sha256"] = sha256_identity(values, omit_fields=frozenset({"identity_sha256"}))
+    with pytest.raises(ValidationError, match="public evidence allowlist"):
+        type(headers).model_validate(values)
+
+
+@pytest.mark.parametrize("control_byte", [b"\x00", b"\x01", b"\x1f", b"\x7f"])
+def test_lossless_header_fields_reject_prohibited_control_bytes(control_byte: bytes) -> None:
+    field = (
+        _attestation().repetitions[0].measured_requests[0].wire_capture.request_headers.fields[0]
+    )
+    values = field.model_dump(mode="python")
+    malformed = b"safe" + control_byte + b"value"
+    values.update(
+        {
+            "value_base64": base64.b64encode(malformed).decode("ascii"),
+            "value_byte_count": len(malformed),
+            "value_sha256": hashlib.sha256(malformed).hexdigest(),
+            "normalized_value": malformed.decode("ascii"),
+        }
+    )
+    values["identity_sha256"] = sha256_identity(values, omit_fields=frozenset({"identity_sha256"}))
+    with pytest.raises(ValidationError, match="malformed"):
+        type(field).model_validate(values)
+
+
+def test_coalesced_terminal_frames_replay_from_retained_frame_observations() -> None:
+    request = _attestation().repetitions[0].measured_requests[0]
+    capture = request.wire_capture
+    terminal_chunks = capture.response_body_chunks[-3:]
+    data = b"".join(chunk.exact_bytes() for chunk in terminal_chunks)
+    chunk_values = terminal_chunks[0].model_dump(mode="python")
+    chunk_values.update(
+        {
+            "completed_sse_frame_observation_offsets_ns": tuple(
+                offset
+                for chunk in terminal_chunks
+                for offset in chunk.completed_sse_frame_observation_offsets_ns
+            ),
+            "exact_bytes_base64": base64.b64encode(data).decode("ascii"),
+            "decoded_byte_count": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+    )
+    chunk_values["identity_sha256"] = sha256_identity(
+        chunk_values, omit_fields=frozenset({"identity_sha256"})
+    )
+    combined = type(terminal_chunks[0]).model_validate(chunk_values)
+    chunks = (*capture.response_body_chunks[:-3], combined)
+    close_values = capture.transport_close.model_dump(mode="python")
+    close_values["raw_response_body_inventory_sha256"] = sha256_identity(chunks)
+    close_values["identity_sha256"] = sha256_identity(
+        close_values, omit_fields=frozenset({"identity_sha256"})
+    )
+    close = type(capture.transport_close).model_validate(close_values)
+    capture_values = capture.model_dump(mode="python")
+    capture_values["response_body_chunks"] = chunks
+    capture_values["transport_close"] = close
+    capture_values["identity_sha256"] = sha256_identity(
+        capture_values, omit_fields=frozenset({"identity_sha256"})
+    )
+    coalesced = type(capture).model_validate(capture_values)
+    replayed, events = replay_stage2_wire_capture(
+        coalesced, request.request_identity.identity_chain
+    )
+    assert replayed == request.request_evidence
+    assert tuple(event.observation_offset_ns for event in events[-3:]) == tuple(
+        offset
+        for chunk in terminal_chunks
+        for offset in chunk.completed_sse_frame_observation_offsets_ns
+    )
+    payloads = build_request_raw_evidence_payloads(
+        wire_capture=coalesced,
+        request_identity=request.request_identity,
+        lifecycle=request.lifecycle,
+    )
+    assert (
+        reconstruct_request_from_raw_evidence(payloads, Stage2EvidenceScope.TEST_FIXTURE_ONLY)[-1]
+        == coalesced
+    )
 
 
 def test_repetition_server_process_must_match_runtime_control() -> None:
@@ -378,6 +784,7 @@ def test_missing_or_wrong_cuda_attestation_is_rejected() -> None:
         "launch_specification",
         "public_safety_result",
         "repetition_manifest_files",
+        "prometheus_measurement_attestation_files",
         "semantic_comparison_files",
         "experiment_summary",
         "final_attestation",
@@ -403,7 +810,7 @@ def test_fixture_execution_cannot_request_live_runtime_classification() -> None:
     values["summary"]["identity_sha256"] = sha256_identity(
         values["summary"], omit_fields=frozenset({"identity_sha256"})
     )
-    with pytest.raises(ValidationError, match="fixture evidence"):
+    with pytest.raises(ValidationError, match=r"wire provenance|fixture evidence"):
         Stage2ExperimentAttestation.model_validate(values)
 
 
@@ -544,6 +951,38 @@ def test_reconstruction_rejects_missing_request_file_symlink_and_tamper(tmp_path
     request_path.unlink()
     request_path.symlink_to(target)
     with pytest.raises(Stage2ExperimentError, match="symlinks"):
+        reconstruct_experiment_attestation(root)
+
+
+def test_aggregate_writer_and_reconstructor_reject_symlinked_ancestors(tmp_path: Path) -> None:
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir()
+    linked_parent = tmp_path / "linked-parent"
+    linked_parent.symlink_to(real_parent, target_is_directory=True)
+
+    attestation, repetition_payloads = make_experiment_attestation()
+    manifest, payloads = make_aggregate_manifest(attestation, repetition_payloads)
+    linked_root = linked_parent / "writer-aggregate"
+    _write_aggregate_payloads(linked_root, payloads)
+    with pytest.raises(Stage2ExperimentError, match="unsafe"):
+        write_aggregate_manifest_last(linked_root, manifest)
+
+    real_root = real_parent / "reconstruction-aggregate"
+    write_synthetic_experiment_directory(real_root)
+    with pytest.raises(Stage2ExperimentError, match="symlink ancestors"):
+        reconstruct_experiment_attestation(linked_parent / real_root.name)
+
+
+@pytest.mark.parametrize("boundary", ["baseline", "final"])
+def test_aggregate_rejects_omitted_prometheus_raw_exposition(
+    tmp_path: Path,
+    boundary: str,
+) -> None:
+    root = tmp_path / f"missing-prometheus-{boundary}"
+    write_synthetic_experiment_directory(root)
+    path = root / "repetition-01/raw/prometheus" / f"measured-window-{boundary}.json"
+    path.unlink()
+    with pytest.raises(Stage2ExperimentError, match="inventory"):
         reconstruct_experiment_attestation(root)
 
 

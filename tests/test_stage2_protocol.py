@@ -321,6 +321,26 @@ def test_malformed_stream_retains_exact_raw_failure_bytes() -> None:
 
 
 @pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("id", '"cmpl-stage2-fixture-001"'),
+        ("choices", "[]"),
+        ("usage", "{}"),
+        ("metrics", "{}"),
+    ],
+)
+def test_sse_response_json_rejects_duplicate_fields(field: str, value: str) -> None:
+    validator = _validator()
+    duplicated = (
+        'data: {"id":"cmpl-stage2-fixture-001","choices":[],'
+        f'"{field}":{value},"{field}":{value}'
+        "}\n\n"
+    ).encode("ascii")
+    with pytest.raises(Stage2ProtocolError, match="duplicate field"):
+        validator.feed(duplicated, 20)
+
+
+@pytest.mark.parametrize(
     ("body_id", "prompt"),
     [
         ("cmpl-wrong", PROMPT),

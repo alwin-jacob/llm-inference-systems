@@ -34,11 +34,35 @@ class Stage2ProtocolError(ValueError):
     """Raised when future-runtime evidence violates the Stage 2 protocol."""
 
 
+def _json_without_duplicate_keys(data: str) -> object:
+    def pairs_hook(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise Stage2ProtocolError("completion response JSON contains a duplicate field")
+            result[key] = value
+        return result
+
+    try:
+        return json.loads(data, object_pairs_hook=pairs_hook)
+    except json.JSONDecodeError as error:
+        raise Stage2ProtocolError("malformed SSE JSON") from error
+
+
 @dataclass(frozen=True, slots=True)
 class RetainedBodyChunk:
     observation_offset_ns: int
     data: bytes
     sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class RetainedSSEEvent:
+    ordinal: int
+    observation_offset_ns: int
+    kind: str
+    data: str | None
+    comments: tuple[str, ...]
 
 
 def build_completion_request(
@@ -264,10 +288,15 @@ class Stage2StreamValidator:
         self._terminal_carried_tokens: bool | None = None
         self._last_observation_offset_ns = dispatch_offset_ns
         self._raw_body_chunks: list[RetainedBodyChunk] = []
+        self._parsed_sse_events: list[RetainedSSEEvent] = []
 
     @property
     def retained_raw_body_chunks(self) -> tuple[RetainedBodyChunk, ...]:
         return tuple(self._raw_body_chunks)
+
+    @property
+    def parsed_sse_events(self) -> tuple[RetainedSSEEvent, ...]:
+        return tuple(self._parsed_sse_events)
 
     def accept_response_headers(self, x_request_id: str, observation_offset_ns: int) -> None:
         if self._response_headers_offset_ns is not None:
@@ -307,6 +336,15 @@ class Stage2StreamValidator:
             if index and self._frame_clock is not None:
                 frame_offset_ns = self._frame_clock()
                 self._advance(frame_offset_ns)
+            self._parsed_sse_events.append(
+                RetainedSSEEvent(
+                    ordinal=len(self._parsed_sse_events),
+                    observation_offset_ns=frame_offset_ns,
+                    kind=frame.kind,
+                    data=frame.data,
+                    comments=frame.comments,
+                )
+            )
             if self._protocol_terminal_offset_ns is not None:
                 raise Stage2ProtocolError("post-protocol-terminal SSE data observed")
             if frame.kind == "comment":
@@ -320,10 +358,7 @@ class Stage2StreamValidator:
                 continue
             if frame.data is None:
                 raise Stage2ProtocolError("SSE data frame is empty")
-            try:
-                decoded = json.loads(frame.data)
-            except json.JSONDecodeError as error:
-                raise Stage2ProtocolError("malformed SSE JSON") from error
+            decoded = _json_without_duplicate_keys(frame.data)
             self._accept_response(_object(decoded, field="completion response"), frame_offset_ns)
 
     def _accept_response(self, value: dict[str, object], observation_offset_ns: int) -> None:

@@ -24,6 +24,7 @@ from llm_inference_systems.stage1_contracts import (
     Stage1RunConfiguration,
     Stage1WorkloadDefinition,
 )
+from llm_inference_systems.stage2_attestation import PrometheusMeasurementAttestation
 from llm_inference_systems.stage2_contracts import (
     Stage2BundleManifest,
     Stage2CompletionRequest,
@@ -36,6 +37,7 @@ from llm_inference_systems.stage2_experiment import (
     Stage2ExperimentAttestation,
     Stage2MeasuredRequestAttestation,
     Stage2RepetitionAttestation,
+    Stage2RequestWireCapture,
 )
 from llm_inference_systems.stage2_runtime import (
     ModelTokenizerSnapshotManifest,
@@ -62,6 +64,8 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "model-tokenizer-snapshot-manifest-v0.3.0.schema.json": (ModelTokenizerSnapshotManifest),
     "experiment-attestation-v0.3.0.schema.json": Stage2ExperimentAttestation,
     "measured-request-attestation-v0.3.0.schema.json": Stage2MeasuredRequestAttestation,
+    "prometheus-measurement-attestation-v0.3.0.schema.json": (PrometheusMeasurementAttestation),
+    "request-wire-capture-v0.3.0.schema.json": Stage2RequestWireCapture,
     "real-runtime-attestation-v0.3.0.schema.json": Stage2ExperimentAttestation,
     "repetition-attestation-v0.3.0.schema.json": Stage2RepetitionAttestation,
     "run-configuration-v0.3.0.schema.json": Stage2RunConfiguration,

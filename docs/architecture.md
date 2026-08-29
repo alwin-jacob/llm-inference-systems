@@ -46,9 +46,11 @@ Stage 2A adds a separate `0.3.0` protocol layer exercised only by CPU fixtures:
 6. `stage2_attestation.py` keeps parsing evidence-neutral and retains request/component-shaped
    attestations at fixture scope;
 7. `stage2_experiment.py` assembles the only final future-runtime boundary: exactly 48 measured
-   request attestations in three repetitions, ten distinct manifest-bound raw files per request,
-   cancellation and CUDA evidence per restart, lifecycle-derived concurrency, 16 comparisons,
-   derived availability/eligibility, aggregate validation, and pure directory reconstruction;
+   request attestations in three repetitions, five manifest-bound raw wire/log files plus five
+   replay-derived files per request, one manifest-bound baseline/final Prometheus window per
+   repetition, cancellation and CUDA evidence per restart, lifecycle-derived concurrency, 16
+   comparisons, derived availability/eligibility, aggregate validation, and pure directory
+   reconstruction;
 8. `stage2_bundle.py` manages inspectable staging state, durable raw and derived evidence,
    public-safety checks, reconstruction, manifest-last commit, directory durability, and tamper
    validation; and
@@ -65,9 +67,13 @@ cannot enter the ordinary development dependency graph.
 The aggregate experiment root inventories exact canonical bytes for shared environment/resource,
 NVIDIA isolation, execution lock plus resolver/install/reviewed-lock raw evidence, snapshot plus
 read-only verification evidence, launch, safety, workload, all three repetition
-manifests, three CUDA attestations, three cancellation results, all 16 comparisons, availability,
-summary, aggregate validation, and final attestation records. Repetition and aggregate manifests
+manifests, three CUDA attestations, three cancellation results, three measured-window Prometheus
+attestations, all 16 comparisons, availability, summary, aggregate validation, and final
+attestation records. Repetition and aggregate manifests
 must be written strictly last; reconstruction rejects missing, changed, symlinked, traversing,
-case-colliding, or unlisted files. Each of the ten per-request raw records is reconstructed against
-the exact request identity, parsed stream, metrics, lifecycle, and token/usage values before the
-terminal aggregate manifest can be published.
+case-colliding, or unlisted files. Each request retains exact transmitted JSON bytes, ordered
+lossless request/response headers, ordered Base64 body chunks with retained completed-frame clocks,
+raw log records, and transport-close provenance. The same incremental SSE parser derives the other
+five records and the typed request evidence before the terminal aggregate manifest can be
+published. Aggregate roots reached through symlinked path components are rejected; macOS's
+root-owned `/var` and `/tmp` platform aliases are normalized before that check.

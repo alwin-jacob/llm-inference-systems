@@ -149,6 +149,15 @@ quiescent pre/post scrapes. Every retained delta must reconstruct exactly from i
 values and carry only the exact expected labels. KV-cache percentage is descriptive and is not
 memory utilization.
 
+Every repetition owns exactly one measured-window attestation. Its raw baseline capture follows
+the steady-state gate and strictly precedes the first measured dispatch. Its raw final capture
+follows the 16th accepted transport terminal and a separately retained final-drain completion
+boundary, remains on the same server process, and precedes shutdown. Each scrape must be within one
+second of its accepted dispatch/drain gate. Both raw captures and both replay-parsed snapshots are path/size/SHA-256
+entries in that repetition's committed manifest. The exact required deltas are `1024` prompt
+tokens, `512` generation tokens, `16` length completions, and zero preemptions, prefix-cache
+queries, and prefix-cache hits.
+
 The cancellation model retains raw request-add and abort log records with source identity, byte
 offsets, ordinals, monotonic times, and hashes. It requires exactly ten pre-dispatch zero
 running/waiting samples at at least 100-ms spacing, a baseline for every selected counter, dispatch,
@@ -196,10 +205,15 @@ Measured-request IDs must equal the runtime-control measured-ID set; three stabi
 shape-warmup IDs, the cancellation ID, and 16 measured IDs are locally disjoint, and every external
 ID is globally unique across repetitions. Case IDs intentionally repeat only for comparison.
 
-Each measured request binds parsed four-terminal evidence, the full request identity, exact token
-and usage reconciliation, and ten distinct path/hash/size references to its committed repetition
-manifest. Filesystem reconstruction also derives the exact expected canonical bytes for all ten
-records and rejects swapped or semantically detached references. Lifecycle intervals are half-open
+Each measured request binds exact transmitted request-body bytes, the complete frozen parsed
+request, ordered lossless request and response headers from a closed public-safe name allowlist,
+ordered raw body chunks with per-chunk times/counts/hashes and completed-frame observation clocks,
+raw request logs, and manifest-bound transport close. The same incremental SSE
+parser derives every stored SSE event, all four terminal boundaries, five-field metrics, lifecycle,
+token/usage reconciliation, and typed request evidence. Ten distinct path/hash/size references bind
+the five raw and five derived records to the committed repetition manifest; fixture constructors
+carry a discriminator that cannot satisfy future collector provenance. Lifecycle intervals are
+half-open
 `[dispatch, terminal)`. Terminal events are processed
 before dispatch events at equal timestamps, so touching intervals do not create overlap. Every
 interval lies inside the measured phase, the derived maximum active client count is exactly two,

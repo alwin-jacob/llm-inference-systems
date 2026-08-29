@@ -519,6 +519,26 @@ class BundleFileEntry(StrictModel):
         return self
 
 
+class Stage2ManifestBoundFile(StrictModel):
+    """Path/size/digest identity for evidence retained by a committed manifest."""
+
+    path: str
+    sha256: Sha256
+    size: NonNegativeInt
+
+    @model_validator(mode="after")
+    def validate_path(self) -> Self:
+        path = PurePosixPath(self.path)
+        if (
+            self.path != path.as_posix()
+            or path.is_absolute()
+            or not path.parts
+            or any(part in {"", ".", ".."} for part in path.parts)
+        ):
+            raise ValueError("manifest-bound evidence path must be normalized and relative")
+        return self
+
+
 class Stage2BundleManifest(StrictModel):
     schema_version: Literal["0.3.0"]
     measurement_protocol_version: Literal["0.3.0"]

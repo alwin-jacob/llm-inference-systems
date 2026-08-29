@@ -489,6 +489,7 @@ class Stage2RuntimeControlEvidence(StrictModel):
     measured_client_slot_assignments: tuple[Literal[0, 1], ...] = Field(
         min_length=16, max_length=16
     )
+    final_drain_completed_offset_ns: NonNegativeInt
     final_metric_scrape: PrometheusSnapshot
     shutdown_processes: tuple[ProcessExitEvidence, ...] = Field(min_length=1)
     residual_process_ids: tuple[NonNegativeInt, ...]
@@ -578,10 +579,13 @@ class Stage2RuntimeControlEvidence(StrictModel):
         final_drain_phase = self.phases[RUNTIME_PHASE_ORDER.index("FINAL_METRICS_DRAIN")]
         if not (
             final_drain_phase.started_offset_ns
-            <= self.final_metric_scrape.scrape_monotonic_offset_ns
+            <= self.final_drain_completed_offset_ns
+            < self.final_metric_scrape.scrape_monotonic_offset_ns
             <= final_drain_phase.ended_offset_ns
         ):
-            raise ValueError("final metric scrape is outside the final-drain phase")
+            raise ValueError(
+                "final drain completion or metric scrape is outside the final-drain phase"
+            )
         try:
             require_quiescent(self.final_metric_scrape)
         except PrometheusProtocolError as error:
@@ -650,7 +654,12 @@ class Stage2RuntimeControlEvidence(StrictModel):
                     "requested_client_concurrency": self.requested_client_concurrency,
                 }
             ),
-            "FINAL_METRICS_DRAIN": sha256_identity(self.final_metric_scrape),
+            "FINAL_METRICS_DRAIN": sha256_identity(
+                {
+                    "final_drain_completed_offset_ns": self.final_drain_completed_offset_ns,
+                    "final_metric_scrape": self.final_metric_scrape,
+                }
+            ),
             "SHUTDOWN": sha256_identity(self.shutdown_processes),
             "NO_RESIDUAL_PROCESS_VERIFICATION": sha256_identity(
                 {

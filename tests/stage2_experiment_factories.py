@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 from datetime import UTC, datetime
@@ -11,6 +12,8 @@ from llm_inference_systems.stage2_attestation import (
     CudaBackedExecutionAttestation,
     LinuxEnvironmentManifest,
     NvidiaT4ResourceAttestation,
+    PrometheusMeasurementAttestation,
+    PrometheusRawScrapeCapture,
     PublicSafetyAttestation,
     RequestIdentityAttestation,
     ServerRestartIdentity,
@@ -26,19 +29,26 @@ from llm_inference_systems.stage2_control import bundle_manifest_sha256, compare
 from llm_inference_systems.stage2_experiment import (
     STAGE2_EXPERIMENT_CASE_IDS,
     AggregateRootState,
+    FixtureWireCaptureProvenance,
     ManifestBoundFile,
     Stage2AggregateExperimentManifest,
     Stage2CrossRestartComparison,
+    Stage2ExactRequestBodyCapture,
     Stage2ExperimentAttestation,
     Stage2ExperimentClassification,
     Stage2ExperimentSummary,
     Stage2ExperimentWorkload,
+    Stage2LosslessHeaderField,
     Stage2MeasuredRequestAttestation,
+    Stage2OrderedHeadersCapture,
+    Stage2RawResponseBodyChunk,
     Stage2RepetitionAttestation,
     Stage2RepetitionCudaAttestation,
     Stage2RequestLifecycle,
     Stage2RequestRawEvidence,
+    Stage2RequestWireCapture,
     Stage2RestartSemanticAttestation,
+    Stage2TransportCloseCapture,
     Stage2WorkloadCase,
     build_cancellation_client_stream_raw_evidence_bytes,
     build_cuda_raw_evidence_bytes,
@@ -49,18 +59,21 @@ from llm_inference_systems.stage2_experiment import (
     environment_raw_evidence_bytes,
     execution_lock_raw_evidence_bytes,
     nvidia_raw_evidence_bytes,
+    prometheus_raw_scrape_capture_bytes,
     public_safety_raw_evidence_bytes,
     reconstruct_experiment_repetition,
+    replay_stage2_wire_capture,
     scoped_raw_evidence_bytes,
     snapshot_read_only_raw_evidence_bytes,
     write_aggregate_manifest_last,
 )
+from llm_inference_systems.stage2_prometheus import PrometheusSnapshot, derive_counter_delta
+from llm_inference_systems.stage2_protocol import build_completion_request
 from tests.stage2_factories import (
     FIXTURE_IDENTITY,
     PROMPT,
     make_log_chain,
     make_real_runtime_attestation,
-    make_request_evidence,
     make_runtime_control,
 )
 
@@ -75,6 +88,27 @@ def _reference(path: str, data: bytes) -> ManifestBoundFile:
         sha256=hashlib.sha256(data).hexdigest(),
         size=len(data),
     )
+
+
+def _prometheus_capture(
+    snapshot: PrometheusSnapshot,
+    repetition_index: Literal[1, 2, 3],
+) -> PrometheusRawScrapeCapture:
+    raw = snapshot.raw_exposition.encode("utf-8")
+    values: dict[str, object] = {
+        "schema_version": "0.3.0",
+        "evidence_scope": Stage2EvidenceScope.TEST_FIXTURE_ONLY,
+        "repetition_index": repetition_index,
+        "process_start_id": snapshot.process_start_id,
+        "scrape_wall_clock_utc": snapshot.scrape_wall_clock_utc,
+        "scrape_monotonic_offset_ns": snapshot.scrape_monotonic_offset_ns,
+        "raw_exposition_base64": base64.b64encode(raw).decode("ascii"),
+        "decoded_byte_count": len(raw),
+        "raw_exposition_sha256": hashlib.sha256(raw).hexdigest(),
+        "capture_source": "TEST_FIXTURE_ONLY_CPU_SCRAPE",
+    }
+    values["identity_sha256"] = sha256_identity(values)
+    return PrometheusRawScrapeCapture.model_validate(values)
 
 
 def _phase_payloads(control: object) -> dict[str, bytes]:
@@ -107,7 +141,10 @@ def _phase_payloads(control: object) -> dict[str, bytes]:
             "measured_request_ids": typed.measured_request_ids,
             "requested_client_concurrency": typed.requested_client_concurrency,
         },
-        "FINAL_METRICS_DRAIN": typed.final_metric_scrape,
+        "FINAL_METRICS_DRAIN": {
+            "final_drain_completed_offset_ns": typed.final_drain_completed_offset_ns,
+            "final_metric_scrape": typed.final_metric_scrape,
+        },
         "SHUTDOWN": typed.shutdown_processes,
         "NO_RESIDUAL_PROCESS_VERIFICATION": {
             "residual_active_request_ids": typed.residual_active_request_ids,
@@ -128,31 +165,225 @@ def _phase_payloads(control: object) -> dict[str, bytes]:
     return payloads
 
 
+def _lossless_header_field(
+    ordinal: int,
+    name: bytes,
+    value: bytes,
+) -> Stage2LosslessHeaderField:
+    values: dict[str, object] = {
+        "ordinal": ordinal,
+        "name_base64": base64.b64encode(name).decode("ascii"),
+        "value_base64": base64.b64encode(value).decode("ascii"),
+        "name_byte_count": len(name),
+        "value_byte_count": len(value),
+        "name_sha256": hashlib.sha256(name).hexdigest(),
+        "value_sha256": hashlib.sha256(value).hexdigest(),
+        "normalized_name": name.decode("ascii").casefold(),
+        "normalized_value": value.decode("ascii").strip(" \t"),
+    }
+    values["identity_sha256"] = sha256_identity(values)
+    return Stage2LosslessHeaderField.model_validate(values)
+
+
+def _headers(
+    *,
+    direction: Literal["TRANSMITTED_REQUEST", "RECEIVED_RESPONSE"],
+    observation_offset_ns: int,
+    values: tuple[tuple[bytes, bytes], ...],
+) -> Stage2OrderedHeadersCapture:
+    fields = tuple(
+        _lossless_header_field(ordinal, name, value) for ordinal, (name, value) in enumerate(values)
+    )
+    model_values: dict[str, object] = {
+        "direction": direction,
+        "observation_offset_ns": observation_offset_ns,
+        "fields": fields,
+        "normalized_view": tuple(
+            (field.normalized_name, field.normalized_value) for field in fields
+        ),
+    }
+    model_values["identity_sha256"] = sha256_identity(model_values)
+    return Stage2OrderedHeadersCapture.model_validate(model_values)
+
+
+def _sse_data(value: object) -> bytes:
+    return b"data: " + canonical_json_bytes(value) + b"\n\n"
+
+
 def _raw_request_payloads(
     *,
     repetition_index: Literal[1, 2, 3],
     case_id: str,
     external_id: str,
-    request_evidence: Stage2RequestEvidence,
     request_identity: RequestIdentityAttestation,
-    lifecycle: Stage2RequestLifecycle,
-) -> tuple[Stage2RequestRawEvidence, dict[str, bytes]]:
-    values: dict[str, ManifestBoundFile] = {}
+    measurement_phase_start_ns: int,
+    measurement_phase_end_ns: int,
+    measurement_phase_identity_sha256: str,
+    dispatch_offset_ns: int,
+    output_token_ids: tuple[int, ...],
+) -> tuple[
+    Stage2RequestRawEvidence,
+    dict[str, bytes],
+    Stage2RequestEvidence,
+    Stage2RequestWireCapture,
+    Stage2RequestLifecycle,
+]:
+    request = build_completion_request(external_id, PROMPT).body
+    request_bytes = canonical_json_bytes(request)
+    request_body_values: dict[str, object] = {
+        "exact_bytes_base64": base64.b64encode(request_bytes).decode("ascii"),
+        "byte_count": len(request_bytes),
+        "sha256": hashlib.sha256(request_bytes).hexdigest(),
+        "canonical_request": request,
+        "canonical_request_sha256": sha256_identity(request),
+        "request_identity_sha256": sha256_identity({"request": request, "request_id": external_id}),
+        "transmission_offset_ns": dispatch_offset_ns,
+    }
+    request_body_values["identity_sha256"] = sha256_identity(request_body_values)
+    request_body = Stage2ExactRequestBodyCapture.model_validate(request_body_values)
+    request_headers = _headers(
+        direction="TRANSMITTED_REQUEST",
+        observation_offset_ns=dispatch_offset_ns,
+        values=(
+            (b"X-Request-Id", external_id.encode("ascii")),
+            (b"Content-Type", b"application/json"),
+        ),
+    )
+    response_headers = _headers(
+        direction="RECEIVED_RESPONSE",
+        observation_offset_ns=dispatch_offset_ns + 10,
+        values=((b"X-Request-Id", external_id.encode("ascii")),),
+    )
+    raw_chunks: list[tuple[int, bytes]] = []
+    for event_index, token in enumerate(output_token_ids):
+        choice: dict[str, object] = {
+            "index": 0,
+            "text": f"<fixture-{token}>",
+            "token_ids": [token],
+            "finish_reason": "length" if event_index == 31 else None,
+        }
+        if event_index == 0:
+            choice["prompt_token_ids"] = list(PROMPT)
+        raw_chunks.append(
+            (
+                dispatch_offset_ns + 20 + event_index,
+                _sse_data({"id": f"cmpl-{external_id}", "choices": [choice]}),
+            )
+        )
+    raw_chunks.append(
+        (
+            dispatch_offset_ns + 60,
+            _sse_data(
+                {
+                    "id": f"cmpl-{external_id}",
+                    "choices": [],
+                    "usage": {
+                        "prompt_tokens": 64,
+                        "completion_tokens": 32,
+                        "total_tokens": 96,
+                    },
+                    "metrics": {
+                        "time_to_first_token_ms": 1.0,
+                        "generation_time_ms": 2.0,
+                        "queue_time_ms": 0.0,
+                        "mean_itl_ms": 0.031,
+                        "tokens_per_second": 16.0,
+                    },
+                }
+            ),
+        )
+    )
+    raw_chunks.append((dispatch_offset_ns + 70, b"data: [DONE]\n\n"))
+    chunks: list[Stage2RawResponseBodyChunk] = []
+    for ordinal, (offset, data) in enumerate(raw_chunks):
+        values: dict[str, object] = {
+            "repetition_index": repetition_index,
+            "case_id": case_id,
+            "external_request_id": external_id,
+            "ordinal": ordinal,
+            "observation_offset_ns": offset,
+            "completed_sse_frame_observation_offsets_ns": (offset,),
+            "exact_bytes_base64": base64.b64encode(data).decode("ascii"),
+            "decoded_byte_count": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "source_capture_provenance": "TEST_FIXTURE_ONLY_CPU_SCRIPTED_HTTP",
+            "inventory_manifest_path": "raw_response_body.json",
+        }
+        values["identity_sha256"] = sha256_identity(values)
+        chunks.append(Stage2RawResponseBodyChunk.model_validate(values))
+    provenance_values: dict[str, object] = {
+        "capture_kind": "FIXTURE_CONSTRUCTOR",
+        "evidence_scope": Stage2EvidenceScope.TEST_FIXTURE_ONLY,
+        "classification": "SYNTHETIC_PROTOCOL_SHAPE_ONLY",
+        "fixture_marker": "TEST_FIXTURE_ONLY",
+        "fixture_identity_sha256": FIXTURE_IDENTITY,
+    }
+    provenance_values["identity_sha256"] = sha256_identity(provenance_values)
+    provenance = FixtureWireCaptureProvenance.model_validate(provenance_values)
+    close_values: dict[str, object] = {
+        "external_request_id": external_id,
+        "close_classification": "CLEAN_EOF",
+        "close_observation_offset_ns": dispatch_offset_ns + 80,
+        "response_close_completed": True,
+        "post_close_byte_count": 0,
+        "post_close_event_count": 0,
+        "raw_response_body_inventory_sha256": sha256_identity(tuple(chunks)),
+        "request_identity_chain_sha256": request_identity.identity_sha256,
+    }
+    close_values["identity_sha256"] = sha256_identity(close_values)
+    transport_close = Stage2TransportCloseCapture.model_validate(close_values)
+    capture_values: dict[str, object] = {
+        "schema_version": "0.3.0",
+        "repetition_index": repetition_index,
+        "case_id": case_id,
+        "external_request_id": external_id,
+        "provenance": provenance,
+        "request_body": request_body,
+        "request_headers": request_headers,
+        "response_headers": response_headers,
+        "response_body_chunks": tuple(chunks),
+        "transport_close": transport_close,
+    }
+    capture_values["identity_sha256"] = sha256_identity(capture_values)
+    wire_capture = Stage2RequestWireCapture.model_validate(capture_values)
+    request_evidence, _ = replay_stage2_wire_capture(wire_capture, request_identity.identity_chain)
+    lifecycle = Stage2RequestLifecycle(
+        dispatch_offset_ns=request_evidence.timing.dispatch_offset_ns,
+        terminal_offset_ns=request_evidence.timing.transport_terminal_offset_ns,
+        measurement_phase_start_ns=measurement_phase_start_ns,
+        measurement_phase_end_ns=measurement_phase_end_ns,
+        measurement_phase_identity_sha256=measurement_phase_identity_sha256,
+    )
+    references: dict[str, ManifestBoundFile] = {}
     derived = build_request_raw_evidence_payloads(
-        repetition_index=repetition_index,
-        case_id=case_id,
-        external_request_id=external_id,
-        request_evidence=request_evidence,
+        wire_capture=wire_capture,
         request_identity=request_identity,
         lifecycle=lifecycle,
-        evidence_scope=Stage2EvidenceScope.TEST_FIXTURE_ONLY,
     )
     payloads: dict[str, bytes] = {}
     for field, data in derived.items():
-        path = f"raw/requests/{external_id}/{field}.json"
+        directory = (
+            "raw"
+            if field
+            in {
+                "request_body",
+                "request_headers",
+                "response_headers",
+                "raw_response_body",
+                "server_logs",
+            }
+            else "derived"
+        )
+        path = f"{directory}/requests/{external_id}/{field}.json"
         payloads[path] = data
-        values[field] = _reference(path, data)
-    return Stage2RequestRawEvidence.model_validate(values), payloads
+        references[field] = _reference(path, data)
+    return (
+        Stage2RequestRawEvidence.model_validate(references),
+        payloads,
+        request_evidence,
+        wire_capture,
+        lifecycle,
+    )
 
 
 def _make_repetition(
@@ -177,6 +408,7 @@ def _make_repetition(
             RequestIdentityAttestation,
             Stage2RequestLifecycle,
             Stage2RequestRawEvidence,
+            Stage2RequestWireCapture,
         ]
     ] = []
     for index, (case_id, external_id) in enumerate(
@@ -186,16 +418,6 @@ def _make_repetition(
         slot_index = index % 2
         base_offset = measured_phase.started_offset_ns + 100_000_000 + pair_index * 1_000
         base_offset += slot_index * 10
-        evidence = make_request_evidence(
-            fixture_identity_sha256=FIXTURE_IDENTITY,
-            external_id=external_id,
-            base_offset_ns=base_offset,
-            output_token_ids=(
-                (*range(31), 999)
-                if repetition_index == 3 and case_id == semantic_mismatch_case_id
-                else tuple(range(32))
-            ),
-        )
         chain = make_log_chain(
             external_id,
             first_observation_offset_ns=base_offset + 1,
@@ -205,30 +427,38 @@ def _make_repetition(
             identity_chain=chain,
             identity_sha256=sha256_identity(chain),
         )
-        lifecycle = Stage2RequestLifecycle(
-            dispatch_offset_ns=evidence.timing.dispatch_offset_ns,
-            terminal_offset_ns=evidence.timing.transport_terminal_offset_ns,
-            measurement_phase_start_ns=measured_phase.started_offset_ns,
-            measurement_phase_end_ns=measured_phase.ended_offset_ns,
-            measurement_phase_identity_sha256=measured_phase.evidence_identity_sha256,
-        )
-        raw, raw_payloads = _raw_request_payloads(
+        raw, raw_payloads, evidence, wire_capture, lifecycle = _raw_request_payloads(
             repetition_index=typed_repetition_index,
             case_id=case_id,
             external_id=external_id,
-            request_evidence=evidence,
             request_identity=request_identity,
-            lifecycle=lifecycle,
+            measurement_phase_start_ns=measured_phase.started_offset_ns,
+            measurement_phase_end_ns=measured_phase.ended_offset_ns,
+            measurement_phase_identity_sha256=measured_phase.evidence_identity_sha256,
+            dispatch_offset_ns=base_offset,
+            output_token_ids=(
+                (*range(31), 999)
+                if repetition_index == 3 and case_id == semantic_mismatch_case_id
+                else tuple(range(32))
+            ),
         )
         payloads.update(raw_payloads)
         request_components.append(
-            (case_id, external_id, evidence, request_identity, lifecycle, raw)
+            (
+                case_id,
+                external_id,
+                evidence,
+                request_identity,
+                lifecycle,
+                raw,
+                wire_capture,
+            )
         )
     if swap_request_raw_references and repetition_index == 1:
         first = request_components[0]
         second = request_components[1]
-        request_components[0] = (*first[:-1], second[-1])
-        request_components[1] = (*second[:-1], first[-1])
+        request_components[0] = (*first[:5], second[5], first[6])
+        request_components[1] = (*second[:5], first[5], second[6])
     cancellation_result_data = _json_bytes(control.cancellation_result)
     cancellation_result = _reference("cancellation-result.json", cancellation_result_data)
     payloads[cancellation_result.path] = cancellation_result_data
@@ -262,6 +492,16 @@ def _make_repetition(
     )
     cuda_raw = _reference("raw/cuda/runtime-evidence.json", cuda_raw_data)
     payloads[cuda_raw.path] = cuda_raw_data
+    baseline_snapshot = control.steady_state_snapshots[-1].model_copy(
+        update={"scrape_monotonic_offset_ns": measured_phase.started_offset_ns}
+    )
+    final_snapshot = control.final_metric_scrape
+    baseline_capture = _prometheus_capture(baseline_snapshot, typed_repetition_index)
+    final_capture = _prometheus_capture(final_snapshot, typed_repetition_index)
+    baseline_raw_path = "raw/prometheus/measured-window-baseline.json"
+    final_raw_path = "raw/prometheus/measured-window-final.json"
+    payloads[baseline_raw_path] = prometheus_raw_scrape_capture_bytes(baseline_capture)
+    payloads[final_raw_path] = prometheus_raw_scrape_capture_bytes(final_capture)
     derived_payloads = reconstruct_experiment_repetition(
         {path: data for path, data in payloads.items() if path.startswith("raw/")}
     )
@@ -289,6 +529,52 @@ def _make_repetition(
         ),
     )
     manifest_sha = bundle_manifest_sha256(manifest)
+    deltas = (
+        derive_counter_delta(baseline_snapshot, final_snapshot, "vllm:prompt_tokens_total"),
+        derive_counter_delta(baseline_snapshot, final_snapshot, "vllm:generation_tokens_total"),
+        derive_counter_delta(
+            baseline_snapshot,
+            final_snapshot,
+            "vllm:request_success_total",
+            finished_reason="length",
+        ),
+        derive_counter_delta(baseline_snapshot, final_snapshot, "vllm:num_preemptions_total"),
+        derive_counter_delta(baseline_snapshot, final_snapshot, "vllm:prefix_cache_queries_total"),
+        derive_counter_delta(baseline_snapshot, final_snapshot, "vllm:prefix_cache_hits_total"),
+    )
+    measurement_values: dict[str, object] = {
+        "schema_version": "0.3.0",
+        "repetition_index": repetition_index,
+        "repetition_manifest_sha256": manifest_sha,
+        "server_process_identity": server_process,
+        "served_model_label": "qwen2.5-0.5b-instruct-stage2",
+        "engine_label": "0",
+        "baseline_raw_exposition_file": _reference(baseline_raw_path, payloads[baseline_raw_path]),
+        "baseline_parsed_snapshot_file": _reference(
+            "derived/prometheus/measured-window-baseline-snapshot.json",
+            payloads["derived/prometheus/measured-window-baseline-snapshot.json"],
+        ),
+        "final_raw_exposition_file": _reference(final_raw_path, payloads[final_raw_path]),
+        "final_parsed_snapshot_file": _reference(
+            "derived/prometheus/measured-window-final-snapshot.json",
+            payloads["derived/prometheus/measured-window-final-snapshot.json"],
+        ),
+        "baseline_snapshot": baseline_snapshot,
+        "final_snapshot": final_snapshot,
+        "measured_phase_identity_sha256": measured_phase.evidence_identity_sha256,
+        "measured_phase_start_offset_ns": measured_phase.started_offset_ns,
+        "measured_phase_end_offset_ns": measured_phase.ended_offset_ns,
+        "first_measured_request_dispatch_offset_ns": min(
+            item[4].dispatch_offset_ns for item in request_components
+        ),
+        "last_measured_request_terminal_offset_ns": max(
+            item[4].terminal_offset_ns for item in request_components
+        ),
+        "final_drain_boundary_offset_ns": control.final_drain_completed_offset_ns,
+        "counter_deltas": deltas,
+    }
+    measurement_values["evidence_sha256"] = sha256_identity(measurement_values)
+    prometheus_measurement = PrometheusMeasurementAttestation.model_validate(measurement_values)
     requests: list[Stage2MeasuredRequestAttestation] = []
     for (
         case_id,
@@ -297,6 +583,7 @@ def _make_repetition(
         request_identity,
         lifecycle,
         raw,
+        wire_capture,
     ) in request_components:
         evidence = evidence_value
         values: dict[str, object] = {
@@ -306,6 +593,7 @@ def _make_repetition(
             "external_request_id": external_id,
             "request_evidence": evidence,
             "request_identity": request_identity,
+            "wire_capture": wire_capture,
             "lifecycle": lifecycle,
             "raw_evidence": raw,
             "metric_availability": derive_metric_availability(
@@ -351,6 +639,7 @@ def _make_repetition(
         "repetition_manifest_sha256": manifest_sha,
         "cancellation_result_file": cancellation_result,
         "cancellation_client_stream_file": cancellation_stream,
+        "prometheus_measurement": prometheus_measurement,
         "cuda_execution": cuda,
         "measured_requests": request_tuple,
         "requested_client_concurrency": 2,
@@ -490,6 +779,7 @@ def make_experiment_attestation(
         "repetition_count": 3,
         "measured_request_count": 48,
         "cancellation_probe_count": 3,
+        "prometheus_measurement_count": 3,
         "cuda_attestation_count": 3,
         "semantic_comparison_count": 16,
         "requested_client_concurrency": 2,
@@ -570,6 +860,9 @@ def make_aggregate_manifest(
         )
         payloads[f"attestations/cuda-repetition-{repetition.repetition_index:02d}.json"] = (
             _json_bytes(repetition.cuda_execution)
+        )
+        payloads[f"attestations/prometheus-repetition-{repetition.repetition_index:02d}.json"] = (
+            _json_bytes(repetition.prometheus_measurement)
         )
     payloads.update(
         {
@@ -668,6 +961,9 @@ def make_aggregate_manifest(
         ),
         "cancellation_result_files": tuple(
             reference(f"repetition-{index:02d}/cancellation-result.json") for index in (1, 2, 3)
+        ),
+        "prometheus_measurement_attestation_files": tuple(
+            reference(f"attestations/prometheus-repetition-{index:02d}.json") for index in (1, 2, 3)
         ),
         "semantic_comparison_files": tuple(
             reference(f"comparisons/{case_id}.json") for case_id in STAGE2_EXPERIMENT_CASE_IDS

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+from datetime import timedelta
 from typing import Final, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import AwareDatetime, Field, model_validator
 
-from llm_inference_systems.canonical import sha256_identity
+from llm_inference_systems.canonical import canonical_json_bytes, sha256_identity
 from llm_inference_systems.contracts import (
     Identifier,
     NonNegativeInt,
@@ -18,6 +22,7 @@ from llm_inference_systems.stage2_contracts import (
     RequestIdentityChain,
     Stage2BundleManifest,
     Stage2EvidenceScope,
+    Stage2ManifestBoundFile,
     Stage2PerRequestMetrics,
     Stage2RequestEvidence,
 )
@@ -60,6 +65,8 @@ COMPONENT_ORDER: Final = (
     "public_safety_pass",
 )
 
+MAX_MEASURED_WINDOW_SCRAPE_GATE_DISTANCE_NS: Final = 1_000_000_000
+
 
 class FixtureAttestation(StrictModel):
     schema_version: Literal["0.3.0"]
@@ -100,14 +107,131 @@ class PerRequestMetricsAttestation(StrictModel):
         return self
 
 
+class PrometheusRawScrapeCapture(StrictModel):
+    """Lossless collector boundary for one raw Prometheus exposition scrape."""
+
+    schema_version: Literal["0.3.0"]
+    evidence_scope: Stage2EvidenceScope
+    repetition_index: Literal[1, 2, 3]
+    process_start_id: Identifier
+    scrape_wall_clock_utc: AwareDatetime
+    scrape_monotonic_offset_ns: NonNegativeInt
+    raw_exposition_base64: str
+    decoded_byte_count: NonNegativeInt
+    raw_exposition_sha256: Sha256
+    capture_source: Literal[
+        "TEST_FIXTURE_ONLY_CPU_SCRAPE",
+        "FUTURE_RUNTIME_PROMETHEUS_COLLECTOR",
+    ]
+    identity_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_capture(self) -> Self:
+        if self.scrape_wall_clock_utc.utcoffset() != timedelta(0):
+            raise ValueError("Prometheus capture wall clock must use UTC")
+        try:
+            raw = base64.b64decode(self.raw_exposition_base64, validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise ValueError("Prometheus exposition Base64 is invalid") from error
+        if base64.b64encode(raw).decode("ascii") != self.raw_exposition_base64:
+            raise ValueError("Prometheus exposition Base64 is not canonical")
+        if (
+            len(raw) != self.decoded_byte_count
+            or hashlib.sha256(raw).hexdigest() != self.raw_exposition_sha256
+        ):
+            raise ValueError("Prometheus exposition bytes do not match count or SHA-256")
+        try:
+            raw.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ValueError("Prometheus exposition is not UTF-8") from error
+        fixture = self.evidence_scope is Stage2EvidenceScope.TEST_FIXTURE_ONLY
+        if fixture != (self.capture_source == "TEST_FIXTURE_ONLY_CPU_SCRAPE"):
+            raise ValueError("Prometheus capture source and evidence scope differ")
+        if self.identity_sha256 != sha256_identity(
+            self, omit_fields=frozenset({"identity_sha256"})
+        ):
+            raise ValueError("Prometheus raw-capture identity does not reconstruct")
+        return self
+
+    def raw_exposition(self) -> str:
+        return base64.b64decode(self.raw_exposition_base64, validate=True).decode("utf-8")
+
+
 class PrometheusMeasurementAttestation(StrictModel):
+    schema_version: Literal["0.3.0"]
+    repetition_index: Literal[1, 2, 3]
+    repetition_manifest_sha256: Sha256
+    server_process_identity: Identifier
+    served_model_label: Literal["qwen2.5-0.5b-instruct-stage2"]
+    engine_label: Literal["0"]
+    baseline_raw_exposition_file: Stage2ManifestBoundFile
+    baseline_parsed_snapshot_file: Stage2ManifestBoundFile
+    final_raw_exposition_file: Stage2ManifestBoundFile
+    final_parsed_snapshot_file: Stage2ManifestBoundFile
     baseline_snapshot: PrometheusSnapshot
     final_snapshot: PrometheusSnapshot
+    measured_phase_identity_sha256: Sha256
+    measured_phase_start_offset_ns: NonNegativeInt
+    measured_phase_end_offset_ns: NonNegativeInt
+    first_measured_request_dispatch_offset_ns: NonNegativeInt
+    last_measured_request_terminal_offset_ns: NonNegativeInt
+    final_drain_boundary_offset_ns: NonNegativeInt
     counter_deltas: tuple[CounterDelta, ...] = Field(min_length=6, max_length=6)
     evidence_sha256: Sha256
 
     @model_validator(mode="after")
     def validate_prometheus(self) -> Self:
+        expected_paths = (
+            "raw/prometheus/measured-window-baseline.json",
+            "derived/prometheus/measured-window-baseline-snapshot.json",
+            "raw/prometheus/measured-window-final.json",
+            "derived/prometheus/measured-window-final-snapshot.json",
+        )
+        references = (
+            self.baseline_raw_exposition_file,
+            self.baseline_parsed_snapshot_file,
+            self.final_raw_exposition_file,
+            self.final_parsed_snapshot_file,
+        )
+        if tuple(item.path for item in references) != expected_paths:
+            raise ValueError("Prometheus evidence paths differ from the fixed repetition layout")
+        if len({item.path.casefold() for item in references}) != 4:
+            raise ValueError("Prometheus evidence paths are duplicated or ambiguous")
+        if (
+            self.baseline_snapshot.process_start_id != self.server_process_identity
+            or self.final_snapshot.process_start_id != self.server_process_identity
+        ):
+            raise ValueError("Prometheus measurement crosses a process or restart")
+        if not (
+            self.measured_phase_start_offset_ns
+            <= self.baseline_snapshot.scrape_monotonic_offset_ns
+            < self.first_measured_request_dispatch_offset_ns
+            <= self.last_measured_request_terminal_offset_ns
+            <= self.measured_phase_end_offset_ns
+            < self.final_drain_boundary_offset_ns
+            <= self.final_snapshot.scrape_monotonic_offset_ns
+        ):
+            raise ValueError("Prometheus scrape placement differs from the measured-window gates")
+        if (
+            self.final_snapshot.scrape_wall_clock_utc
+            <= self.baseline_snapshot.scrape_wall_clock_utc
+        ):
+            raise ValueError("Prometheus scrape wall clocks are stale or reordered")
+        if (
+            self.first_measured_request_dispatch_offset_ns
+            - self.baseline_snapshot.scrape_monotonic_offset_ns
+            > MAX_MEASURED_WINDOW_SCRAPE_GATE_DISTANCE_NS
+            or self.final_snapshot.scrape_monotonic_offset_ns - self.final_drain_boundary_offset_ns
+            > MAX_MEASURED_WINDOW_SCRAPE_GATE_DISTANCE_NS
+        ):
+            raise ValueError("Prometheus scrape is stale relative to its accepted gate")
+        if (
+            self.baseline_parsed_snapshot_file.sha256
+            != hashlib.sha256(canonical_json_bytes(self.baseline_snapshot) + b"\n").hexdigest()
+            or self.final_parsed_snapshot_file.sha256
+            != hashlib.sha256(canonical_json_bytes(self.final_snapshot) + b"\n").hexdigest()
+        ):
+            raise ValueError("Prometheus parsed snapshot file identity does not reconstruct")
         try:
             require_quiescent(self.baseline_snapshot)
             require_quiescent(self.final_snapshot)
@@ -149,13 +273,7 @@ class PrometheusMeasurementAttestation(StrictModel):
             raise ValueError("Prometheus measurement attestation is invalid") from error
         if self.counter_deltas != reconstructed:
             raise ValueError("Prometheus counter deltas do not reconstruct")
-        expected_identity = sha256_identity(
-            {
-                "baseline_snapshot": self.baseline_snapshot,
-                "counter_deltas": self.counter_deltas,
-                "final_snapshot": self.final_snapshot,
-            }
-        )
+        expected_identity = sha256_identity(self, omit_fields=frozenset({"evidence_sha256"}))
         if self.evidence_sha256 != expected_identity:
             raise ValueError("Prometheus evidence identity does not reconstruct")
         return self
