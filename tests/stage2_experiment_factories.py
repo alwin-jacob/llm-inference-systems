@@ -29,18 +29,18 @@ from llm_inference_systems.stage2_control import bundle_manifest_sha256, compare
 from llm_inference_systems.stage2_experiment import (
     STAGE2_EXPERIMENT_CASE_IDS,
     AggregateRootState,
-    FixtureWireCaptureProvenance,
     ManifestBoundFile,
     Stage2AggregateExperimentManifest,
+    Stage2CancellationClientCloseCapture,
+    Stage2CancellationExactRequestBodyCapture,
+    Stage2CancellationWireCapture,
     Stage2CrossRestartComparison,
     Stage2ExactRequestBodyCapture,
     Stage2ExperimentAttestation,
     Stage2ExperimentClassification,
     Stage2ExperimentSummary,
     Stage2ExperimentWorkload,
-    Stage2LosslessHeaderField,
     Stage2MeasuredRequestAttestation,
-    Stage2OrderedHeadersCapture,
     Stage2RawResponseBodyChunk,
     Stage2RepetitionAttestation,
     Stage2RepetitionCudaAttestation,
@@ -50,9 +50,9 @@ from llm_inference_systems.stage2_experiment import (
     Stage2RestartSemanticAttestation,
     Stage2TransportCloseCapture,
     Stage2WorkloadCase,
-    build_cancellation_client_stream_raw_evidence_bytes,
     build_cuda_raw_evidence_bytes,
     build_request_raw_evidence_payloads,
+    cancellation_wire_capture_bytes,
     derive_aggregate_validation_result,
     derive_metric_availability,
     derive_metric_availability_summary,
@@ -62,13 +62,27 @@ from llm_inference_systems.stage2_experiment import (
     prometheus_raw_scrape_capture_bytes,
     public_safety_raw_evidence_bytes,
     reconstruct_experiment_repetition,
+    replay_stage2_cancellation_wire_capture,
     replay_stage2_wire_capture,
     scoped_raw_evidence_bytes,
     snapshot_read_only_raw_evidence_bytes,
     write_aggregate_manifest_last,
 )
-from llm_inference_systems.stage2_prometheus import PrometheusSnapshot, derive_counter_delta
-from llm_inference_systems.stage2_protocol import build_completion_request
+from llm_inference_systems.stage2_prometheus import (
+    PrometheusSnapshot,
+    derive_measured_window_deltas,
+)
+from llm_inference_systems.stage2_protocol import (
+    build_cancellation_request,
+    build_completion_request,
+)
+from llm_inference_systems.stage2_transport import (
+    FixtureWireCaptureProvenance,
+    Stage2HTTPExchangeCapture,
+    Stage2LosslessHeaderField,
+    Stage2OrderedHeadersCapture,
+    parse_content_type,
+)
 from tests.stage2_factories import (
     FIXTURE_IDENTITY,
     PROMPT,
@@ -93,12 +107,69 @@ def _reference(path: str, data: bytes) -> ManifestBoundFile:
 def _prometheus_capture(
     snapshot: PrometheusSnapshot,
     repetition_index: Literal[1, 2, 3],
+    *,
+    boundary: Literal["baseline", "final"],
+    launch_spec_identity_sha256: str,
 ) -> PrometheusRawScrapeCapture:
     raw = snapshot.raw_exposition.encode("utf-8")
+    request_offset = snapshot.scrape_monotonic_offset_ns - 20
+    response_header_offset = snapshot.scrape_monotonic_offset_ns - 10
+    request_headers = _headers(
+        direction="TRANSMITTED_REQUEST",
+        observation_offset_ns=request_offset,
+        values=(
+            (b"Host", b"127.0.0.1:8000"),
+            (b"Accept-Encoding", b"gzip, deflate"),
+            (b"Connection", b"keep-alive"),
+            (b"User-Agent", b"python-httpx/0.28.1"),
+            (b"Accept", b"text/plain, application/openmetrics-text"),
+        ),
+    )
+    response_content_type = (
+        b"text/plain; version=0.0.4; charset=utf-8"
+        if boundary == "baseline"
+        else b"application/openmetrics-text; version=1.0.0; charset=utf-8"
+    )
+    response_headers = _headers(
+        direction="RECEIVED_RESPONSE",
+        observation_offset_ns=response_header_offset,
+        values=(
+            (b"Date", b"Fri, 28 Aug 2026 20:00:00 GMT"),
+            (b"Server", b"uvicorn"),
+            (b"Content-Length", str(len(raw)).encode("ascii")),
+            (b"Content-Type", response_content_type),
+        ),
+    )
+    provenance = _fixture_provenance()
+    body_inventory_sha = sha256_identity(
+        {
+            "decoded_byte_count": len(raw),
+            "raw_exposition_sha256": hashlib.sha256(raw).hexdigest(),
+        }
+    )
+    exchange = _http_exchange(
+        purpose="PROMETHEUS_BASELINE" if boundary == "baseline" else "PROMETHEUS_FINAL",
+        repetition_index=repetition_index,
+        evidence_unit_id=f"prometheus-{boundary}",
+        external_request_id=None,
+        request_headers=request_headers,
+        response_headers=response_headers,
+        request_body=b"",
+        response_body=raw,
+        response_body_inventory_sha256=body_inventory_sha,
+        request_body_offset_ns=request_offset,
+        response_body_completion_offset_ns=snapshot.scrape_monotonic_offset_ns,
+        terminal_offset_ns=snapshot.scrape_monotonic_offset_ns + 1,
+        terminal_classification="CLEAN_RESPONSE_CLOSE",
+        server_process_identity=snapshot.process_start_id,
+        launch_spec_identity_sha256=launch_spec_identity_sha256,
+        provenance=provenance,
+    )
     values: dict[str, object] = {
         "schema_version": "0.3.0",
         "evidence_scope": Stage2EvidenceScope.TEST_FIXTURE_ONLY,
         "repetition_index": repetition_index,
+        "boundary": boundary,
         "process_start_id": snapshot.process_start_id,
         "scrape_wall_clock_utc": snapshot.scrape_wall_clock_utc,
         "scrape_monotonic_offset_ns": snapshot.scrape_monotonic_offset_ns,
@@ -106,6 +177,8 @@ def _prometheus_capture(
         "decoded_byte_count": len(raw),
         "raw_exposition_sha256": hashlib.sha256(raw).hexdigest(),
         "capture_source": "TEST_FIXTURE_ONLY_CPU_SCRAPE",
+        "provenance": provenance,
+        "http_exchange": exchange,
     }
     values["identity_sha256"] = sha256_identity(values)
     return PrometheusRawScrapeCapture.model_validate(values)
@@ -196,7 +269,14 @@ def _headers(
     )
     model_values: dict[str, object] = {
         "direction": direction,
+        "capture_source": (
+            "HTTPX_REQUEST_OBJECT_AND_HEADERS_RAW"
+            if direction == "TRANSMITTED_REQUEST"
+            else "HTTPX_RESPONSE_OBJECT_AND_HEADERS_RAW"
+        ),
+        "capture_complete_at_declared_layer": True,
         "observation_offset_ns": observation_offset_ns,
+        "observed_field_count": len(fields),
         "fields": fields,
         "normalized_view": tuple(
             (field.normalized_name, field.normalized_value) for field in fields
@@ -204,6 +284,94 @@ def _headers(
     }
     model_values["identity_sha256"] = sha256_identity(model_values)
     return Stage2OrderedHeadersCapture.model_validate(model_values)
+
+
+def _fixture_provenance() -> FixtureWireCaptureProvenance:
+    values: dict[str, object] = {
+        "capture_kind": "FIXTURE_CONSTRUCTOR",
+        "evidence_scope": Stage2EvidenceScope.TEST_FIXTURE_ONLY,
+        "classification": "SYNTHETIC_PROTOCOL_SHAPE_ONLY",
+        "fixture_marker": "TEST_FIXTURE_ONLY",
+        "fixture_identity_sha256": FIXTURE_IDENTITY,
+    }
+    values["identity_sha256"] = sha256_identity(values)
+    return FixtureWireCaptureProvenance.model_validate(values)
+
+
+def _http_exchange(
+    *,
+    purpose: Literal[
+        "MEASURED_COMPLETION",
+        "CANCELLATION",
+        "PROMETHEUS_BASELINE",
+        "PROMETHEUS_FINAL",
+    ],
+    repetition_index: Literal[1, 2, 3],
+    evidence_unit_id: str,
+    external_request_id: str | None,
+    request_headers: Stage2OrderedHeadersCapture,
+    response_headers: Stage2OrderedHeadersCapture,
+    request_body: bytes,
+    response_body: bytes,
+    response_body_inventory_sha256: str,
+    request_body_offset_ns: int,
+    response_body_completion_offset_ns: int,
+    terminal_offset_ns: int,
+    terminal_classification: Literal[
+        "CLEAN_EOF",
+        "CLEAN_RESPONSE_CLOSE",
+        "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN",
+    ],
+    server_process_identity: str,
+    launch_spec_identity_sha256: str,
+    provenance: FixtureWireCaptureProvenance,
+) -> Stage2HTTPExchangeCapture:
+    content_type = response_headers.effective("content-type")
+    media_type, parameters = parse_content_type(content_type)
+    values: dict[str, object] = {
+        "schema_version": "0.3.0",
+        "measurement_protocol_version": "0.3.0",
+        "exchange_purpose": purpose,
+        "repetition_index": repetition_index,
+        "evidence_unit_id": evidence_unit_id,
+        "external_request_id": external_request_id,
+        "capture_layer": ("HTTPX_REQUEST_RESPONSE_OBJECTS_HEADERS_AND_AITER_RAW_BODY_CHUNKS"),
+        "provenance": provenance,
+        "method": "GET" if purpose.startswith("PROMETHEUS_") else "POST",
+        "scheme": "http",
+        "host": "127.0.0.1",
+        "port": 8000,
+        "request_target": "/metrics" if purpose.startswith("PROMETHEUS_") else "/v1/completions",
+        "requested_http_version": "HTTP/1.1",
+        "requested_http_version_source": "HTTPX_CLIENT_CONFIGURATION_HTTP2_FALSE",
+        "observed_response_http_version": "HTTP/1.1",
+        "observed_response_http_version_source": "HTTPX_RESPONSE",
+        "response_status": 200,
+        "request_headers": request_headers,
+        "response_headers": response_headers,
+        "request_header_count": len(request_headers.fields),
+        "response_header_count": len(response_headers.fields),
+        "request_header_capture_complete_at_layer": True,
+        "response_header_capture_complete_at_layer": True,
+        "full_response_content_type": content_type,
+        "normalized_response_media_type": media_type,
+        "response_content_type_parameters": parameters,
+        "request_body_transmission_observation_offset_ns": request_body_offset_ns,
+        "response_header_observation_offset_ns": response_headers.observation_offset_ns,
+        "request_body_byte_count": len(request_body),
+        "request_body_sha256": hashlib.sha256(request_body).hexdigest(),
+        "response_body_byte_count": len(response_body),
+        "response_body_sha256": hashlib.sha256(response_body).hexdigest(),
+        "response_body_inventory_sha256": response_body_inventory_sha256,
+        "response_body_completion_observation_offset_ns": response_body_completion_offset_ns,
+        "transport_terminal_observation_offset_ns": terminal_offset_ns,
+        "transport_terminal_classification": terminal_classification,
+        "response_body_capture_complete_through_terminal_at_layer": True,
+        "server_process_identity": server_process_identity,
+        "launch_spec_identity_sha256": launch_spec_identity_sha256,
+    }
+    values["identity_sha256"] = sha256_identity(values)
+    return Stage2HTTPExchangeCapture.model_validate(values)
 
 
 def _sse_data(value: object) -> bytes:
@@ -221,6 +389,8 @@ def _raw_request_payloads(
     measurement_phase_identity_sha256: str,
     dispatch_offset_ns: int,
     output_token_ids: tuple[int, ...],
+    server_process_identity: str,
+    launch_spec_identity_sha256: str,
 ) -> tuple[
     Stage2RequestRawEvidence,
     dict[str, bytes],
@@ -245,14 +415,26 @@ def _raw_request_payloads(
         direction="TRANSMITTED_REQUEST",
         observation_offset_ns=dispatch_offset_ns,
         values=(
+            (b"Host", b"127.0.0.1:8000"),
+            (b"Accept", b"*/*"),
+            (b"Accept-Encoding", b"gzip, deflate"),
+            (b"Connection", b"keep-alive"),
+            (b"User-Agent", b"python-httpx/0.28.1"),
             (b"X-Request-Id", external_id.encode("ascii")),
             (b"Content-Type", b"application/json"),
+            (b"Content-Length", str(len(request_bytes)).encode("ascii")),
         ),
     )
     response_headers = _headers(
         direction="RECEIVED_RESPONSE",
         observation_offset_ns=dispatch_offset_ns + 10,
-        values=((b"X-Request-Id", external_id.encode("ascii")),),
+        values=(
+            (b"Date", b"Fri, 28 Aug 2026 20:00:00 GMT"),
+            (b"Server", b"uvicorn"),
+            (b"X-Request-Id", external_id.encode("ascii")),
+            (b"Content-Type", b"text/event-stream; charset=utf-8"),
+            (b"Transfer-Encoding", b"chunked"),
+        ),
     )
     raw_chunks: list[tuple[int, bytes]] = []
     for event_index, token in enumerate(output_token_ids):
@@ -311,15 +493,7 @@ def _raw_request_payloads(
         }
         values["identity_sha256"] = sha256_identity(values)
         chunks.append(Stage2RawResponseBodyChunk.model_validate(values))
-    provenance_values: dict[str, object] = {
-        "capture_kind": "FIXTURE_CONSTRUCTOR",
-        "evidence_scope": Stage2EvidenceScope.TEST_FIXTURE_ONLY,
-        "classification": "SYNTHETIC_PROTOCOL_SHAPE_ONLY",
-        "fixture_marker": "TEST_FIXTURE_ONLY",
-        "fixture_identity_sha256": FIXTURE_IDENTITY,
-    }
-    provenance_values["identity_sha256"] = sha256_identity(provenance_values)
-    provenance = FixtureWireCaptureProvenance.model_validate(provenance_values)
+    provenance = _fixture_provenance()
     close_values: dict[str, object] = {
         "external_request_id": external_id,
         "close_classification": "CLEAN_EOF",
@@ -332,12 +506,32 @@ def _raw_request_payloads(
     }
     close_values["identity_sha256"] = sha256_identity(close_values)
     transport_close = Stage2TransportCloseCapture.model_validate(close_values)
+    response_body = b"".join(chunk.exact_bytes() for chunk in chunks)
+    exchange = _http_exchange(
+        purpose="MEASURED_COMPLETION",
+        repetition_index=repetition_index,
+        evidence_unit_id=case_id,
+        external_request_id=external_id,
+        request_headers=request_headers,
+        response_headers=response_headers,
+        request_body=request_bytes,
+        response_body=response_body,
+        response_body_inventory_sha256=sha256_identity(tuple(chunks)),
+        request_body_offset_ns=dispatch_offset_ns,
+        response_body_completion_offset_ns=chunks[-1].observation_offset_ns,
+        terminal_offset_ns=transport_close.close_observation_offset_ns,
+        terminal_classification="CLEAN_EOF",
+        server_process_identity=server_process_identity,
+        launch_spec_identity_sha256=launch_spec_identity_sha256,
+        provenance=provenance,
+    )
     capture_values: dict[str, object] = {
         "schema_version": "0.3.0",
         "repetition_index": repetition_index,
         "case_id": case_id,
         "external_request_id": external_id,
         "provenance": provenance,
+        "http_exchange": exchange,
         "request_body": request_body,
         "request_headers": request_headers,
         "response_headers": response_headers,
@@ -366,6 +560,7 @@ def _raw_request_payloads(
             "raw"
             if field
             in {
+                "http_exchange",
                 "request_body",
                 "request_headers",
                 "response_headers",
@@ -386,6 +581,159 @@ def _raw_request_payloads(
     )
 
 
+def _cancellation_wire(
+    *,
+    repetition_index: Literal[1, 2, 3],
+    control: object,
+    server_process_identity: str,
+    launch_spec_identity_sha256: str,
+) -> Stage2CancellationWireCapture:
+    from llm_inference_systems.stage2_control import Stage2RuntimeControlEvidence
+
+    typed = cast(Stage2RuntimeControlEvidence, control)
+    probe = typed.cancellation_probe
+    external_id = probe.identity_chain.external_base_id
+    request = build_cancellation_request(external_id, PROMPT)
+    request_bytes = canonical_json_bytes(request)
+    request_values: dict[str, object] = {
+        "exact_bytes_base64": base64.b64encode(request_bytes).decode("ascii"),
+        "byte_count": len(request_bytes),
+        "sha256": hashlib.sha256(request_bytes).hexdigest(),
+        "canonical_request": request,
+        "canonical_request_sha256": sha256_identity(request),
+        "request_identity_sha256": sha256_identity({"request": request, "request_id": external_id}),
+        "transmission_offset_ns": probe.dispatch_offset_ns,
+    }
+    request_values["identity_sha256"] = sha256_identity(request_values)
+    request_body = Stage2CancellationExactRequestBodyCapture.model_validate(request_values)
+    request_headers = _headers(
+        direction="TRANSMITTED_REQUEST",
+        observation_offset_ns=probe.dispatch_offset_ns,
+        values=(
+            (b"Host", b"127.0.0.1:8000"),
+            (b"Accept", b"*/*"),
+            (b"Accept-Encoding", b"gzip, deflate"),
+            (b"Connection", b"keep-alive"),
+            (b"User-Agent", b"python-httpx/0.28.1"),
+            (b"X-Request-Id", external_id.encode("ascii")),
+            (b"Content-Type", b"application/json"),
+            (b"Content-Length", str(len(request_bytes)).encode("ascii")),
+        ),
+    )
+    response_header_offset = probe.dispatch_offset_ns + 50_000_000
+    response_headers = _headers(
+        direction="RECEIVED_RESPONSE",
+        observation_offset_ns=response_header_offset,
+        values=(
+            (b"Date", b"Fri, 28 Aug 2026 20:00:00 GMT"),
+            (b"Server", b"uvicorn"),
+            (b"X-Request-Id", external_id.encode("ascii")),
+            (b"Content-Type", b"text/event-stream; charset=utf-8"),
+            (b"Transfer-Encoding", b"chunked"),
+        ),
+    )
+    first_token = probe.first_generation_token
+    body_bytes = _sse_data(
+        {
+            "id": first_token.response_body_id,
+            "choices": [
+                {
+                    "index": 0,
+                    "text": "<fixture-1000>",
+                    "token_ids": list(first_token.output_token_ids),
+                    "finish_reason": None,
+                    "prompt_token_ids": list(PROMPT),
+                }
+            ],
+        }
+    )
+    chunk_values: dict[str, object] = {
+        "repetition_index": repetition_index,
+        "case_id": "cancellation-probe",
+        "external_request_id": external_id,
+        "ordinal": 0,
+        "observation_offset_ns": first_token.observation_offset_ns,
+        "completed_sse_frame_observation_offsets_ns": (first_token.observation_offset_ns,),
+        "exact_bytes_base64": base64.b64encode(body_bytes).decode("ascii"),
+        "decoded_byte_count": len(body_bytes),
+        "sha256": hashlib.sha256(body_bytes).hexdigest(),
+        "source_capture_provenance": "TEST_FIXTURE_ONLY_CPU_SCRIPTED_HTTP",
+        "inventory_manifest_path": "raw/cancellation/client-wire.json",
+    }
+    chunk_values["identity_sha256"] = sha256_identity(chunk_values)
+    chunks = (Stage2RawResponseBodyChunk.model_validate(chunk_values),)
+    provenance = _fixture_provenance()
+    identity = RequestIdentityAttestation(
+        identity_chain=probe.identity_chain,
+        identity_sha256=sha256_identity(probe.identity_chain),
+    )
+    placeholder_close = Stage2CancellationClientCloseCapture.model_construct(
+        external_request_id=external_id,
+        close_classification="INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN",
+        close_observation_offset_ns=probe.client_close_offset_ns,
+        response_close_completed=False,
+        client_stream_context_exited=True,
+        post_close_byte_count=0,
+        post_close_event_count=0,
+        raw_response_body_inventory_sha256=sha256_identity(chunks),
+        request_identity_chain_sha256=identity.identity_sha256,
+        parser_replay_identity_sha256="0" * 64,
+        identity_sha256="0" * 64,
+    )
+    temporary = Stage2CancellationWireCapture.model_construct(
+        schema_version="0.3.0",
+        repetition_index=repetition_index,
+        external_request_id=external_id,
+        provenance=provenance,
+        request_body=request_body,
+        http_exchange=None,
+        response_body_chunks=chunks,
+        parser_replay=None,
+        intentional_client_close=placeholder_close,
+        request_identity=identity,
+        identity_sha256="0" * 64,
+    )
+    replay = replay_stage2_cancellation_wire_capture(temporary)
+    close_values = placeholder_close.model_dump(mode="python")
+    close_values["parser_replay_identity_sha256"] = replay.identity_sha256
+    close_values["identity_sha256"] = sha256_identity(
+        close_values, omit_fields=frozenset({"identity_sha256"})
+    )
+    close = Stage2CancellationClientCloseCapture.model_validate(close_values)
+    exchange = _http_exchange(
+        purpose="CANCELLATION",
+        repetition_index=repetition_index,
+        evidence_unit_id="cancellation-probe",
+        external_request_id=external_id,
+        request_headers=request_headers,
+        response_headers=response_headers,
+        request_body=request_bytes,
+        response_body=body_bytes,
+        response_body_inventory_sha256=sha256_identity(chunks),
+        request_body_offset_ns=probe.dispatch_offset_ns,
+        response_body_completion_offset_ns=first_token.observation_offset_ns,
+        terminal_offset_ns=probe.client_close_offset_ns,
+        terminal_classification="INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN",
+        server_process_identity=server_process_identity,
+        launch_spec_identity_sha256=launch_spec_identity_sha256,
+        provenance=provenance,
+    )
+    values: dict[str, object] = {
+        "schema_version": "0.3.0",
+        "repetition_index": repetition_index,
+        "external_request_id": external_id,
+        "provenance": provenance,
+        "request_body": request_body,
+        "http_exchange": exchange,
+        "response_body_chunks": chunks,
+        "parser_replay": replay,
+        "intentional_client_close": close,
+        "request_identity": identity,
+    }
+    values["identity_sha256"] = sha256_identity(values)
+    return Stage2CancellationWireCapture.model_validate(values)
+
+
 def _make_repetition(
     repetition_index: int,
     *,
@@ -400,6 +748,7 @@ def _make_repetition(
     )
     payloads = _phase_payloads(control)
     typed_repetition_index = cast(Literal[1, 2, 3], repetition_index)
+    server_process = f"server-process-{repetition_index}"
     request_components: list[
         tuple[
             str,
@@ -441,6 +790,8 @@ def _make_repetition(
                 if repetition_index == 3 and case_id == semantic_mismatch_case_id
                 else tuple(range(32))
             ),
+            server_process_identity=server_process,
+            launch_spec_identity_sha256=launch_spec_identity_sha256,
         )
         payloads.update(raw_payloads)
         request_components.append(
@@ -462,16 +813,15 @@ def _make_repetition(
     cancellation_result_data = _json_bytes(control.cancellation_result)
     cancellation_result = _reference("cancellation-result.json", cancellation_result_data)
     payloads[cancellation_result.path] = cancellation_result_data
-    cancellation_stream_data = build_cancellation_client_stream_raw_evidence_bytes(
+    cancellation_wire = _cancellation_wire(
         repetition_index=typed_repetition_index,
-        external_request_id=control.cancellation_probe.identity_chain.external_base_id,
-        evidence_scope=Stage2EvidenceScope.TEST_FIXTURE_ONLY,
+        control=control,
+        server_process_identity=server_process,
+        launch_spec_identity_sha256=launch_spec_identity_sha256,
     )
-    cancellation_stream = _reference(
-        "raw/cancellation/client-stream.json", cancellation_stream_data
-    )
-    payloads[cancellation_stream.path] = cancellation_stream_data
-    server_process = f"server-process-{repetition_index}"
+    cancellation_wire_data = cancellation_wire_capture_bytes(cancellation_wire)
+    cancellation_wire_file = _reference("raw/cancellation/client-wire.json", cancellation_wire_data)
+    payloads[cancellation_wire_file.path] = cancellation_wire_data
     runtime_control_sha = sha256_identity(control)
     execution_shape: dict[str, object] = {
         "torch_version": "2.13.0+cu129",
@@ -496,8 +846,18 @@ def _make_repetition(
         update={"scrape_monotonic_offset_ns": measured_phase.started_offset_ns}
     )
     final_snapshot = control.final_metric_scrape
-    baseline_capture = _prometheus_capture(baseline_snapshot, typed_repetition_index)
-    final_capture = _prometheus_capture(final_snapshot, typed_repetition_index)
+    baseline_capture = _prometheus_capture(
+        baseline_snapshot,
+        typed_repetition_index,
+        boundary="baseline",
+        launch_spec_identity_sha256=launch_spec_identity_sha256,
+    )
+    final_capture = _prometheus_capture(
+        final_snapshot,
+        typed_repetition_index,
+        boundary="final",
+        launch_spec_identity_sha256=launch_spec_identity_sha256,
+    )
     baseline_raw_path = "raw/prometheus/measured-window-baseline.json"
     final_raw_path = "raw/prometheus/measured-window-final.json"
     payloads[baseline_raw_path] = prometheus_raw_scrape_capture_bytes(baseline_capture)
@@ -529,19 +889,7 @@ def _make_repetition(
         ),
     )
     manifest_sha = bundle_manifest_sha256(manifest)
-    deltas = (
-        derive_counter_delta(baseline_snapshot, final_snapshot, "vllm:prompt_tokens_total"),
-        derive_counter_delta(baseline_snapshot, final_snapshot, "vllm:generation_tokens_total"),
-        derive_counter_delta(
-            baseline_snapshot,
-            final_snapshot,
-            "vllm:request_success_total",
-            finished_reason="length",
-        ),
-        derive_counter_delta(baseline_snapshot, final_snapshot, "vllm:num_preemptions_total"),
-        derive_counter_delta(baseline_snapshot, final_snapshot, "vllm:prefix_cache_queries_total"),
-        derive_counter_delta(baseline_snapshot, final_snapshot, "vllm:prefix_cache_hits_total"),
-    )
+    deltas = derive_measured_window_deltas(baseline_snapshot, final_snapshot)
     measurement_values: dict[str, object] = {
         "schema_version": "0.3.0",
         "repetition_index": repetition_index,
@@ -559,6 +907,8 @@ def _make_repetition(
             "derived/prometheus/measured-window-final-snapshot.json",
             payloads["derived/prometheus/measured-window-final-snapshot.json"],
         ),
+        "baseline_capture": baseline_capture,
+        "final_capture": final_capture,
         "baseline_snapshot": baseline_snapshot,
         "final_snapshot": final_snapshot,
         "measured_phase_identity_sha256": measured_phase.evidence_identity_sha256,
@@ -638,7 +988,8 @@ def _make_repetition(
         "repetition_manifest": manifest,
         "repetition_manifest_sha256": manifest_sha,
         "cancellation_result_file": cancellation_result,
-        "cancellation_client_stream_file": cancellation_stream,
+        "cancellation_wire_file": cancellation_wire_file,
+        "cancellation_wire": cancellation_wire,
         "prometheus_measurement": prometheus_measurement,
         "cuda_execution": cuda,
         "measured_requests": request_tuple,

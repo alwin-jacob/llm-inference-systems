@@ -61,8 +61,20 @@ status or public résumé wording advances.
   raw-to-summary reconstruction, and one manifest-last terminal aggregate root. Each measured
   request starts with exact request bytes, ordered transmitted/received header bytes, ordered raw
   response chunks with completed-frame observation clocks, and transport close; parsed SSE and
-  typed evidence are replay-derived. Public evidence accepts only an explicit safe HTTP-header
-  name allowlist. Semantic
+  typed evidence are replay-derived. Every measured request, cancellation request, and measured-
+  window Prometheus scrape is bound to one strict HTTP exchange identity: loopback endpoint,
+  configured and observed HTTP versions, status, full Content-Type, complete ordered HTTPX raw
+  header pairs, exact body identity, process/restart, and launch specification. Complete means
+  complete only at the declared HTTPX request/response-object and `headers.raw`/`aiter_raw()`
+  boundary; it is not packet capture and does not expose Ethernet, IP, TCP, TLS, kernel, proxy, or
+  server-parser state. Ordinary HTTPX/server-added fields remain retained, while any credential-
+  bearing header rejects the capture before durable commit. Cancellation retains its exact
+  64-token/512-output request bytes and SSE bytes through exactly one first generation token,
+  followed by `INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN`; it cannot be represented as
+  clean EOF or successful stream completion. Each successful `GET /metrics` capture binds the raw
+  exposition body to its response headers and supports only `text/plain` or
+  `application/openmetrics-text`. The measured-window attestation derives all ten required deltas,
+  including `length=16` and zero `abort`, `stop`, `error`, and `repetition`. Semantic
   mismatch is retained only as an `INVALID` root and can never become `COMMITTED`.
 - A CPU-only Stage 2A fixture server fixed to `127.0.0.1:0`, plus generated `0.3.0` schemas and a
   verifier that proves historical Stage 0/1 bytes and ordinary dependency boundaries remain

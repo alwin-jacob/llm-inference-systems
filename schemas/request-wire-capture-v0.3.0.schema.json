@@ -265,6 +265,315 @@
       "title": "Stage2ExactRequestBodyCapture",
       "type": "object"
     },
+    "Stage2HTTPExchangeCapture": {
+      "additionalProperties": false,
+      "description": "Complete exchange identity at the explicitly declared HTTPX layer.",
+      "properties": {
+        "capture_layer": {
+          "const": "HTTPX_REQUEST_RESPONSE_OBJECTS_HEADERS_AND_AITER_RAW_BODY_CHUNKS",
+          "title": "Capture Layer",
+          "type": "string"
+        },
+        "evidence_unit_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Evidence Unit Id",
+          "type": "string"
+        },
+        "exchange_purpose": {
+          "enum": [
+            "MEASURED_COMPLETION",
+            "CANCELLATION",
+            "PROMETHEUS_BASELINE",
+            "PROMETHEUS_FINAL"
+          ],
+          "title": "Exchange Purpose",
+          "type": "string"
+        },
+        "external_request_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "External Request Id"
+        },
+        "full_response_content_type": {
+          "title": "Full Response Content Type",
+          "type": "string"
+        },
+        "host": {
+          "const": "127.0.0.1",
+          "title": "Host",
+          "type": "string"
+        },
+        "identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Sha256",
+          "type": "string"
+        },
+        "launch_spec_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Launch Spec Identity Sha256",
+          "type": "string"
+        },
+        "measurement_protocol_version": {
+          "const": "0.3.0",
+          "title": "Measurement Protocol Version",
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "POST"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "normalized_response_media_type": {
+          "enum": [
+            "text/event-stream",
+            "text/plain",
+            "application/openmetrics-text"
+          ],
+          "title": "Normalized Response Media Type",
+          "type": "string"
+        },
+        "observed_response_http_version": {
+          "const": "HTTP/1.1",
+          "title": "Observed Response Http Version",
+          "type": "string"
+        },
+        "observed_response_http_version_source": {
+          "const": "HTTPX_RESPONSE",
+          "title": "Observed Response Http Version Source",
+          "type": "string"
+        },
+        "port": {
+          "const": 8000,
+          "title": "Port",
+          "type": "integer"
+        },
+        "provenance": {
+          "discriminator": {
+            "mapping": {
+              "COLLECTOR_CAPTURE": "#/$defs/CollectorWireCaptureProvenance",
+              "FIXTURE_CONSTRUCTOR": "#/$defs/FixtureWireCaptureProvenance"
+            },
+            "propertyName": "capture_kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/FixtureWireCaptureProvenance"
+            },
+            {
+              "$ref": "#/$defs/CollectorWireCaptureProvenance"
+            }
+          ],
+          "title": "Provenance"
+        },
+        "repetition_index": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "title": "Repetition Index",
+          "type": "integer"
+        },
+        "request_body_byte_count": {
+          "minimum": 0,
+          "title": "Request Body Byte Count",
+          "type": "integer"
+        },
+        "request_body_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Request Body Sha256",
+          "type": "string"
+        },
+        "request_body_transmission_observation_offset_ns": {
+          "minimum": 0,
+          "title": "Request Body Transmission Observation Offset Ns",
+          "type": "integer"
+        },
+        "request_header_capture_complete_at_layer": {
+          "const": true,
+          "title": "Request Header Capture Complete At Layer",
+          "type": "boolean"
+        },
+        "request_header_count": {
+          "minimum": 0,
+          "title": "Request Header Count",
+          "type": "integer"
+        },
+        "request_headers": {
+          "$ref": "#/$defs/Stage2OrderedHeadersCapture"
+        },
+        "request_target": {
+          "enum": [
+            "/v1/completions",
+            "/metrics"
+          ],
+          "title": "Request Target",
+          "type": "string"
+        },
+        "requested_http_version": {
+          "const": "HTTP/1.1",
+          "title": "Requested Http Version",
+          "type": "string"
+        },
+        "requested_http_version_source": {
+          "const": "HTTPX_CLIENT_CONFIGURATION_HTTP2_FALSE",
+          "title": "Requested Http Version Source",
+          "type": "string"
+        },
+        "response_body_byte_count": {
+          "minimum": 0,
+          "title": "Response Body Byte Count",
+          "type": "integer"
+        },
+        "response_body_capture_complete_through_terminal_at_layer": {
+          "const": true,
+          "title": "Response Body Capture Complete Through Terminal At Layer",
+          "type": "boolean"
+        },
+        "response_body_completion_observation_offset_ns": {
+          "minimum": 0,
+          "title": "Response Body Completion Observation Offset Ns",
+          "type": "integer"
+        },
+        "response_body_inventory_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Response Body Inventory Sha256",
+          "type": "string"
+        },
+        "response_body_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Response Body Sha256",
+          "type": "string"
+        },
+        "response_content_type_parameters": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Response Content Type Parameters",
+          "type": "array"
+        },
+        "response_header_capture_complete_at_layer": {
+          "const": true,
+          "title": "Response Header Capture Complete At Layer",
+          "type": "boolean"
+        },
+        "response_header_count": {
+          "minimum": 0,
+          "title": "Response Header Count",
+          "type": "integer"
+        },
+        "response_header_observation_offset_ns": {
+          "minimum": 0,
+          "title": "Response Header Observation Offset Ns",
+          "type": "integer"
+        },
+        "response_headers": {
+          "$ref": "#/$defs/Stage2OrderedHeadersCapture"
+        },
+        "response_status": {
+          "const": 200,
+          "title": "Response Status",
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "0.3.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "scheme": {
+          "const": "http",
+          "title": "Scheme",
+          "type": "string"
+        },
+        "server_process_identity": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Server Process Identity",
+          "type": "string"
+        },
+        "transport_terminal_classification": {
+          "enum": [
+            "CLEAN_EOF",
+            "CLEAN_RESPONSE_CLOSE",
+            "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_TOKEN"
+          ],
+          "title": "Transport Terminal Classification",
+          "type": "string"
+        },
+        "transport_terminal_observation_offset_ns": {
+          "minimum": 0,
+          "title": "Transport Terminal Observation Offset Ns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "measurement_protocol_version",
+        "exchange_purpose",
+        "repetition_index",
+        "evidence_unit_id",
+        "external_request_id",
+        "capture_layer",
+        "provenance",
+        "method",
+        "scheme",
+        "host",
+        "port",
+        "request_target",
+        "requested_http_version",
+        "requested_http_version_source",
+        "observed_response_http_version",
+        "observed_response_http_version_source",
+        "response_status",
+        "request_headers",
+        "response_headers",
+        "request_header_count",
+        "response_header_count",
+        "request_header_capture_complete_at_layer",
+        "response_header_capture_complete_at_layer",
+        "full_response_content_type",
+        "normalized_response_media_type",
+        "response_content_type_parameters",
+        "request_body_transmission_observation_offset_ns",
+        "response_header_observation_offset_ns",
+        "request_body_byte_count",
+        "request_body_sha256",
+        "response_body_byte_count",
+        "response_body_sha256",
+        "response_body_inventory_sha256",
+        "response_body_completion_observation_offset_ns",
+        "transport_terminal_observation_offset_ns",
+        "transport_terminal_classification",
+        "response_body_capture_complete_through_terminal_at_layer",
+        "server_process_identity",
+        "launch_spec_identity_sha256",
+        "identity_sha256"
+      ],
+      "title": "Stage2HTTPExchangeCapture",
+      "type": "object"
+    },
     "Stage2LosslessHeaderField": {
       "additionalProperties": false,
       "properties": {
@@ -333,6 +642,19 @@
     "Stage2OrderedHeadersCapture": {
       "additionalProperties": false,
       "properties": {
+        "capture_complete_at_declared_layer": {
+          "const": true,
+          "title": "Capture Complete At Declared Layer",
+          "type": "boolean"
+        },
+        "capture_source": {
+          "enum": [
+            "HTTPX_REQUEST_OBJECT_AND_HEADERS_RAW",
+            "HTTPX_RESPONSE_OBJECT_AND_HEADERS_RAW"
+          ],
+          "title": "Capture Source",
+          "type": "string"
+        },
         "direction": {
           "enum": [
             "TRANSMITTED_REQUEST",
@@ -375,11 +697,19 @@
           "minimum": 0,
           "title": "Observation Offset Ns",
           "type": "integer"
+        },
+        "observed_field_count": {
+          "minimum": 0,
+          "title": "Observed Field Count",
+          "type": "integer"
         }
       },
       "required": [
         "direction",
+        "capture_source",
+        "capture_complete_at_declared_layer",
         "observation_offset_ns",
+        "observed_field_count",
         "fields",
         "normalized_view",
         "identity_sha256"
@@ -425,7 +755,10 @@
           "type": "string"
         },
         "inventory_manifest_path": {
-          "const": "raw_response_body.json",
+          "enum": [
+            "raw_response_body.json",
+            "raw/cancellation/client-wire.json"
+          ],
           "title": "Inventory Manifest Path",
           "type": "string"
         },
@@ -576,6 +909,9 @@
       "title": "External Request Id",
       "type": "string"
     },
+    "http_exchange": {
+      "$ref": "#/$defs/Stage2HTTPExchangeCapture"
+    },
     "identity_sha256": {
       "pattern": "^[0-9a-f]{64}$",
       "title": "Identity Sha256",
@@ -640,6 +976,7 @@
     "case_id",
     "external_request_id",
     "provenance",
+    "http_exchange",
     "request_body",
     "request_headers",
     "response_headers",

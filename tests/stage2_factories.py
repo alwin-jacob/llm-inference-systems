@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
@@ -18,6 +19,7 @@ from llm_inference_systems.stage2_attestation import (
     NvidiaT4ResourceAttestation,
     PerRequestMetricsAttestation,
     PrometheusMeasurementAttestation,
+    PrometheusRawScrapeCapture,
     PublicSafetyAttestation,
     RequestIdentityAttestation,
     RuntimePackageExecutionLockAttestation,
@@ -48,6 +50,7 @@ from llm_inference_systems.stage2_prometheus import (
     CounterDelta,
     PrometheusSnapshot,
     derive_counter_delta,
+    derive_measured_window_deltas,
     parse_prometheus_snapshot,
 )
 from llm_inference_systems.stage2_protocol import (
@@ -76,6 +79,13 @@ from llm_inference_systems.stage2_runtime import (
     snapshot_content_identity,
     snapshot_root_identity,
     stage2_launch_identity,
+)
+from llm_inference_systems.stage2_transport import (
+    FixtureWireCaptureProvenance,
+    Stage2HTTPExchangeCapture,
+    Stage2LosslessHeaderField,
+    Stage2OrderedHeadersCapture,
+    parse_content_type,
 )
 
 PROMPT = tuple(range(64))
@@ -719,6 +729,163 @@ def _identity_model[ModelT: BaseModel](
     return model_type.model_validate(values)
 
 
+def _fixture_transport_provenance() -> FixtureWireCaptureProvenance:
+    return _identity_model(
+        FixtureWireCaptureProvenance,
+        {
+            "capture_kind": "FIXTURE_CONSTRUCTOR",
+            "evidence_scope": Stage2EvidenceScope.TEST_FIXTURE_ONLY,
+            "classification": "SYNTHETIC_PROTOCOL_SHAPE_ONLY",
+            "fixture_marker": "TEST_FIXTURE_ONLY",
+            "fixture_identity_sha256": FIXTURE_IDENTITY,
+        },
+    )
+
+
+def _transport_headers(
+    *,
+    direction: Literal["TRANSMITTED_REQUEST", "RECEIVED_RESPONSE"],
+    offset_ns: int,
+    pairs: tuple[tuple[bytes, bytes], ...],
+) -> Stage2OrderedHeadersCapture:
+    fields = []
+    for ordinal, (name, value) in enumerate(pairs):
+        field_values: dict[str, object] = {
+            "ordinal": ordinal,
+            "name_base64": base64.b64encode(name).decode("ascii"),
+            "value_base64": base64.b64encode(value).decode("ascii"),
+            "name_byte_count": len(name),
+            "value_byte_count": len(value),
+            "name_sha256": hashlib.sha256(name).hexdigest(),
+            "value_sha256": hashlib.sha256(value).hexdigest(),
+            "normalized_name": name.decode("ascii").casefold(),
+            "normalized_value": value.decode("ascii").strip(" \t"),
+        }
+        field_values["identity_sha256"] = sha256_identity(field_values)
+        fields.append(Stage2LosslessHeaderField.model_validate(field_values))
+    values: dict[str, object] = {
+        "direction": direction,
+        "capture_source": (
+            "HTTPX_REQUEST_OBJECT_AND_HEADERS_RAW"
+            if direction == "TRANSMITTED_REQUEST"
+            else "HTTPX_RESPONSE_OBJECT_AND_HEADERS_RAW"
+        ),
+        "capture_complete_at_declared_layer": True,
+        "observation_offset_ns": offset_ns,
+        "observed_field_count": len(fields),
+        "fields": tuple(fields),
+        "normalized_view": tuple(
+            (field.normalized_name, field.normalized_value) for field in fields
+        ),
+    }
+    values["identity_sha256"] = sha256_identity(values)
+    return Stage2OrderedHeadersCapture.model_validate(values)
+
+
+def _prometheus_raw_capture_shape(
+    snapshot: PrometheusSnapshot,
+    *,
+    repetition_index: int,
+    boundary: Literal["baseline", "final"],
+) -> PrometheusRawScrapeCapture:
+    raw = snapshot.raw_exposition.encode("utf-8")
+    request_offset = snapshot.scrape_monotonic_offset_ns - 20
+    response_offset = snapshot.scrape_monotonic_offset_ns - 10
+    request_headers = _transport_headers(
+        direction="TRANSMITTED_REQUEST",
+        offset_ns=request_offset,
+        pairs=(
+            (b"Host", b"127.0.0.1:8000"),
+            (b"Accept-Encoding", b"gzip, deflate"),
+            (b"Connection", b"keep-alive"),
+            (b"User-Agent", b"python-httpx/0.28.1"),
+            (b"Accept", b"text/plain, application/openmetrics-text"),
+        ),
+    )
+    response_headers = _transport_headers(
+        direction="RECEIVED_RESPONSE",
+        offset_ns=response_offset,
+        pairs=(
+            (b"Date", b"Fri, 28 Aug 2026 20:00:00 GMT"),
+            (b"Server", b"fixture-http"),
+            (b"Content-Length", str(len(raw)).encode("ascii")),
+            (b"Content-Type", b"text/plain; version=0.0.4; charset=utf-8"),
+        ),
+    )
+    provenance = _fixture_transport_provenance()
+    content_type = response_headers.effective("content-type")
+    media_type, parameters = parse_content_type(content_type)
+    body_inventory = sha256_identity(
+        {
+            "decoded_byte_count": len(raw),
+            "raw_exposition_sha256": hashlib.sha256(raw).hexdigest(),
+        }
+    )
+    exchange_values: dict[str, object] = {
+        "schema_version": "0.3.0",
+        "measurement_protocol_version": "0.3.0",
+        "exchange_purpose": (
+            "PROMETHEUS_BASELINE" if boundary == "baseline" else "PROMETHEUS_FINAL"
+        ),
+        "repetition_index": repetition_index,
+        "evidence_unit_id": f"prometheus-{boundary}",
+        "external_request_id": None,
+        "capture_layer": ("HTTPX_REQUEST_RESPONSE_OBJECTS_HEADERS_AND_AITER_RAW_BODY_CHUNKS"),
+        "provenance": provenance,
+        "method": "GET",
+        "scheme": "http",
+        "host": "127.0.0.1",
+        "port": 8000,
+        "request_target": "/metrics",
+        "requested_http_version": "HTTP/1.1",
+        "requested_http_version_source": "HTTPX_CLIENT_CONFIGURATION_HTTP2_FALSE",
+        "observed_response_http_version": "HTTP/1.1",
+        "observed_response_http_version_source": "HTTPX_RESPONSE",
+        "response_status": 200,
+        "request_headers": request_headers,
+        "response_headers": response_headers,
+        "request_header_count": len(request_headers.fields),
+        "response_header_count": len(response_headers.fields),
+        "request_header_capture_complete_at_layer": True,
+        "response_header_capture_complete_at_layer": True,
+        "full_response_content_type": content_type,
+        "normalized_response_media_type": media_type,
+        "response_content_type_parameters": parameters,
+        "request_body_transmission_observation_offset_ns": request_offset,
+        "response_header_observation_offset_ns": response_offset,
+        "request_body_byte_count": 0,
+        "request_body_sha256": hashlib.sha256(b"").hexdigest(),
+        "response_body_byte_count": len(raw),
+        "response_body_sha256": hashlib.sha256(raw).hexdigest(),
+        "response_body_inventory_sha256": body_inventory,
+        "response_body_completion_observation_offset_ns": snapshot.scrape_monotonic_offset_ns,
+        "transport_terminal_observation_offset_ns": snapshot.scrape_monotonic_offset_ns + 1,
+        "transport_terminal_classification": "CLEAN_RESPONSE_CLOSE",
+        "response_body_capture_complete_through_terminal_at_layer": True,
+        "server_process_identity": snapshot.process_start_id,
+        "launch_spec_identity_sha256": sha256_identity(make_launch_spec()),
+    }
+    exchange_values["identity_sha256"] = sha256_identity(exchange_values)
+    exchange = Stage2HTTPExchangeCapture.model_validate(exchange_values)
+    values: dict[str, object] = {
+        "schema_version": "0.3.0",
+        "evidence_scope": Stage2EvidenceScope.TEST_FIXTURE_ONLY,
+        "repetition_index": repetition_index,
+        "boundary": boundary,
+        "process_start_id": snapshot.process_start_id,
+        "scrape_wall_clock_utc": snapshot.scrape_wall_clock_utc,
+        "scrape_monotonic_offset_ns": snapshot.scrape_monotonic_offset_ns,
+        "raw_exposition_base64": base64.b64encode(raw).decode("ascii"),
+        "decoded_byte_count": len(raw),
+        "raw_exposition_sha256": hashlib.sha256(raw).hexdigest(),
+        "capture_source": "TEST_FIXTURE_ONLY_CPU_SCRAPE",
+        "provenance": provenance,
+        "http_exchange": exchange,
+    }
+    values["identity_sha256"] = sha256_identity(values)
+    return PrometheusRawScrapeCapture.model_validate(values)
+
+
 def _prometheus_measurement_shape(
     *,
     control: Stage2RuntimeControlEvidence,
@@ -737,8 +904,18 @@ def _prometheus_measurement_shape(
             size=len(data),
         )
 
-    baseline_raw = baseline.raw_exposition.encode("utf-8")
-    final_raw = final.raw_exposition.encode("utf-8")
+    baseline_capture = _prometheus_raw_capture_shape(
+        baseline,
+        repetition_index=control.repetition_index,
+        boundary="baseline",
+    )
+    final_capture = _prometheus_raw_capture_shape(
+        final,
+        repetition_index=control.repetition_index,
+        boundary="final",
+    )
+    baseline_raw = canonical_json_bytes(baseline_capture) + b"\n"
+    final_raw = canonical_json_bytes(final_capture) + b"\n"
     baseline_parsed = canonical_json_bytes(baseline) + b"\n"
     final_parsed = canonical_json_bytes(final) + b"\n"
     values: dict[str, object] = {
@@ -760,6 +937,8 @@ def _prometheus_measurement_shape(
         "final_parsed_snapshot_file": reference(
             "derived/prometheus/measured-window-final-snapshot.json", final_parsed
         ),
+        "baseline_capture": baseline_capture,
+        "final_capture": final_capture,
         "baseline_snapshot": baseline,
         "final_snapshot": final,
         "measured_phase_identity_sha256": measured_phase.evidence_identity_sha256,
@@ -811,16 +990,7 @@ def make_real_runtime_attestation() -> FutureRealRuntimeAttestation:
             process_start_id=f"server-process-{control.repetition_index}",
         )
         final = control.final_metric_scrape
-        deltas = (
-            derive_counter_delta(baseline, final, "vllm:prompt_tokens_total"),
-            derive_counter_delta(baseline, final, "vllm:generation_tokens_total"),
-            derive_counter_delta(
-                baseline, final, "vllm:request_success_total", finished_reason="length"
-            ),
-            derive_counter_delta(baseline, final, "vllm:num_preemptions_total"),
-            derive_counter_delta(baseline, final, "vllm:prefix_cache_queries_total"),
-            derive_counter_delta(baseline, final, "vllm:prefix_cache_hits_total"),
-        )
+        deltas = derive_measured_window_deltas(baseline, final)
         prometheus_measurements.append(
             _prometheus_measurement_shape(
                 control=control,

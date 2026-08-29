@@ -172,7 +172,7 @@ def test_missing_request_raw_file_field_is_rejected() -> None:
         Stage2RequestRawEvidence.model_validate(raw)
 
 
-def test_request_hash_or_cancellation_stream_not_in_manifest_is_rejected() -> None:
+def test_request_hash_or_cancellation_wire_not_in_manifest_is_rejected() -> None:
     repetition = _attestation().repetitions[0]
     request = repetition.measured_requests[0]
     raw_values = request.raw_evidence.model_dump(mode="python")
@@ -189,7 +189,7 @@ def test_request_hash_or_cancellation_stream_not_in_manifest_is_rejected() -> No
         Stage2RepetitionAttestation.model_validate(values)
 
     values = repetition.model_dump(mode="python")
-    values["cancellation_client_stream_file"]["sha256"] = "0" * 64
+    values["cancellation_wire_file"]["sha256"] = "0" * 64
     with pytest.raises(ValidationError, match="absent from the repetition manifest"):
         Stage2RepetitionAttestation.model_validate(values)
 
@@ -214,12 +214,8 @@ def test_prometheus_raw_exposition_references_must_bind_to_repetition_manifest(
     measurement_values["evidence_sha256"] = sha256_identity(
         measurement_values, omit_fields=frozenset({"evidence_sha256"})
     )
-    measurement = type(repetition.prometheus_measurement).model_validate(measurement_values)
-    values = repetition.model_dump(mode="python")
-    values["prometheus_measurement"] = measurement
-    values["identity_sha256"] = sha256_identity(values, omit_fields=frozenset({"identity_sha256"}))
-    with pytest.raises(ValidationError, match="absent from the repetition manifest"):
-        Stage2RepetitionAttestation.model_validate(values)
+    with pytest.raises(ValidationError, match="raw scrape file identity"):
+        type(repetition.prometheus_measurement).model_validate(measurement_values)
 
 
 def test_prometheus_parsed_snapshots_cannot_exist_without_raw_exposition_references() -> None:
@@ -281,11 +277,38 @@ def test_prometheus_measurement_rejects_stale_baseline_scrape() -> None:
     values = measurement.model_dump(mode="python")
     stale_offset = values["first_measured_request_dispatch_offset_ns"] - 1_000_000_001
     values["measured_phase_start_offset_ns"] = stale_offset
+    original_offset = values["baseline_snapshot"]["scrape_monotonic_offset_ns"]
+    transport_shift = stale_offset - original_offset
     values["baseline_snapshot"]["scrape_monotonic_offset_ns"] = stale_offset
     baseline = type(measurement.baseline_snapshot).model_validate(values["baseline_snapshot"])
     values["baseline_parsed_snapshot_file"]["sha256"] = hashlib.sha256(
         canonical_json_bytes(baseline) + b"\n"
     ).hexdigest()
+    capture = values["baseline_capture"]
+    capture["scrape_monotonic_offset_ns"] = stale_offset
+    exchange = capture["http_exchange"]
+    exchange["request_headers"]["observation_offset_ns"] += transport_shift
+    exchange["response_headers"]["observation_offset_ns"] += transport_shift
+    exchange["request_body_transmission_observation_offset_ns"] += transport_shift
+    exchange["response_header_observation_offset_ns"] += transport_shift
+    exchange["response_body_completion_observation_offset_ns"] += transport_shift
+    exchange["transport_terminal_observation_offset_ns"] += transport_shift
+    exchange["request_headers"]["identity_sha256"] = sha256_identity(
+        exchange["request_headers"], omit_fields=frozenset({"identity_sha256"})
+    )
+    exchange["response_headers"]["identity_sha256"] = sha256_identity(
+        exchange["response_headers"], omit_fields=frozenset({"identity_sha256"})
+    )
+    exchange["identity_sha256"] = sha256_identity(
+        exchange, omit_fields=frozenset({"identity_sha256"})
+    )
+    capture["identity_sha256"] = sha256_identity(
+        capture, omit_fields=frozenset({"identity_sha256"})
+    )
+    baseline_capture = type(measurement.baseline_capture).model_validate(capture)
+    raw_capture_bytes = canonical_json_bytes(baseline_capture) + b"\n"
+    values["baseline_raw_exposition_file"]["size"] = len(raw_capture_bytes)
+    values["baseline_raw_exposition_file"]["sha256"] = hashlib.sha256(raw_capture_bytes).hexdigest()
     values["evidence_sha256"] = sha256_identity(values, omit_fields=frozenset({"evidence_sha256"}))
     with pytest.raises(ValidationError, match="stale"):
         type(measurement).model_validate(values)
@@ -318,7 +341,7 @@ def test_repetition_reconstruction_binds_raw_prometheus_capture_metadata(
         capture, omit_fields=frozenset({"identity_sha256"})
     )
     raw[path] = canonical_json_bytes(capture) + b"\n"
-    with pytest.raises(Stage2ExperimentError, match="cross a repetition, evidence scope"):
+    with pytest.raises(Stage2ExperimentError, match=r"Prometheus|repetition|scope"):
         reconstruct_experiment_repetition(raw)
 
 
@@ -629,7 +652,9 @@ def test_fixture_wire_helper_cannot_emit_future_runtime_scope() -> None:
     "header_name",
     [b"Authorization", b"X-Goog-Api-Key", b"Private-Token", b"X-Amz-Security-Token"],
 )
-def test_wire_headers_use_a_public_evidence_allowlist(header_name: bytes) -> None:
+def test_wire_headers_reject_secret_bearing_fields_before_durable_capture(
+    header_name: bytes,
+) -> None:
     headers = _attestation().repetitions[0].measured_requests[0].wire_capture.request_headers
     field_values: dict[str, object] = {
         "ordinal": len(headers.fields),
@@ -643,16 +668,8 @@ def test_wire_headers_use_a_public_evidence_allowlist(header_name: bytes) -> Non
         "normalized_value": "super-secret-value",
     }
     field_values["identity_sha256"] = sha256_identity(field_values)
-    field = type(headers.fields[0]).model_validate(field_values)
-    values = headers.model_dump(mode="python")
-    values["fields"] = (*headers.fields, field)
-    values["normalized_view"] = (
-        *headers.normalized_view,
-        (field.normalized_name, field.normalized_value),
-    )
-    values["identity_sha256"] = sha256_identity(values, omit_fields=frozenset({"identity_sha256"}))
-    with pytest.raises(ValidationError, match="public evidence allowlist"):
-        type(headers).model_validate(values)
+    with pytest.raises(ValidationError, match="secret-bearing"):
+        type(headers.fields[0]).model_validate(field_values)
 
 
 @pytest.mark.parametrize("control_byte", [b"\x00", b"\x01", b"\x1f", b"\x7f"])
@@ -671,7 +688,7 @@ def test_lossless_header_fields_reject_prohibited_control_bytes(control_byte: by
         }
     )
     values["identity_sha256"] = sha256_identity(values, omit_fields=frozenset({"identity_sha256"}))
-    with pytest.raises(ValidationError, match="malformed"):
+    with pytest.raises(ValidationError, match="control byte"):
         type(field).model_validate(values)
 
 
@@ -707,6 +724,11 @@ def test_coalesced_terminal_frames_replay_from_retained_frame_observations() -> 
     capture_values = capture.model_dump(mode="python")
     capture_values["response_body_chunks"] = chunks
     capture_values["transport_close"] = close
+    capture_values["http_exchange"]["response_body_inventory_sha256"] = sha256_identity(chunks)
+    capture_values["http_exchange"]["identity_sha256"] = sha256_identity(
+        capture_values["http_exchange"],
+        omit_fields=frozenset({"identity_sha256"}),
+    )
     capture_values["identity_sha256"] = sha256_identity(
         capture_values, omit_fields=frozenset({"identity_sha256"})
     )
