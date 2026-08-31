@@ -290,3 +290,22 @@ published history. Stage 2B remains separately unauthorized.
 - Extended the aggregate root with three Prometheus attestation files and added standalone wire and
   Prometheus `0.3.0` schemas. The complete 3 × 16 example remains CPU-fixture-only and does not
   establish runtime, model, tokenizer, GPU, CUDA, Kaggle, or performance evidence.
+
+## 2026-08-31 — Stage 2A source acceptance and public-branch staging preparation
+
+- The GitHub/Public Engineering Surface controller accepted the Stage 2A protocol and attestation
+  source at `22e3056dc8e7dbdaaa898ab1b65a358c309529eb` after independent review of the immutable
+  Git bundle and source-review manifest.
+- The accepted exact local gate used Python `3.13.15`, `uv 0.12.5`, Ruff `0.16.4`, mypy `2.3.1`,
+  and pytest `9.1.1`; it passed 684 tests, synchronized 25 schemas, reported zero public-safety
+  findings, verified the frozen Stage 0/1 evidence, verified Stage 2A, and passed metadata-free
+  archive verification.
+- Stage 1 remains publicly released and frozen at
+  `40d1ecdc26d1b70f20df42de3e1156e13891cc4d`, with GitHub Actions run `33171272608`.
+- This documentation-only descendant prepares the accepted Stage 2A source for branch staging.
+  Branch visibility, remote branch identity, and branch-specific workflow status are external
+  GitHub state and must be verified independently after any separately authorized push.
+- Stage 2A remains `TEST_FIXTURE_ONLY`; the complete CPU-generated experiment remains
+  `SYNTHETIC_PROTOCOL_SHAPE_ONLY`. No runtime, model, tokenizer, GPU, CUDA, performance,
+  historical-authentication, interview-defense, public résumé, profile, pin, or claim status is
+  advanced by source acceptance, documentation, branch visibility, or remote CI.

@@ -19,8 +19,9 @@ invariants; they are not LLM measurements.
 | Stage 2A real-runtime execution | Not performed; protocol requirements only |
 | Separate Linux/CUDA execution lock | Uninstalled, unexecuted, and blocked on one metadata-unavailable artifact hash |
 | CI configuration | Present and executed for repository verification |
-| Release-preparation remote CI | Passed at `68e64bc` through run `33164155869` |
-| Current release-head CI | External GitHub state; publication requires the same four jobs to pass before visibility changes |
+| Stage 1 public-release remote CI | Passed at `40d1ecdc` through run `33171272608` |
+| Stage 2A source acceptance | Accepted at `22e3056` after a local exact-environment gate with 684 tests and 25 synchronized schemas |
+| Current branch CI | External GitHub state; branch-specific workflow status must be independently verified |
 | Real runtime | Not established |
 | Real model/tokenizer | Not established |
 | GPU/hardware execution | Not established |
@@ -49,14 +50,15 @@ Stage 0, Stage 1, and Stage 2A do not establish any of the following:
 - any approximately 30% result;
 - historical résumé authentication.
 
-GitHub Actions run `33164155869` executed release-preparation SHA `68e64bc` while the repository
-was private. Four jobs passed: the Python 3.12/3.13 source matrix, exact-Python-3.13.15
-checked-evidence verification, and exact-Python-3.13.15 metadata-free archive verification. Every
-job used `uv 0.12.5`.
+GitHub Actions run `33171272608` executed Stage 1 public-release SHA `40d1ecdc` and passed the
+Python 3.12/3.13 source matrix, exact-Python-3.13.15 checked-evidence verification, and
+exact-Python-3.13.15 metadata-free archive verification. Every job used `uv 0.12.5`.
 
-The publication procedure requires the documentation-only release head to pass the same four jobs
-before visibility changes. Current workflow status and repository visibility must be verified
-externally; this source file does not establish either state.
+The Stage 2A protocol source at `22e3056dc8e7dbdaaa898ab1b65a358c309529eb` was accepted after
+an exact local Python 3.13.15 / `uv 0.12.5` gate with 684 passing tests, 25 synchronized schemas,
+zero public-safety findings, historical Stage 1 verification, Stage 2A verification, and
+metadata-free archive verification. Current branch visibility and workflow status remain external
+GitHub state; this source file does not establish either state.
 
 The checked fixture run uses requested and observed client concurrency `2`; this is not a `1–64`
 sweep and is not server batch-size evidence. Loopback fixture timing distributions retain tiny

@@ -102,20 +102,23 @@ tokenizer, Linux/NVIDIA, CUDA, GPU, Kaggle, or performance evidence.
 Client concurrency is a load-generator property. A configured or observed server batch size is
 a separate field and is never inferred from client concurrency.
 
-## Remote verification
+## Release and verification state
 
-The release-preparation commit `68e64bc814d805464f239c452fa8261fedbfde0b` passed
-GitHub Actions run `33164155869` while the repository was private. Four jobs succeeded: source
-verification on Python 3.12 and 3.13, checked Stage 1 evidence on exact Python 3.13.15, and
-metadata-free Git-archive verification on exact Python 3.13.15. Every job used `uv 0.12.5`.
+Stage 1 is publicly released at `40d1ecdc26d1b70f20df42de3e1156e13891cc4d`. GitHub Actions
+run `33171272608` passed four jobs: source verification on Python 3.12 and 3.13, checked Stage 1
+evidence on exact Python 3.13.15, and metadata-free Git-archive verification on exact Python
+3.13.15. Every job used `uv 0.12.5`.
 
-The current `main` documentation-only release head is eligible for public visibility only after its
-own identical four-job CI gate succeeds. Repository visibility and current workflow status are
-external GitHub state and must be verified independently.
+The Stage 2A protocol source at `22e3056dc8e7dbdaaa898ab1b65a358c309529eb` was accepted after
+independent source review. Its exact local Python 3.13.15 / `uv 0.12.5` gate passed 684 tests, 25
+synchronized schemas, zero-finding public-safety verification, historical Stage 1 verification,
+Stage 2A verification, and metadata-free archive verification.
 
-These checks establish repository source, test, artifact, and reconstruction evidence only. They
+The current branch visibility, branch HEAD, and workflow status are external GitHub state and must
+be verified independently. Stage 2A remains `TEST_FIXTURE_ONLY` and its complete CPU-generated
+experiment remains `SYNTHETIC_PROTOCOL_SHAPE_ONLY`. Source review, branch visibility, and remote CI
 do not establish model, tokenizer, serving-runtime, GPU, CUDA, production, capacity, historical,
-or serving-performance evidence.
+interview-defense, or serving-performance evidence.
 
 ## Local verification
 
