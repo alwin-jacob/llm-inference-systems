@@ -309,3 +309,21 @@ published history. Stage 2B remains separately unauthorized.
   `SYNTHETIC_PROTOCOL_SHAPE_ONLY`. No runtime, model, tokenizer, GPU, CUDA, performance,
   historical-authentication, interview-defense, public résumé, profile, pin, or claim status is
   advanced by source acceptance, documentation, branch visibility, or remote CI.
+
+## 2026-08-31 — Stage 2A public-branch Python 3.12 CI scope correction
+
+- Public staging commit `4d7a55a2cecaba062e1f5712ef0f2a5a5a4e876b` triggered GitHub
+  Actions run `33403073088` on `stage2a-runtime-protocol`. The metadata-free archive, Python
+  3.13, and exact checked-Stage-1-evidence jobs succeeded.
+- `local-style-gate (3.12)` job `99523870633` failed after 683 tests passed because
+  `test_historical_stage1_verifies_under_current_package_0_3_0` invoked the exact checked Stage 1
+  verifier under CPython 3.12.3. The retained historical manifest is intentionally bound to exact
+  CPython 3.13.15, so the verifier correctly raised `running Python differs`.
+- The historical verifier remains unchanged and strict. This correction keeps the current-package
+  and historical-package assertions active on every supported Python, while skipping only the
+  environment-bound `_verify()` call outside exact Python 3.13.15. Dedicated checked-evidence and
+  metadata-free archive jobs continue to execute the full verifier under exact Python 3.13.15.
+- Failed run `33403073088` is retained as public evidence of the test-scope defect; it was not
+  rerun, deleted, hidden, or replaced. Public `main` remained unchanged, and no pull request, tag,
+  GitHub Release, package, profile, pin, outreach, runtime, model, GPU, or claim-status action was
+  performed as part of this correction.

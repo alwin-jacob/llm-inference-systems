@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import platform
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -282,6 +283,12 @@ def test_execution_lock_schema_encodes_exact_supply_chain_allowlist(mutation: st
 def test_historical_stage1_verifies_under_current_package_0_3_0() -> None:
     assert __version__ == "0.3.0"
     assert HISTORICAL_STAGE1_PACKAGE_VERSION == "0.2.0"
+
+    if platform.python_version() != "3.13.15":
+        pytest.skip(
+            "checked historical Stage 1 evidence is environment-bound to exact Python 3.13.15"
+        )
+
     result = _verify(ROOT / "artifacts/stage1-fixture/2026-08-27")
     assert result["status"] == "verified"
 
