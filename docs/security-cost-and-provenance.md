@@ -51,8 +51,7 @@ incomplete or duplicate inventory, altered hashes, and derived data that cannot 
 exactly from raw evidence. Staging starts as `INCOMPLETE`; terminal failures retain public-safe raw
 evidence and become `INVALID`; only reconstruction- and inventory-validated evidence receives a
 manifest written last after durable directory placement. A failed post-rename durability operation
-leaves the visible bundle non-committed. A commit state is an integrity/lifecycle fact, not
-publication or claim approval.
+leaves the visible bundle non-committed. A commit state records artifact integrity and lifecycle completion.
 
 The public-safety scanner rejects credential-shaped values, authorization and cookie headers,
 proxy credentials, private home and cache paths, host/notebook/account identifiers, GPU UUIDs,
