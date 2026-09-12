@@ -163,10 +163,7 @@ async def _exercise_fixture(
             assert select_exact_series(snapshot, "vllm:prompt_tokens_total").value == 64
             assert select_exact_series(snapshot, "vllm:generation_tokens_total").value == 32
 
-            body = b"".join(
-                chunk.data
-                for chunk in validator.retained_raw_body_chunks
-            )
+            body = b"".join(chunk.data for chunk in validator.retained_raw_body_chunks)
     finally:
         await server.stop()
 
@@ -198,10 +195,7 @@ def test_cpu_fixture_server_stream_logs_and_metrics(
         assert evidence.terminal_event_carried_token_ids is True
 
     if grouped:
-        assert (
-            evidence.client_generation_tpot.unavailable_reason
-            == "GROUPED_TOKEN_EVENT"
-        )
+        assert evidence.client_generation_tpot.unavailable_reason == "GROUPED_TOKEN_EVENT"
 
     assert evidence.final_output_token_ids == tuple(range(1000, 1032))
 
@@ -259,31 +253,18 @@ def test_execution_lock_tracks_incomplete_artifact_hash() -> None:
     assert lock.resolver_lock_claimed_complete is False
     assert lock.vllm_git_revision == "2cf0a6915ce544dc493a0990f2ea38d81601128a"
     assert lock.qwen_model_repository == "Qwen/Qwen2.5-0.5B-Instruct"
-    assert lock.qwen_snapshot_source_url.endswith(
-        lock.qwen_snapshot_revision
-    )
+    assert lock.qwen_snapshot_source_url.endswith(lock.qwen_snapshot_revision)
 
-    vllm = next(
-        item
-        for item in lock.artifacts
-        if item.package == "vllm"
-    )
+    vllm = next(item for item in lock.artifacts if item.package == "vllm")
 
-    assert (
-        vllm.sha256
-        == "8ec943b66a0c6b4351d0778e99d7bacfca5788dd8eedd49425092bacb61c4397"
-    )
+    assert vllm.sha256 == "8ec943b66a0c6b4351d0778e99d7bacfca5788dd8eedd49425092bacb61c4397"
     assert vllm.hash_source == "PINNED_SPECIFICATION"
     assert vllm.source_url == (
         "https://github.com/vllm-project/vllm/releases/download/v0.28.0/"
         "vllm-0.28.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl"
     )
 
-    torchvision = next(
-        item
-        for item in lock.artifacts
-        if item.package == "torchvision"
-    )
+    torchvision = next(item for item in lock.artifacts if item.package == "torchvision")
 
     assert torchvision.sha256 is None
 
@@ -316,20 +297,14 @@ def test_execution_lock_rejects_supply_chain_or_status_drift(
         artifacts[3] = artifacts[0]
     elif mutation == "source":
         artifacts[0] = artifacts[0].model_copy(
-            update={
-                "source_url": "https://packages.invalid/vllm.whl"
-            }
+            update={"source_url": "https://packages.invalid/vllm.whl"}
         )
     elif mutation == "hash":
-        artifacts[1] = artifacts[1].model_copy(
-            update={"sha256": "0" * 64}
-        )
+        artifacts[1] = artifacts[1].model_copy(update={"sha256": "0" * 64})
     elif mutation == "model-repository":
         value["qwen_model_repository"] = "substituted/model"
     elif mutation == "model-source":
-        value["qwen_snapshot_source_url"] = (
-            "https://models.invalid/substituted"
-        )
+        value["qwen_snapshot_source_url"] = "https://models.invalid/substituted"
     elif mutation == "false-complete":
         value["status"] = "COMPLETE"
     elif mutation == "generic-incomplete-status":
@@ -360,23 +335,15 @@ def test_execution_lock_rejects_supply_chain_or_status_drift(
 def test_execution_lock_schema_encodes_exact_supply_chain_allowlist(
     mutation: str,
 ) -> None:
-    value = json.loads(
-        (ROOT / "execution-lock/stage2-execution-lock.json").read_bytes()
-    )
-    schema = json.loads(
-        (ROOT / "schemas/execution-lock-v0.3.0.schema.json").read_bytes()
-    )
+    value = json.loads((ROOT / "execution-lock/stage2-execution-lock.json").read_bytes())
+    schema = json.loads((ROOT / "schemas/execution-lock-v0.3.0.schema.json").read_bytes())
 
     if mutation == "duplicate":
         value["artifacts"][3] = value["artifacts"][0]
     elif mutation == "artifact-source":
-        value["artifacts"][0]["source_url"] = (
-            "https://packages.invalid/substituted"
-        )
+        value["artifacts"][0]["source_url"] = "https://packages.invalid/substituted"
     elif mutation == "model-source":
-        value["qwen_snapshot_source_url"] = (
-            "https://models.invalid/substituted"
-        )
+        value["qwen_snapshot_source_url"] = "https://models.invalid/substituted"
     elif mutation == "status":
         value["status"] = "INCOMPLETE"
     else:
@@ -391,13 +358,9 @@ def test_stage1_checked_evidence_verifies_under_current_package() -> None:
     assert STAGE1_PACKAGE_VERSION == "0.2.0"
 
     if platform.python_version() != "3.13.15":
-        pytest.skip(
-            "checked Stage 1 evidence is environment-bound to exact Python 3.13.15"
-        )
+        pytest.skip("checked Stage 1 evidence is environment-bound to exact Python 3.13.15")
 
-    result = verify_stage1_evidence(
-        ROOT / "artifacts/stage1-fixture/2026-08-27"
-    )
+    result = verify_stage1_evidence(ROOT / "artifacts/stage1-fixture/2026-08-27")
 
     assert result["status"] == "verified"
 
@@ -435,8 +398,7 @@ def test_ordinary_environment_excludes_stage2_runtime_dependencies() -> None:
         "import " + "vllm\n",
         "from torch import cuda\n",
         "runtime = __import__('transformers')\n",
-        "import importlib\n"
-        "runtime = importlib.import_module('torchvision.models')\n",
+        "import importlib\nruntime = importlib.import_module('torchvision.models')\n",
     ],
 )
 def test_stage2_verifier_rejects_unexpected_runtime_imports(
@@ -472,10 +434,7 @@ def test_ordinary_source_and_tests_exclude_stage2_runtime_imports() -> None:
         "import " + "huggingface_hub",
     )
 
-    paths = (
-        tuple((ROOT / "src").rglob("*.py"))
-        + tuple((ROOT / "tests").rglob("*.py"))
-    )
+    paths = tuple((ROOT / "src").rglob("*.py")) + tuple((ROOT / "tests").rglob("*.py"))
 
     for path in paths:
         text = path.read_text()
