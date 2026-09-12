@@ -245,35 +245,18 @@ The checked Stage 1 artifacts use deterministic loopback execution to verify the
 
 ## Release and verification state
 
-Stage 1 is publicly released at:
+The repository includes automated verification for source quality, generated-schema synchronization, checked artifact reconstruction, and metadata-free archive reproducibility.
 
-```text
-40d1ecdc26d1b70f20df42de3e1156e13891cc4d
-```
+The Stage 1 verification workflow covers Python 3.12 and 3.13 source checks together with exact-Python-3.13.15 checked-artifact and archive verification.
 
-GitHub Actions run `33171272608` passed:
+The recorded Stage 2A verification gate passed:
 
-* source verification on Python 3.12;
-* source verification on Python 3.13;
-* checked Stage 1 evidence verification on Python 3.13.15; and
-* metadata-free Git-archive verification on Python 3.13.15.
-
-Every job used `uv 0.12.5`.
-
-The Stage 2A protocol source at:
-
-```text
-22e3056dc8e7dbdaaa898ab1b65a358c309529eb
-```
-
-passed the corresponding local verification gate with:
-
-* 684 tests;
-* 25 synchronized schemas;
-* public-safety verification;
-* historical Stage 1 verification;
-* Stage 2A verification; and
-* metadata-free archive verification.
+- 684 tests;
+- 25 synchronized schemas;
+- public-safety verification;
+- Stage 0 and Stage 1 compatibility verification;
+- Stage 2A protocol verification; and
+- metadata-free archive verification.
 
 ## Local verification
 
