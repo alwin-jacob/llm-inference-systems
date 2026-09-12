@@ -24,8 +24,7 @@ so encoded raw body, pending
 parser, header, log, or evidence bytes cannot bypass the scan. A passing scan is a scoped
 repository-content check, not a general security certification.
 
-Raw-body retention is authorized here only because the fixture body is project-authored synthetic
-text. Each raw chunk is Base64 encoded with byte count and SHA-256, and validation reconstructs the
+Raw-body retention is limited to project-authored synthetic fixture text. Each raw chunk is Base64 encoded with byte count and SHA-256, and validation reconstructs the
 exact observed body. This does not establish that arbitrary provider output is safe to retain.
 
 Final artifact files are written through destination-directory temporary files, flushed, fsynced,
