@@ -1,18 +1,38 @@
-# Stage 2 Linux/CUDA execution lock
+# Runtime environment lock
 
-This directory is separate from the ordinary CPU-only development lock. Nothing here is installed
-or executed by Stage 2A. The machine-readable specification pins a future Linux/CUDA environment,
-but its status is `BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED` because the official PyTorch
-simple-index metadata and a metadata-only HEAD response do not expose the SHA-256 of the selected
-`torchvision` wheel. Stage 2A did not download that 9,290,444-byte binary to calculate it.
+This directory contains the versioned Linux/CUDA environment specification used by the Stage 2 runtime protocol.
 
-The vLLM CUDA 12.9 artifact uses the exact approved GitHub release URL and the
-controller-authorized hash. The former `wheels.vllm.ai` location is not accepted as a substitute.
-Torch and torchaudio hashes came from official index URL fragments. No resolver lock is represented
-as frozen while the one unresolved artifact hash remains.
+The machine-readable lock records the runtime package set, artifact identities, model snapshot identity, environment requirements, and verification inputs needed to construct a reproducible execution environment.
 
-The future snapshot identity is the exact repository `Qwen/Qwen2.5-0.5B-Instruct` at revision
-`7ae557604adf67be50417f59c2c2f167def9a775`, with its revision-specific source URL retained in the
-machine-readable lock. Stage 2A did not retrieve the snapshot.
+## Runtime packages
 
-The pre-import version command in the lock uses `importlib.metadata` and does not import vLLM.
+The specification pins the corresponding vLLM CUDA 12.9 artifact together with PyTorch-family package identities.
+
+Torch and torchaudio artifact hashes are sourced from the official PyTorch package index.
+
+The selected torchvision artifact hash remains unresolved because the package-index metadata does not expose the required SHA-256 value. The machine-readable lock records this incomplete state explicitly rather than representing the environment as fully resolved.
+
+## Model snapshot
+
+The runtime snapshot identity is pinned to:
+
+```text
+Qwen/Qwen2.5-0.5B-Instruct
+revision: 7ae557604adf67be50417f59c2c2f167def9a775
+```
+
+The corresponding revision identity and required-file inventory are retained by the snapshot-manifest protocol.
+
+## Environment verification
+
+The execution specification records:
+
+* exact package identities;
+* Linux/CUDA environment requirements;
+* runtime launch identity;
+* model and tokenizer snapshot identity;
+* package-version verification;
+* resource requirements; and
+* artifact-integrity inputs.
+
+Package version inspection uses `importlib.metadata` so environment verification can inspect installed package metadata independently of runtime initialization.
