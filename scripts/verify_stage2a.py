@@ -1,6 +1,6 @@
-"""Verify the CPU-fixture-only Stage 2A source boundary and frozen historical bytes."""
+"""Verify Stage 2A protocol integrity, compatibility, and reproducibility."""
 
-# ruff: noqa: E501 -- frozen SHA-256 inventory stays one auditable path/hash pair per line.
+# ruff: noqa: E501 -- retained SHA-256 inventory stays one auditable path/hash pair per line.
 
 from __future__ import annotations
 
@@ -52,20 +52,23 @@ FROZEN_HASHES = {
     "schemas/execution-manifest-v0.2.0.schema.json": "4b98878c7b58aa05eaecc94dc5c500b3e3b5f1ad18f5745fac3dca1a07b20a60",
     "schemas/fixture-definition-v0.2.0.schema.json": "971f3711577e78bfe186980724eaacb08f9f04ddd01b7cd2b1d462511f830738",
     "schemas/run-artifact-v0.1.0.schema.json": "4cce2174f5b6398c1b67f31c30154fd9201ad943c188a3a61f1bed923c74837b",
-    "schemas/run-configuration-v0.1.0.schema.json": "85c28c2507067431dfefe11121f82ce4ad4deada972b2d4b86d2a82f0caccea1",
+    "schemas/run-configuration-v0.1.0.schema.json": "85c28c2507067431dfefe11121f82ce4ad2d6a82f0caccea1",
     "schemas/run-configuration-v0.2.0.schema.json": "f09a57427aec0cf0bb63c2221e54879ce001c73ec24c7d78f1f48e6e229f04c0",
     "schemas/workload-definition-v0.1.0.schema.json": "448ce2a53885b3289eb7505edbdaa75cb61fcd0dd85dc1af1312611b5ab4916a",
     "schemas/workload-definition-v0.2.0.schema.json": "605711239c7cac4b55bb68a86ac1fe065d762bfa38fd890716d7a1b5b99c9e46",
 }
+
 HISTORICAL_STAGE1_UV_LOCK_SHA256 = (
     "748fd114d05ea6e96c058f41b8a1ee0736d30339f100179e3ee7c47c7e6c59e6"
 )
 ORDINARY_UV_LOCK_SHA256 = "96419af34fa7338fcf99916d4db3a25f480d32c6c2ffcdfc7366b5138025036d"
+
 VLLM_WHEEL_SOURCE_URL = (
     "https://github.com/vllm-project/vllm/releases/download/v0.28.0/"
     "vllm-0.28.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl"
 )
 VLLM_WHEEL_SHA256 = "8ec943b66a0c6b4351d0778e99d7bacfca5788dd8eedd49425092bacb61c4397"
+
 FORBIDDEN_IMPORT_ROOTS = frozenset(
     {
         "cuda",
@@ -81,6 +84,7 @@ FORBIDDEN_IMPORT_ROOTS = frozenset(
         "vllm",
     }
 )
+
 FORBIDDEN_LOCK_NAMES = frozenset(
     {
         "cupy",
@@ -139,6 +143,7 @@ def _verify_import_boundary(root: Path) -> None:
                     raise AssertionError(
                         f"forbidden dynamic ordinary import in {path.relative_to(root)}"
                     )
+
             names: tuple[str, ...]
             if isinstance(node, ast.Import):
                 names = tuple(alias.name for alias in node.names)
@@ -146,20 +151,24 @@ def _verify_import_boundary(root: Path) -> None:
                 names = (node.module,)
             else:
                 continue
+
             if any(name.split(".", 1)[0] in FORBIDDEN_IMPORT_ROOTS for name in names):
                 raise AssertionError(f"forbidden ordinary import in {path.relative_to(root)}")
 
 
 def _verify_ordinary_lock(root: Path) -> None:
     if _sha256(root / "uv.lock") != ORDINARY_UV_LOCK_SHA256:
-        raise AssertionError("ordinary uv.lock bytes differ from the authorized Stage 2A lock")
+        raise AssertionError("ordinary uv.lock bytes differ from the recorded Stage 2A lock")
+
     names: set[str] = set()
     for line in (root / "uv.lock").read_text().splitlines():
         if line.startswith("name = "):
             names.add(line.split('"', 2)[1].casefold())
+
     forbidden = names & FORBIDDEN_LOCK_NAMES
     if forbidden:
         raise AssertionError(f"forbidden ordinary lock dependencies: {sorted(forbidden)}")
+
     project_text = (root / "pyproject.toml").read_text()
     declared = _declared_forbidden_dependencies(project_text)
     if declared:
@@ -168,38 +177,43 @@ def _verify_ordinary_lock(root: Path) -> None:
 
 def _declared_forbidden_dependencies(project_text: str) -> set[str]:
     folded = project_text.casefold()
-    declared = {
-        name for name in FORBIDDEN_LOCK_NAMES if f'"{name}' in folded or f"'{name}" in folded
+    return {
+        name
+        for name in FORBIDDEN_LOCK_NAMES
+        if f'"{name}' in folded or f"'{name}" in folded
     }
-    return declared
 
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
+
     # Exact script execution places only scripts/ on sys.path. Add this repository
-    # root so the CPU-only test fixture builder is importable without installation.
+    # root so the deterministic test fixture builder is importable without installation.
     sys.path.insert(0, str(root))
+
     from tests.stage2_experiment_factories import write_synthetic_experiment_directory
 
     if __version__ != "0.3.0":
         raise AssertionError("current package version differs from 0.3.0")
+
     Stage2RunConfiguration.model_validate_json(
         (root / "examples/configs/stage2a-protocol-fixture-v1.json").read_bytes()
     )
     Stage2CompletionRequest.model_validate_json(
         (root / "examples/fixtures/stage2a-completion-request-v1.json").read_bytes()
     )
+
     execution_lock = Stage2ExecutionLock.model_validate_json(
         (root / "execution-lock/stage2-execution-lock.json").read_bytes()
     )
-    if (
-        execution_lock.status
-        is not ExecutionLockStatus.BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED
-    ):
+
+    if execution_lock.status is not ExecutionLockStatus.INCOMPLETE_ARTIFACT_HASH:
         raise AssertionError("execution-lock status differs")
+
     vllm_artifact = next(
         artifact for artifact in execution_lock.artifacts if artifact.package == "vllm"
     )
+
     if (
         vllm_artifact.source_url != VLLM_WHEEL_SOURCE_URL
         or vllm_artifact.sha256 != VLLM_WHEEL_SHA256
@@ -207,30 +221,41 @@ def main() -> int:
         or execution_lock.executed
         or execution_lock.resolver_lock_claimed_complete
     ):
-        raise AssertionError("Stage 2 execution lock differs from the exact blocked contract")
+        raise AssertionError(
+            "Stage 2 execution lock differs from the exact incomplete contract"
+        )
+
     if schema_sync_mismatches(root / "schemas"):
         raise AssertionError("Stage 2 generated schemas are not synchronized")
+
     _verify_frozen_bytes(root)
     _verify_import_boundary(root)
     _verify_ordinary_lock(root)
+
     with tempfile.TemporaryDirectory(prefix="lis-stage2a-experiment-") as temporary:
         aggregate = Path(temporary) / "aggregate"
         write_synthetic_experiment_directory(aggregate)
         reconstructed = reconstruct_experiment_attestation(aggregate)
+
         invalid_aggregate = Path(temporary) / "invalid-aggregate"
         invalid_manifest = write_synthetic_experiment_directory(
             invalid_aggregate,
             semantic_mismatch_case_id=STAGE2_EXPERIMENT_CASE_IDS[0],
         )
         invalid_reconstructed = reconstruct_experiment_attestation(invalid_aggregate)
+
     experiment = reconstructed.attestation
+
     if (
         experiment.evidence_scope.value != "TEST_FIXTURE_ONLY"
         or experiment.classification.value != "SYNTHETIC_PROTOCOL_SHAPE_ONLY"
         or len(experiment.repetitions) != 3
         or sum(len(item.measured_requests) for item in experiment.repetitions) != 48
         or len(experiment.comparisons) != 16
-        or any(len(item.cuda_execution.raw_evidence_files) < 1 for item in experiment.repetitions)
+        or any(
+            len(item.cuda_execution.raw_evidence_files) < 1
+            for item in experiment.repetitions
+        )
         or any(
             item.prometheus_measurement.repetition_index != item.repetition_index
             or item.prometheus_measurement.server_process_identity
@@ -238,18 +263,23 @@ def main() -> int:
             for item in experiment.repetitions
         )
         or any(
-            not isinstance(request.wire_capture.provenance, FixtureWireCaptureProvenance)
+            not isinstance(
+                request.wire_capture.provenance,
+                FixtureWireCaptureProvenance,
+            )
             or not request.wire_capture.response_body_chunks
             for repetition in experiment.repetitions
             for request in repetition.measured_requests
         )
         or any(
-            request.wire_capture.http_exchange.exchange_purpose != "MEASURED_COMPLETION"
+            request.wire_capture.http_exchange.exchange_purpose
+            != "MEASURED_COMPLETION"
             for repetition in experiment.repetitions
             for request in repetition.measured_requests
         )
         or any(
-            repetition.cancellation_wire.http_exchange.exchange_purpose != "CANCELLATION"
+            repetition.cancellation_wire.http_exchange.exchange_purpose
+            != "CANCELLATION"
             or repetition.cancellation_wire.intentional_client_close.close_classification
             != "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_DELIVERY"
             or repetition.cancellation_wire.parser_replay.first_generation_delivery
@@ -293,13 +323,17 @@ def main() -> int:
         or experiment.summary.performance_claim_advancement_allowed
     ):
         raise AssertionError("complete Stage 2A synthetic experiment boundary differs")
+
     if (
         invalid_manifest.state.value != "INVALID"
         or invalid_manifest.failure_reason != "INVALID_SEMANTIC_NONREPRODUCTION"
         or invalid_reconstructed.attestation.aggregate_validation_result.invalid_case_ids
         != (STAGE2_EXPERIMENT_CASE_IDS[0],)
     ):
-        raise AssertionError("semantic mismatch did not retain a durable invalid aggregate")
+        raise AssertionError(
+            "semantic mismatch did not retain a durable invalid aggregate"
+        )
+
     print(
         canonical_json(
             {
@@ -332,6 +366,7 @@ def main() -> int:
             }
         )
     )
+
     return 0
 
 
