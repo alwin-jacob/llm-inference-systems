@@ -1,8 +1,8 @@
-# Public evidence boundary
+# Public evidence
 
 This repository provides source, test, generated-schema, artifact, and verification evidence for its Stage 0 measurement contracts, Stage 1 deterministic streaming harness, and Stage 2A experiment protocol.
 
-The current checked execution artifacts exercise the measurement and reconstruction stack through deterministic local fixtures. They validate collection semantics, lifecycle accounting, failure handling, reconstruction, compatibility checks, and experiment structure.
+The checked execution artifacts exercise the measurement and reconstruction stack through deterministic local fixtures. They validate collection semantics, lifecycle accounting, failure handling, reconstruction, compatibility checks, and experiment structure.
 
 ## Current reviewed evidence
 
@@ -11,7 +11,7 @@ The current checked execution artifacts exercise the measurement and reconstruct
 | Implemented source                     | Present in the repository                                                                                             |
 | Local unit and adversarial tests       | Included in the complete verification gate                                                                            |
 | Generated schemas                      | Versioned and synchronized from source models                                                                         |
-| Metadata-free Git-archive verification | Repeatable Python 3.13.15 local and CI verification                                                                   |
+| Metadata-free Git-archive verification | Repeatable Python 3.13.15 verification                                                                                |
 | Checked Stage 1 streaming execution    | Two independent runs dated `2026-08-27`                                                                               |
 | Checked raw artifacts                  | Request, client-stream, and server records retained                                                                   |
 | Checked derived summaries              | Reconstruct exactly from retained raw evidence                                                                        |
@@ -19,26 +19,20 @@ The current checked execution artifacts exercise the measurement and reconstruct
 | Stage 2A protocol source               | Present at package/protocol `0.3.0`                                                                                   |
 | Stage 2A fixture coverage              | Request, streaming, cancellation, telemetry, restart, and aggregate paths exercised                                   |
 | Complete Stage 2A experiment shape     | 48 measured-request attestations, 16 comparisons, three repetitions, three cancellation paths, and one aggregate root |
-| CI configuration                       | Present and executed for repository verification                                                                      |
-| Stage 1 public-release CI              | Passed at `40d1ecdc` through run `33171272608`                                                                        |
-| Stage 2A source verification           | Passed at `22e3056` with 684 tests and 25 synchronized schemas                                                        |
+| CI configuration                       | Present for automated repository verification                                                                         |
+| Stage 1 verification                   | Source, checked-artifact, and metadata-free archive gates passed                                                      |
+| Stage 2A verification                  | Recorded gate passed 684 tests and 25 synchronized schemas                                                            |
 
 ## Stage 1 checked execution
 
-GitHub Actions run `33171272608` executed Stage 1 public-release SHA:
-
-```text
-40d1ecdc26d1b70f20df42de3e1156e13891cc4d
-```
-
-The run passed:
+The recorded Stage 1 verification gate passed:
 
 * the Python 3.12 source gate;
 * the Python 3.13 source gate;
 * exact-Python-3.13.15 checked-artifact verification; and
 * exact-Python-3.13.15 metadata-free Git-archive verification.
 
-Every job used `uv 0.12.5`.
+The verification environment used `uv 0.12.5`.
 
 The retained Stage 1 dataset contains two independent executions. Each run preserves raw request, stream, and server records alongside reconstructed summaries and content identities.
 
@@ -53,17 +47,11 @@ The checked workload uses:
 
 Both runs reproduce the same semantic fingerprint while retaining independent run identities.
 
-Fixture token markers and timing observations are used to exercise the measurement implementation deterministically. Client concurrency and server batching remain distinct quantities throughout the schema and reconstruction logic.
+Fixture token markers and timing observations exercise the measurement implementation deterministically. Client concurrency and server batching remain independently modeled quantities throughout the schema and reconstruction logic.
 
 ## Stage 2A protocol verification
 
-The Stage 2A protocol source at:
-
-```text
-22e3056dc8e7dbdaaa898ab1b65a358c309529eb
-```
-
-passed an exact local Python 3.13.15 / `uv 0.12.5` verification gate containing:
+The recorded Stage 2A Python 3.13.15 / `uv 0.12.5` verification gate included:
 
 * 684 passing tests;
 * 25 synchronized schemas;
@@ -119,7 +107,7 @@ Across the complete experiment, the protocol validates:
 * aggregate reconstruction; and
 * one terminal aggregate root.
 
-Request and component records remain independently validated before they can contribute to the aggregate experiment.
+Request and component records are independently validated before contributing to the aggregate experiment.
 
 ## Request and streaming evidence
 
@@ -136,7 +124,7 @@ Each measured request can retain:
 * request lifecycle boundaries; and
 * transport-close state.
 
-Derived request records are reconstructed from the retained raw evidence.
+Derived request records are reconstructed from retained raw evidence.
 
 The incremental parser exercises:
 
@@ -168,7 +156,7 @@ This includes:
 * stable counter observations; and
 * cooldown observations.
 
-The cancellation evaluator reconstructs the full retained record set rather than relying on a selected subset of log events.
+The cancellation evaluator reconstructs the complete retained record set rather than relying on a selected subset of log events.
 
 ## Prometheus evidence
 
@@ -191,7 +179,7 @@ Raw telemetry and replay-derived records are independently bound into the repeti
 
 ## Reconstruction and integrity
 
-Parsing itself does not assign experiment validity. Validation occurs through the complete request, repetition, and aggregate reconstruction paths.
+Validation occurs through the complete request, repetition, and aggregate reconstruction paths.
 
 The repository verifies:
 
@@ -227,6 +215,6 @@ The aggregate validator applies the same principle across all three repetitions 
 
 Unkeyed SHA-256 values are used for deterministic content identity and modification detection.
 
-They bind retained files and reconstructed records to exact bytes so that verification can detect missing, changed, substituted, or inconsistent evidence.
+They bind retained files and reconstructed records to exact bytes so verification can detect missing, changed, substituted, or inconsistent evidence.
 
 This integrity layer is combined with versioned schemas, request identity, lifecycle provenance, and reconstruction checks throughout the repository.
