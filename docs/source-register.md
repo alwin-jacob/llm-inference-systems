@@ -39,7 +39,7 @@ The following source files define interfaces and behavior represented by the ver
 | [Prometheus metrics](https://github.com/vllm-project/vllm/blob/2cf0a6915ce544dc493a0990f2ea38d81601128a/vllm/v1/metrics/prometheus.py)                   | Runtime metric names and labels used by the Prometheus protocol                                                     |
 | [Metrics loggers](https://github.com/vllm-project/vllm/blob/2cf0a6915ce544dc493a0990f2ea38d81601128a/vllm/v1/metrics/loggers.py)                         | Model, engine, and finished-reason labeling                                                                         |
 
-These pinned references make the protocol behavior reviewable against one exact runtime revision rather than an evolving upstream branch.
+These pinned references make the protocol behavior reviewable against one exact upstream runtime revision rather than an evolving branch.
 
 ## Runtime environment references
 
@@ -78,7 +78,7 @@ References:
 * [HTTPX async support](https://www.python-httpx.org/async/)
 * [HTTPX developer interface](https://www.python-httpx.org/api/#asyncclient)
 
-The streaming implementation uses the documented asynchronous client, explicit streaming-response lifecycle, raw-body iteration, timeout controls, connection limits, redirect controls, and explicit response close behavior.
+The streaming implementation uses the documented asynchronous client, explicit streaming-response lifecycle, raw-body iteration, timeout controls, connection limits, redirect controls, and explicit response-close behavior.
 
 The locked dependency graph includes:
 
@@ -112,29 +112,21 @@ The implementation keeps separately modeled:
 * client concurrency; and
 * server-side telemetry.
 
-## Verification references
+## Verification
 
-Stage 1 public-release source:
+The repository maintains verification paths for:
 
-```text
-40d1ecdc26d1b70f20df42de3e1156e13891cc4d
-```
+* source quality and static analysis;
+* generated-schema synchronization;
+* deterministic fixture execution;
+* checked artifact reconstruction;
+* Stage 0 and Stage 1 compatibility;
+* Stage 2A protocol validation; and
+* metadata-free archive reproducibility.
 
-Associated GitHub Actions run:
+A recorded Stage 2A verification gate passed:
 
-```text
-33171272608
-```
-
-Stage 2A reviewed protocol source:
-
-```text
-22e3056dc8e7dbdaaa898ab1b65a358c309529eb
-```
-
-The Stage 2A verification gate for that source reported:
-
-* 684 passing tests; and
+* 684 tests; and
 * 25 synchronized schemas.
 
-Together, the source register, versioned contracts, pinned upstream references, generated schemas, checked artifacts, and verification tooling provide reproducible provenance for the implementation decisions represented in this repository.
+Together, the versioned contracts, pinned upstream references, generated schemas, checked artifacts, and verification tooling provide reproducible provenance for the implementation decisions represented in this repository.
