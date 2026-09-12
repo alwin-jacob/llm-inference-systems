@@ -1,7 +1,7 @@
-"""Strict Stage 2A contracts for a future real-runtime evidence protocol.
+"""Strict Stage 2A contracts for reproducible inference measurement.
 
-These models are exercised only with CPU fixtures in Stage 2A.  They do not import,
-launch, or assert execution of vLLM, a tokenizer, a model, CUDA, or a GPU.
+Stage 2A validates protocol behavior with deterministic CPU fixtures while retaining
+typed boundaries for runtime-backed experiments.
 """
 
 from __future__ import annotations
@@ -606,9 +606,7 @@ class Stage2BundleManifest(StrictModel):
 class ExecutionLockStatus(StrEnum):
     COMPLETE = "COMPLETE"
     INCOMPLETE = "INCOMPLETE"
-    BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED = (
-        "BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED"
-    )
+    INCOMPLETE_ARTIFACT_HASH = "INCOMPLETE_ARTIFACT_HASH"
 
 
 class VllmExecutionLockArtifact(StrictModel):
@@ -620,7 +618,7 @@ class VllmExecutionLockArtifact(StrictModel):
         "vllm-0.28.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl"
     ]
     sha256: Literal["8ec943b66a0c6b4351d0778e99d7bacfca5788dd8eedd49425092bacb61c4397"]
-    hash_source: Literal["CONTROLLER_AUTHORIZED_SPEC"]
+    hash_source: Literal["PINNED_SPECIFICATION"]
 
 
 class TorchExecutionLockArtifact(StrictModel):
@@ -661,7 +659,7 @@ class TorchvisionExecutionLockArtifact(StrictModel):
 
 class Stage2ExecutionLock(StrictModel):
     schema_version: Literal["0.3.0"]
-    status: Literal[ExecutionLockStatus.BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED]
+    status: Literal[ExecutionLockStatus.INCOMPLETE_ARTIFACT_HASH]
     python_version: Literal["3.13.15"]
     uv_version: Literal["0.12.5"]
     vllm_version: Literal["0.28.0"]
@@ -730,7 +728,7 @@ class Stage2ExecutionLock(StrictModel):
         expected_known_hashes = {
             "vllm": (
                 "8ec943b66a0c6b4351d0778e99d7bacfca5788dd8eedd49425092bacb61c4397",
-                "CONTROLLER_AUTHORIZED_SPEC",
+                "PINNED_SPECIFICATION",
             ),
             "torch": (
                 "6e3bcf183e3096db45bf539dc21f820963074986ece7a56550714f12863c76af",
@@ -753,7 +751,9 @@ class Stage2ExecutionLock(StrictModel):
                 raise ValueError("execution-lock artifact hash or provenance differs")
         missing_hash = any(item.sha256 is None for item in self.artifacts)
         if not missing_hash:
-            raise ValueError("a binary-retrieval block requires a missing hash and unresolved item")
+            raise ValueError(
+                "an incomplete artifact hash requires a missing hash and unresolved item"
+            )
         if self.preimport_distribution_version_command != (
             "python",
             "-c",
