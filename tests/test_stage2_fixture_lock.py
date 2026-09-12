@@ -35,13 +35,17 @@ from llm_inference_systems.stage2_protocol import (
 )
 from scripts.verify_checked_stage1_evidence import (
     HISTORICAL_STAGE1_PACKAGE_VERSION as STAGE1_PACKAGE_VERSION,
+)
+from scripts.verify_checked_stage1_evidence import (
     _verify as verify_stage1_evidence,
 )
 from scripts.verify_stage2a import (
     FROZEN_HASHES,
-    HISTORICAL_STAGE1_UV_LOCK_SHA256 as STAGE1_UV_LOCK_SHA256,
     _declared_forbidden_dependencies,
     _verify_import_boundary,
+)
+from scripts.verify_stage2a import (
+    HISTORICAL_STAGE1_UV_LOCK_SHA256 as STAGE1_UV_LOCK_SHA256,
 )
 from scripts.verify_stage2a import main as verify_stage2a
 from tests.stage2_factories import FIXTURE_IDENTITY
