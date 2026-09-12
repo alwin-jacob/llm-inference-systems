@@ -67,8 +67,8 @@ manifests plus semantic records bound to those manifest-file content hashes and 
 reconstructed comparison.
 
 An output-token mismatch is retained in a manifest-last `INVALID` aggregate root with reason
-`INVALID_SEMANTIC_NONREPRODUCTION`; it cannot become a committed aggregate, authorize pooled
-performance interpretation, select a replacement run, or advance a claim. Missing request files,
+`INVALID_SEMANTIC_NONREPRODUCTION`; it cannot become a committed aggregate, contribute to pooled
+performance interpretation, or select a replacement run. Missing request files,
 orphan raw hashes, null-server-metric eligibility
 overrides, non-overlapping lifecycles, concurrency above two, or an aggregate manifest written
 before any inventoried byte are terminal validation failures.
