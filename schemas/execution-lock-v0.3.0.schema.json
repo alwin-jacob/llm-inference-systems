@@ -143,7 +143,7 @@
           "type": "string"
         },
         "hash_source": {
-          "const": "CONTROLLER_AUTHORIZED_SPEC",
+          "const": "PINNED_SPECIFICATION",
           "title": "Hash Source",
           "type": "string"
         },
@@ -260,7 +260,7 @@
       "type": "string"
     },
     "status": {
-      "const": "BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED",
+      "const": "INCOMPLETE_ARTIFACT_HASH",
       "title": "Status",
       "type": "string"
     },
