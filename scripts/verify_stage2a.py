@@ -52,7 +52,7 @@ FROZEN_HASHES = {
     "schemas/execution-manifest-v0.2.0.schema.json": "4b98878c7b58aa05eaecc94dc5c500b3e3b5f1ad18f5745fac3dca1a07b20a60",
     "schemas/fixture-definition-v0.2.0.schema.json": "971f3711577e78bfe186980724eaacb08f9f04ddd01b7cd2b1d462511f830738",
     "schemas/run-artifact-v0.1.0.schema.json": "4cce2174f5b6398c1b67f31c30154fd9201ad943c188a3a61f1bed923c74837b",
-    "schemas/run-configuration-v0.1.0.schema.json": "85c28c2507067431dfefe11121f82ce4ad2d6a82f0caccea1",
+    "schemas/run-configuration-v0.1.0.schema.json": "85c28c2507067431dfefe11121f82ce4ad4deada972b2d4b86d2a82f0caccea1",
     "schemas/run-configuration-v0.2.0.schema.json": "f09a57427aec0cf0bb63c2221e54879ce001c73ec24c7d78f1f48e6e229f04c0",
     "schemas/workload-definition-v0.1.0.schema.json": "448ce2a53885b3289eb7505edbdaa75cb61fcd0dd85dc1af1312611b5ab4916a",
     "schemas/workload-definition-v0.2.0.schema.json": "605711239c7cac4b55bb68a86ac1fe065d762bfa38fd890716d7a1b5b99c9e46",
