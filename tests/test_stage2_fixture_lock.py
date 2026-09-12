@@ -34,12 +34,12 @@ from llm_inference_systems.stage2_protocol import (
     retain_raw_log_records,
 )
 from scripts.verify_checked_stage1_evidence import (
-    HISTORICAL_STAGE1_PACKAGE_VERSION,
-    _verify,
+    HISTORICAL_STAGE1_PACKAGE_VERSION as STAGE1_PACKAGE_VERSION,
+    _verify as verify_stage1_evidence,
 )
 from scripts.verify_stage2a import (
     FROZEN_HASHES,
-    HISTORICAL_STAGE1_UV_LOCK_SHA256,
+    HISTORICAL_STAGE1_UV_LOCK_SHA256 as STAGE1_UV_LOCK_SHA256,
     _declared_forbidden_dependencies,
     _verify_import_boundary,
 )
@@ -52,34 +52,48 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_loopback_endpoint_rejects_arbitrary_host_or_url() -> None:
     endpoint = LoopbackEndpoint(host="127.0.0.1", port=8000)
     assert endpoint.completions_url == "http://127.0.0.1:8000/v1/completions"
+
     with pytest.raises(ValidationError):
         LoopbackEndpoint.model_validate({"host": "0.0.0.0", "port": 8000})
+
     with pytest.raises(ValidationError):
         LoopbackEndpoint.model_validate(
-            {"host": "127.0.0.1", "port": 8000, "url": "https://example.invalid"}
+            {
+                "host": "127.0.0.1",
+                "port": 8000,
+                "url": "https://example.invalid",
+            }
         )
 
 
 def test_stage2_config_unknown_fields_and_launch_drift_are_rejected() -> None:
     path = ROOT / "examples/configs/stage2a-protocol-fixture-v1.json"
     value = json.loads(path.read_bytes())
+
     Stage2RunConfiguration.model_validate_json(path.read_bytes())
+
     value["launch_arguments"] = tuple(value["launch_arguments"])
+
     with pytest.raises(ValidationError):
         Stage2RunConfiguration.model_validate({**value, "unknown": True})
+
     value["launch_arguments"] = value["launch_arguments"][:-1]
+
     with pytest.raises(ValidationError, match="launch arguments"):
         Stage2RunConfiguration.model_validate(value)
 
 
 async def _exercise_fixture(
-    *, finish_only: bool, grouped: bool
+    *,
+    finish_only: bool,
+    grouped: bool,
 ) -> tuple[bytes, Stage2FixtureServer, Stage2RequestEvidence]:
     server = Stage2FixtureServer(
         finish_only_terminal=finish_only,
         grouped_tokens=grouped,
     )
     await server.start()
+
     try:
         envelope = build_completion_request("fixture-http-001", tuple(range(64)))
         origin_ns = time.monotonic_ns()
@@ -94,6 +108,7 @@ async def _exercise_fixture(
             fixture_identity_sha256=FIXTURE_IDENTITY,
             frame_clock=offset_ns,
         )
+
         async with httpx.AsyncClient(
             base_url=f"http://127.0.0.1:{server.port}",
             trust_env=False,
@@ -108,30 +123,49 @@ async def _exercise_fixture(
             ) as response:
                 assert response.status_code == 200
                 assert response.headers["X-Request-Id"] == envelope.x_request_id
-                validator.accept_response_headers(response.headers["X-Request-Id"], offset_ns())
+
+                validator.accept_response_headers(
+                    response.headers["X-Request-Id"],
+                    offset_ns(),
+                )
+
                 async for chunk in response.aiter_bytes():
                     validator.feed(chunk, offset_ns())
+
             chain = correlate_request_logs(
                 envelope.x_request_id,
                 retain_raw_log_records(
-                    tuple(server.logs), source_stream_id="stage2-fixture-server-log"
+                    tuple(server.logs),
+                    source_stream_id="stage2-fixture-server-log",
                 ),
                 cancellation=False,
             )
-            evidence = validator.close_transport(offset_ns(), identity_chain=chain)
+
+            evidence = validator.close_transport(
+                offset_ns(),
+                identity_chain=chain,
+            )
+
             metrics = await client.get("/metrics")
             assert metrics.status_code == 200
+
             snapshot = parse_prometheus_snapshot(
                 metrics.text,
                 process_start_id="stage2-fixture-process",
                 scrape_wall_clock_utc=datetime(2026, 8, 28, tzinfo=UTC),
                 scrape_monotonic_offset_ns=1,
             )
+
             assert select_exact_series(snapshot, "vllm:prompt_tokens_total").value == 64
             assert select_exact_series(snapshot, "vllm:generation_tokens_total").value == 32
-            body = b"".join(chunk.data for chunk in validator.retained_raw_body_chunks)
+
+            body = b"".join(
+                chunk.data
+                for chunk in validator.retained_raw_body_chunks
+            )
     finally:
         await server.stop()
+
     return body, server, evidence
 
 
@@ -139,40 +173,64 @@ async def _exercise_fixture(
     ("finish_only", "grouped"),
     [(False, False), (True, False), (False, True)],
 )
-def test_cpu_fixture_server_stream_logs_and_metrics(finish_only: bool, grouped: bool) -> None:
+def test_cpu_fixture_server_stream_logs_and_metrics(
+    finish_only: bool,
+    grouped: bool,
+) -> None:
     body, server, evidence = asyncio.run(
-        _exercise_fixture(finish_only=finish_only, grouped=grouped)
+        _exercise_fixture(
+            finish_only=finish_only,
+            grouped=grouped,
+        )
     )
+
     assert b"data: [DONE]\n\n" in body
     assert b'"total_tokens":96' in body
+
     if finish_only:
         assert b'"finish_reason":"length","index":0,"text":"","token_ids":[]' in body
         assert evidence.terminal_event_carried_token_ids is False
     else:
         assert evidence.terminal_event_carried_token_ids is True
+
     if grouped:
-        assert evidence.client_generation_tpot.unavailable_reason == "GROUPED_TOKEN_EVENT"
+        assert (
+            evidence.client_generation_tpot.unavailable_reason
+            == "GROUPED_TOKEN_EVENT"
+        )
+
     assert evidence.final_output_token_ids == tuple(range(1000, 1032))
+
     chain = correlate_request_logs(
         "fixture-http-001",
-        retain_raw_log_records(tuple(server.logs), source_stream_id="stage2-fixture-server-log"),
+        retain_raw_log_records(
+            tuple(server.logs),
+            source_stream_id="stage2-fixture-server-log",
+        ),
         cancellation=False,
     )
+
     assert chain.internal_engine_id.endswith("deadbeef")
 
 
 def test_cpu_fixture_rejects_header_body_mismatch() -> None:
     async def exercise() -> None:
         async with Stage2FixtureServer() as server:
-            envelope = build_completion_request("fixture-http-001", tuple(range(64)))
+            envelope = build_completion_request(
+                "fixture-http-001",
+                tuple(range(64)),
+            )
+
             async with httpx.AsyncClient(
-                base_url=f"http://127.0.0.1:{server.port}", trust_env=False
+                base_url=f"http://127.0.0.1:{server.port}",
+                trust_env=False,
             ) as client:
                 response = await client.post(
                     "/v1/completions",
                     headers={"X-Request-Id": "different"},
                     json=envelope.body.model_dump(mode="json"),
                 )
+
                 assert response.status_code == 400
 
     asyncio.run(exercise())
@@ -180,29 +238,49 @@ def test_cpu_fixture_rejects_header_body_mismatch() -> None:
 
 def test_fixture_server_has_no_host_or_endpoint_constructor_parameter() -> None:
     parameters = inspect.signature(Stage2FixtureServer).parameters
+
     assert "host" not in parameters
     assert "endpoint" not in parameters
     assert "url" not in parameters
 
 
-def test_execution_lock_is_separate_uninstalled_and_explicitly_blocked() -> None:
+def test_execution_lock_tracks_incomplete_artifact_hash() -> None:
     lock = Stage2ExecutionLock.model_validate_json(
         (ROOT / "execution-lock/stage2-execution-lock.json").read_bytes()
     )
-    assert lock.status is ExecutionLockStatus.BLOCKED_BINARY_RETRIEVAL_AUTHORIZATION_REQUIRED
+
+    assert lock.status is ExecutionLockStatus.INCOMPLETE_ARTIFACT_HASH
     assert lock.installed is False
     assert lock.executed is False
     assert lock.resolver_lock_claimed_complete is False
     assert lock.vllm_git_revision == "2cf0a6915ce544dc493a0990f2ea38d81601128a"
     assert lock.qwen_model_repository == "Qwen/Qwen2.5-0.5B-Instruct"
-    assert lock.qwen_snapshot_source_url.endswith(lock.qwen_snapshot_revision)
-    vllm = next(item for item in lock.artifacts if item.package == "vllm")
-    assert vllm.sha256 == "8ec943b66a0c6b4351d0778e99d7bacfca5788dd8eedd49425092bacb61c4397"
+    assert lock.qwen_snapshot_source_url.endswith(
+        lock.qwen_snapshot_revision
+    )
+
+    vllm = next(
+        item
+        for item in lock.artifacts
+        if item.package == "vllm"
+    )
+
+    assert (
+        vllm.sha256
+        == "8ec943b66a0c6b4351d0778e99d7bacfca5788dd8eedd49425092bacb61c4397"
+    )
+    assert vllm.hash_source == "PINNED_SPECIFICATION"
     assert vllm.source_url == (
         "https://github.com/vllm-project/vllm/releases/download/v0.28.0/"
         "vllm-0.28.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl"
     )
-    torchvision = next(item for item in lock.artifacts if item.package == "torchvision")
+
+    torchvision = next(
+        item
+        for item in lock.artifacts
+        if item.package == "torchvision"
+    )
+
     assert torchvision.sha256 is None
 
 
@@ -215,32 +293,42 @@ def test_execution_lock_is_separate_uninstalled_and_explicitly_blocked() -> None
         "model-repository",
         "model-source",
         "false-complete",
-        "incomplete-status",
+        "generic-incomplete-status",
         "resolver-complete",
         "empty-unresolved",
         "substituted-unresolved",
     ],
 )
-def test_execution_lock_rejects_supply_chain_or_status_drift(mutation: str) -> None:
+def test_execution_lock_rejects_supply_chain_or_status_drift(
+    mutation: str,
+) -> None:
     path = ROOT / "execution-lock/stage2-execution-lock.json"
     lock = Stage2ExecutionLock.model_validate_json(path.read_bytes())
+
     value = lock.model_dump(mode="python")
     artifacts = list(lock.artifacts)
+
     if mutation == "duplicate":
         artifacts[3] = artifacts[0]
     elif mutation == "source":
         artifacts[0] = artifacts[0].model_copy(
-            update={"source_url": "https://packages.invalid/vllm.whl"}
+            update={
+                "source_url": "https://packages.invalid/vllm.whl"
+            }
         )
     elif mutation == "hash":
-        artifacts[1] = artifacts[1].model_copy(update={"sha256": "0" * 64})
+        artifacts[1] = artifacts[1].model_copy(
+            update={"sha256": "0" * 64}
+        )
     elif mutation == "model-repository":
         value["qwen_model_repository"] = "substituted/model"
     elif mutation == "model-source":
-        value["qwen_snapshot_source_url"] = "https://models.invalid/substituted"
+        value["qwen_snapshot_source_url"] = (
+            "https://models.invalid/substituted"
+        )
     elif mutation == "false-complete":
         value["status"] = "COMPLETE"
-    elif mutation == "incomplete-status":
+    elif mutation == "generic-incomplete-status":
         value["status"] = "INCOMPLETE"
     elif mutation == "resolver-complete":
         value["resolver_lock_claimed_complete"] = True
@@ -248,7 +336,9 @@ def test_execution_lock_rejects_supply_chain_or_status_drift(mutation: str) -> N
         value["unresolved"] = ()
     else:
         value["unresolved"] = ("unrelated unresolved item",)
+
     value["artifacts"] = tuple(artifacts)
+
     with pytest.raises(ValidationError):
         Stage2ExecutionLock.model_validate(value)
 
@@ -263,53 +353,76 @@ def test_execution_lock_rejects_supply_chain_or_status_drift(mutation: str) -> N
         "unresolved",
     ],
 )
-def test_execution_lock_schema_encodes_exact_supply_chain_allowlist(mutation: str) -> None:
-    value = json.loads((ROOT / "execution-lock/stage2-execution-lock.json").read_bytes())
-    schema = json.loads((ROOT / "schemas/execution-lock-v0.3.0.schema.json").read_bytes())
+def test_execution_lock_schema_encodes_exact_supply_chain_allowlist(
+    mutation: str,
+) -> None:
+    value = json.loads(
+        (ROOT / "execution-lock/stage2-execution-lock.json").read_bytes()
+    )
+    schema = json.loads(
+        (ROOT / "schemas/execution-lock-v0.3.0.schema.json").read_bytes()
+    )
+
     if mutation == "duplicate":
         value["artifacts"][3] = value["artifacts"][0]
     elif mutation == "artifact-source":
-        value["artifacts"][0]["source_url"] = "https://packages.invalid/substituted"
+        value["artifacts"][0]["source_url"] = (
+            "https://packages.invalid/substituted"
+        )
     elif mutation == "model-source":
-        value["qwen_snapshot_source_url"] = "https://models.invalid/substituted"
+        value["qwen_snapshot_source_url"] = (
+            "https://models.invalid/substituted"
+        )
     elif mutation == "status":
         value["status"] = "INCOMPLETE"
     else:
         value["unresolved"] = []
+
     with pytest.raises(JsonSchemaValidationError):
         validate_json_schema(value, schema)
 
 
-def test_historical_stage1_verifies_under_current_package_0_3_0() -> None:
+def test_stage1_checked_evidence_verifies_under_current_package() -> None:
     assert __version__ == "0.3.0"
-    assert HISTORICAL_STAGE1_PACKAGE_VERSION == "0.2.0"
+    assert STAGE1_PACKAGE_VERSION == "0.2.0"
 
     if platform.python_version() != "3.13.15":
         pytest.skip(
-            "checked historical Stage 1 evidence is environment-bound to exact Python 3.13.15"
+            "checked Stage 1 evidence is environment-bound to exact Python 3.13.15"
         )
 
-    result = _verify(ROOT / "artifacts/stage1-fixture/2026-08-27")
+    result = verify_stage1_evidence(
+        ROOT / "artifacts/stage1-fixture/2026-08-27"
+    )
+
     assert result["status"] == "verified"
 
 
-def test_stage2_verifier_covers_frozen_bytes_and_dependency_boundary(
+def test_stage2_verifier_covers_retained_bytes_and_dependency_boundary(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     assert len(FROZEN_HASHES) == 30
     assert verify_stage2a() == 0
+
     output = json.loads(capsys.readouterr().out)
+
     assert output["package_version"] == "0.3.0"
     assert output["forbidden_runtime_imports"] is False
-    assert HISTORICAL_STAGE1_UV_LOCK_SHA256 == (
+    assert STAGE1_UV_LOCK_SHA256 == (
         "748fd114d05ea6e96c058f41b8a1ee0736d30339f100179e3ee7c47c7e6c59e6"
     )
 
 
-def test_ordinary_lock_has_no_runtime_gpu_or_model_dependency() -> None:
+def test_ordinary_environment_excludes_stage2_runtime_dependencies() -> None:
     lock = (ROOT / "uv.lock").read_text().casefold()
-    forbidden = ('name = "vllm"', 'name = "torch"', 'name = "transformers"')
-    assert not any(name in lock for name in forbidden)
+
+    excluded = (
+        'name = "vllm"',
+        'name = "torch"',
+        'name = "transformers"',
+    )
+
+    assert not any(name in lock for name in excluded)
 
 
 @pytest.mark.parametrize(
@@ -318,34 +431,48 @@ def test_ordinary_lock_has_no_runtime_gpu_or_model_dependency() -> None:
         "import " + "vllm\n",
         "from torch import cuda\n",
         "runtime = __import__('transformers')\n",
-        "import importlib\nruntime = importlib.import_module('torchvision.models')\n",
+        "import importlib\n"
+        "runtime = importlib.import_module('torchvision.models')\n",
     ],
 )
-def test_stage2_verifier_rejects_static_and_dynamic_runtime_imports(
+def test_stage2_verifier_rejects_unexpected_runtime_imports(
     tmp_path: Path,
     source: str,
 ) -> None:
     for directory in ("src", "tests", "scripts"):
         (tmp_path / directory).mkdir()
-    (tmp_path / "src" / "forbidden.py").write_text(source)
+
+    (tmp_path / "src" / "unexpected.py").write_text(source)
+
     with pytest.raises(AssertionError, match="forbidden"):
         _verify_import_boundary(tmp_path)
 
 
-@pytest.mark.parametrize("name", ["vllm", "torch", "transformers", "huggingface-hub"])
-def test_stage2_verifier_rejects_declared_runtime_dependencies(name: str) -> None:
+@pytest.mark.parametrize(
+    "name",
+    ["vllm", "torch", "transformers", "huggingface-hub"],
+)
+def test_stage2_verifier_rejects_unexpected_declared_dependencies(
+    name: str,
+) -> None:
     project = f'[project]\ndependencies = ["{name}>=1"]\n'
+
     assert name in _declared_forbidden_dependencies(project)
 
 
-def test_no_ordinary_source_or_test_imports_runtime_packages() -> None:
-    forbidden = (
+def test_ordinary_source_and_tests_exclude_stage2_runtime_imports() -> None:
+    excluded = (
         "import " + "vllm",
         "import " + "torch",
         "import " + "transformers",
         "import " + "huggingface_hub",
     )
-    paths = tuple((ROOT / "src").rglob("*.py")) + tuple((ROOT / "tests").rglob("*.py"))
+
+    paths = (
+        tuple((ROOT / "src").rglob("*.py"))
+        + tuple((ROOT / "tests").rglob("*.py"))
+    )
+
     for path in paths:
         text = path.read_text()
-        assert not any(value in text for value in forbidden)
+        assert not any(value in text for value in excluded)
