@@ -177,11 +177,7 @@ def _verify_ordinary_lock(root: Path) -> None:
 
 def _declared_forbidden_dependencies(project_text: str) -> set[str]:
     folded = project_text.casefold()
-    return {
-        name
-        for name in FORBIDDEN_LOCK_NAMES
-        if f'"{name}' in folded or f"'{name}" in folded
-    }
+    return {name for name in FORBIDDEN_LOCK_NAMES if f'"{name}' in folded or f"'{name}" in folded}
 
 
 def main() -> int:
@@ -221,9 +217,7 @@ def main() -> int:
         or execution_lock.executed
         or execution_lock.resolver_lock_claimed_complete
     ):
-        raise AssertionError(
-            "Stage 2 execution lock differs from the exact incomplete contract"
-        )
+        raise AssertionError("Stage 2 execution lock differs from the exact incomplete contract")
 
     if schema_sync_mismatches(root / "schemas"):
         raise AssertionError("Stage 2 generated schemas are not synchronized")
@@ -252,10 +246,7 @@ def main() -> int:
         or len(experiment.repetitions) != 3
         or sum(len(item.measured_requests) for item in experiment.repetitions) != 48
         or len(experiment.comparisons) != 16
-        or any(
-            len(item.cuda_execution.raw_evidence_files) < 1
-            for item in experiment.repetitions
-        )
+        or any(len(item.cuda_execution.raw_evidence_files) < 1 for item in experiment.repetitions)
         or any(
             item.prometheus_measurement.repetition_index != item.repetition_index
             or item.prometheus_measurement.server_process_identity
@@ -272,14 +263,12 @@ def main() -> int:
             for request in repetition.measured_requests
         )
         or any(
-            request.wire_capture.http_exchange.exchange_purpose
-            != "MEASURED_COMPLETION"
+            request.wire_capture.http_exchange.exchange_purpose != "MEASURED_COMPLETION"
             for repetition in experiment.repetitions
             for request in repetition.measured_requests
         )
         or any(
-            repetition.cancellation_wire.http_exchange.exchange_purpose
-            != "CANCELLATION"
+            repetition.cancellation_wire.http_exchange.exchange_purpose != "CANCELLATION"
             or repetition.cancellation_wire.intentional_client_close.close_classification
             != "INTENTIONAL_CLIENT_CLOSE_AFTER_FIRST_GENERATION_DELIVERY"
             or repetition.cancellation_wire.parser_replay.first_generation_delivery
@@ -330,9 +319,7 @@ def main() -> int:
         or invalid_reconstructed.attestation.aggregate_validation_result.invalid_case_ids
         != (STAGE2_EXPERIMENT_CASE_IDS[0],)
     ):
-        raise AssertionError(
-            "semantic mismatch did not retain a durable invalid aggregate"
-        )
+        raise AssertionError("semantic mismatch did not retain a durable invalid aggregate")
 
     print(
         canonical_json(
