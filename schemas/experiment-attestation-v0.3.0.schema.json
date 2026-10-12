@@ -1904,7 +1904,7 @@
           "type": "string"
         },
         "reviewed_protocol_lock_sha256": {
-          "const": "b4dc9dd99a2531132423055cd342da785d3271ab48d642a0af737e6b9e760e5d",
+          "const": "04d9ea6e2e17b966633bd7a21b41d3a3cd7315c52e157aaeec6c9f4cf5f074c4",
           "title": "Reviewed Protocol Lock Sha256",
           "type": "string"
         },

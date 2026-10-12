@@ -1120,7 +1120,7 @@ def make_real_runtime_attestation() -> FutureRealRuntimeAttestation:
         "installed_distribution_inventory_sha256": "2" * 64,
         "resolver_lock_claimed_complete": True,
         "reviewed_protocol_lock_sha256": (
-            "b4dc9dd99a2531132423055cd342da785d3271ab48d642a0af737e6b9e760e5d"
+            "04d9ea6e2e17b966633bd7a21b41d3a3cd7315c52e157aaeec6c9f4cf5f074c4"
         ),
         "installed": True,
         "executed": True,
